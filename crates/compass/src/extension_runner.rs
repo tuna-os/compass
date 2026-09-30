@@ -1,0 +1,2062 @@
+//! Runs installed extensions' `no-view` commands.
+//!
+//! The first slice of the extension host in the engine (Phase 4, #7). A run
+//! starts the extension runtime (the bundle the C++ engine ships as
+//! `vicinae-worker-ts`) under Node, loads the command and handshakes, and then
+//! serves the session on a thread of its own:
+//! - local storage, from Compass's own encrypted database;
+//! - HUDs, failure toasts and notifications, as desktop notifications;
+//! - alerts, answered "no", because nothing can show one yet.
+//!
+//! What it does not do yet, and says so rather than failing obscurely:
+//! - draw a `view` command (there is no view renderer in the launcher);
+//! - collect preferences (a required one without a default is refused by
+//!   name).
+//!
+//! # When a run is over
+//!
+//! The runtime never tells the host that a `no-view` command finished: it
+//! unloads the command's worker itself and says nothing (the C++ has a FIXME
+//! for exactly this). So a run ends when the runtime has been quiet for
+//! [`IDLE`], or at [`LIFETIME`] regardless, and the runtime process is then
+//! stopped. One runtime per run, so a stuck command cannot hold up the next.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+use compass_core::alert::Alert;
+use compass_core::extension_commands::ExtensionCommand;
+use compass_core::manifest::CommandMode;
+use compass_worker_host::Worker;
+use compass_worker_host::application_service::ApplicationService;
+use compass_worker_host::browser_service::BrowserService;
+use compass_worker_host::clipboard_service::{
+    Clipboard, ClipboardService, Content, CopyOptions, ReadContent,
+};
+use compass_worker_host::command_service::CommandService;
+use compass_worker_host::extension_manager::{
+    Capabilities, CommandEnv, LaunchType, LoadOptions, ManagerClient,
+};
+use compass_worker_host::file_search_service::{FileIndexer, FileSearchService};
+use compass_worker_host::host_command_service::HostCommandService;
+use compass_worker_host::oauth_service::{
+    AuthorizeRequest, AuthorizeService, Authorizer, OAuthService, Redirect,
+};
+use compass_worker_host::session::SessionEvents;
+use compass_worker_host::session::{Router, Session, Turn};
+use compass_worker_host::storage_service::StorageService;
+use compass_worker_host::tsapi::Deferral;
+use compass_worker_host::ui_service::UiService;
+use compass_worker_host::ui_shell_service::{
+    CloseWindow, CommandInfo, Notification, Shell, ToastStyle, UiShellService,
+};
+use compass_worker_host::wallpaper_service::WallpaperService;
+
+/// Overrides where the runtime bundle is looked for.
+pub const RUNTIME_ENV: &str = "COMPASS_EXTENSION_RUNTIME";
+
+/// Overrides which Node runs it.
+pub const NODE_ENV: &str = "COMPASS_NODE";
+
+/// Overrides where `compass-sandbox-exec` is looked for.
+pub const SANDBOX_EXEC_ENV: &str = "COMPASS_SANDBOX_EXEC";
+
+/// Set to `off` to run extensions unconfined, for development on a machine
+/// without the launcher. Anything else, or unset, means confined or refused.
+pub const SANDBOX_SWITCH_ENV: &str = "COMPASS_EXTENSION_SANDBOX";
+
+/// The sandbox launcher's file name.
+pub const SANDBOX_EXEC_NAME: &str = "compass-sandbox-exec";
+
+/// The bundle's file name wherever it is installed.
+pub const RUNTIME_FILE_NAME: &str = "extension-runtime.js";
+
+/// Quiet this long after a command's last message, and it is taken as done.
+pub const IDLE: Duration = Duration::from_secs(10);
+
+/// No `no-view` run lives longer than this.
+pub const LIFETIME: Duration = Duration::from_secs(300);
+
+/// Compass's own database for extensions' local storage (ADR-0017: Compass
+/// owns its files; Vicinae's `vicinae.db` is never opened).
+pub const STORAGE_DATABASE: &str = "compass-extension-storage.db";
+
+/// How long the runtime has to answer `load`.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What runs extensions: Node and the runtime bundle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Runtime {
+    /// The Node executable.
+    pub node: PathBuf,
+    /// The runtime bundle it runs.
+    pub bundle: PathBuf,
+    /// `compass-sandbox-exec`, which confines the runtime before it starts;
+    /// `None` only when [`SANDBOX_SWITCH_ENV`] is `off`.
+    pub sandbox: Option<PathBuf>,
+}
+
+impl Runtime {
+    /// Finds Node and the bundle: the environment overrides first, then an
+    /// installed bundle beside the executable (`../share/compass/`) or in the
+    /// Flatpak's `/app/share/compass/`, and Node on `PATH`.
+    ///
+    /// # Errors
+    ///
+    /// A sentence naming what is missing, for the launcher to show.
+    pub fn locate() -> Result<Self, String> {
+        if std::env::var_os(crate::cli_commands::NO_EXTENSION_RUNTIME_ENV)
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Err(
+                "TypeScript extensions are off: the engine was started with \
+                        --no-extension-runtime"
+                    .to_owned(),
+            );
+        }
+        let bundle = std::env::var_os(RUNTIME_ENV)
+            .map(PathBuf::from)
+            .or_else(installed_bundle)
+            .filter(|path| path.is_file())
+            .ok_or_else(|| {
+                "Running extensions needs the extension runtime, which this install of \
+                 Compass does not include"
+                    .to_owned()
+            })?;
+        let node = std::env::var_os(NODE_ENV)
+            .map(PathBuf::from)
+            .or_else(|| on_path("node"))
+            .ok_or_else(|| "Running extensions needs Node.js, and none was found".to_owned())?;
+        let sandbox = if std::env::var_os(SANDBOX_SWITCH_ENV).is_some_and(|v| v == "off") {
+            tracing::warn!("{SANDBOX_SWITCH_ENV}=off: extensions run unconfined");
+            None
+        } else {
+            Some(
+                std::env::var_os(SANDBOX_EXEC_ENV)
+                    .map(PathBuf::from)
+                    .or_else(installed_sandbox)
+                    .filter(|path| path.is_file())
+                    .ok_or_else(|| {
+                        "Running extensions needs compass-sandbox-exec, which this install of \
+                         Compass does not include, and Compass will not run them unconfined"
+                            .to_owned()
+                    })?,
+            )
+        };
+        Ok(Self {
+            node,
+            bundle,
+            sandbox,
+        })
+    }
+}
+
+/// Beside the executable, in the directories the file indexer is looked for
+/// in (`../libexec/compass`, `../lib/compass`: the AppImage, Nix and Arch
+/// layouts), then the Flatpak's `/app/libexec`.
+fn installed_sandbox() -> Option<PathBuf> {
+    let installed = std::env::current_exe().ok().and_then(|exe| {
+        Some(crate::indexer_client::helper_candidates(
+            exe.parent()?,
+            SANDBOX_EXEC_NAME,
+        ))
+    });
+    installed
+        .into_iter()
+        .flatten()
+        .chain([Path::new("/app/libexec").join(SANDBOX_EXEC_NAME)])
+        .find(|path| path.is_file())
+}
+
+/// The files name resolution reads that live outside `etc` through a
+/// symlink. Under systemd-resolved `/etc/resolv.conf` points into
+/// `/run/systemd/resolve/`; granting `/etc` alone leaves the link unreadable,
+/// and every lookup an extension makes fails with `EAI_AGAIN`.
+fn resolver_targets(etc: &Path) -> Vec<PathBuf> {
+    [
+        "resolv.conf",
+        "hosts",
+        "nsswitch.conf",
+        "host.conf",
+        "gai.conf",
+    ]
+    .into_iter()
+    .filter_map(|name| std::fs::canonicalize(etc.join(name)).ok())
+    .filter(|target| !target.starts_with(etc))
+    .collect()
+}
+
+/// What the runtime may touch while it runs `command`, with the user's
+/// `$HOME` as the process has it; see [`policy_in`].
+#[must_use]
+pub fn policy(
+    runtime: &Runtime,
+    command: &ExtensionCommand,
+    data_dir: &Path,
+) -> compass_sandbox::Policy {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    policy_in(runtime, command, data_dir, home.as_deref())
+}
+
+/// What the runtime may touch while it runs `command`.
+///
+/// Read: the system (Node's libraries, certificates, ICU data, `/proc`), Node,
+/// the bundle and the extension's own directory, and of `home` only
+/// [`compass_sandbox::home::HOME_READ_ALLOWLIST`] (`~/.ssh/config`, the
+/// password store, the Hyprland, Sway and niri configurations), read-only and
+/// where it exists. Write: only the support and
+/// asset directories the runtime creates for this extension. Not `/tmp`:
+/// every other process's temporary files are there, so the extension gets its
+/// own, [`tmp_dir`], as `TMPDIR`.
+/// Execute: Node and the system's programs, so an extension that shells out
+/// still can, inside the same boundary. Paths that do not exist are left out,
+/// since Landlock cannot name them.
+#[must_use]
+pub fn policy_in(
+    runtime: &Runtime,
+    command: &ExtensionCommand,
+    data_dir: &Path,
+    home: Option<&Path>,
+) -> compass_sandbox::Policy {
+    let parent = |path: &Path| path.parent().map(Path::to_path_buf);
+    let home_reads = home
+        .map(compass_sandbox::home::home_reads)
+        .unwrap_or_default();
+    for (path, why) in &home_reads.refused {
+        tracing::info!(
+            path = %path.display(), ?why,
+            "not granting an extension this allowlisted path"
+        );
+    }
+    let read = [
+        "/usr", "/etc", "/proc", "/sys", "/dev", "/lib", "/lib64", "/bin", "/app",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .chain(parent(&runtime.node))
+    .chain(parent(&runtime.bundle))
+    .chain([command.extension_dir.clone()])
+    .chain(resolver_targets(Path::new("/etc")))
+    .chain(home_reads.granted)
+    // A certificate bundle the user pointed TLS at (a corporate CA, say):
+    // Node reads it at start, and without it every fetch fails.
+    .chain(
+        ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .map(PathBuf::from),
+    );
+    let write = [
+        support_dir(data_dir, command),
+        assets_dir(data_dir, command),
+    ];
+    // The system's trees whole, since a program run from `/usr/bin` may run
+    // its own helpers from `/usr/lib` or `/usr/libexec` (git does). The
+    // extension's installed directory too, for the few that ship a binary.
+    // Never the directories it may write: a program it wrote there would be
+    // any program it liked.
+    let execute = ["/usr", "/bin", "/lib", "/lib64", "/app"]
+        .into_iter()
+        .map(PathBuf::from)
+        .chain([runtime.node.clone(), command.extension_dir.clone()]);
+
+    let mut policy =
+        compass_sandbox::Policy::new().data_limit(compass_worker_host::cgroups::DATA_LIMIT_BYTES);
+    for path in read.filter(|path| path.exists()) {
+        policy = policy.read(path);
+    }
+    for path in write.into_iter().filter(|path| path.exists()) {
+        policy = policy.read(path.clone()).write(path);
+    }
+    for path in execute.filter(|path| path.exists()) {
+        policy = policy.execute(path);
+    }
+    policy
+}
+
+/// `<data>/support/<extension id>`, where the runtime keeps an extension's
+/// support files and logs.
+#[must_use]
+pub fn support_dir(data_dir: &Path, command: &ExtensionCommand) -> PathBuf {
+    data_dir.join("support").join(&command.extension_id)
+}
+
+/// `<support>/.tmp`, the extension's private temporary directory.
+#[must_use]
+pub fn tmp_dir(data_dir: &Path, command: &ExtensionCommand) -> PathBuf {
+    support_dir(data_dir, command).join(".tmp")
+}
+
+/// `<data>/extensions/<extension id>/assets`, which the runtime creates.
+#[must_use]
+pub fn assets_dir(data_dir: &Path, command: &ExtensionCommand) -> PathBuf {
+    data_dir
+        .join("extensions")
+        .join(&command.extension_id)
+        .join("assets")
+}
+
+fn installed_bundle() -> Option<PathBuf> {
+    let beside_exe = std::env::current_exe().ok().and_then(|exe| {
+        Some(
+            exe.parent()?
+                .parent()?
+                .join("share/compass")
+                .join(RUNTIME_FILE_NAME),
+        )
+    });
+    beside_exe
+        .into_iter()
+        .chain([Path::new("/app/share/compass").join(RUNTIME_FILE_NAME)])
+        .find(|path| path.is_file())
+}
+
+fn on_path(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+}
+
+/// Where a run keeps its local storage, and the key that opens it.
+#[derive(Clone)]
+pub struct Storage {
+    /// The database file.
+    pub path: PathBuf,
+    /// Its SQLCipher key.
+    pub key: [u8; compass_crypto::KEY_SIZE],
+}
+
+impl std::fmt::Debug for Storage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Storage")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The local-storage namespace an extension's preference values live in,
+/// beside its own `<id>:data`: in the same encrypted database, and out of
+/// the extension's reach, since its `LocalStorage` is scoped to `:data`.
+#[must_use]
+pub fn preferences_namespace(extension_id: &str) -> String {
+    format!("compass.preferences:{extension_id}")
+}
+
+/// The preference values stored for `extension_id`; empty when none are, or
+/// the database will not open.
+#[must_use]
+pub fn load_preferences(
+    storage: &Storage,
+    extension_id: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let Some(db) = open_storage(storage) else {
+        return serde_json::Map::new();
+    };
+    let local = compass_local_storage::LocalStorage::new(&db);
+    let scoped = local.scoped(&preferences_namespace(extension_id));
+    match scoped.list() {
+        Ok(values) => values
+            .into_iter()
+            .map(|(name, value)| (name, value.to_json()))
+            .collect(),
+        Err(err) => {
+            tracing::warn!(%err, "could not read extension preferences");
+            serde_json::Map::new()
+        }
+    }
+}
+
+/// Removes everything `extension_id` kept in local storage and its stored
+/// preference values; logged, never fatal, since the extension is already
+/// gone by the time this runs.
+pub fn clear_extension_data(storage: &Storage, extension_id: &str) {
+    let Some(db) = open_storage(storage) else {
+        return;
+    };
+    let local = compass_local_storage::LocalStorage::new(&db);
+    for namespace in [
+        compass_local_storage::namespace_for(extension_id),
+        preferences_namespace(extension_id),
+    ] {
+        if let Err(err) = local.scoped(&namespace).clear() {
+            tracing::warn!(%err, %namespace, "could not clear an uninstalled extension's data");
+        }
+    }
+}
+
+/// Keeps `values` for `extension_id`. A null or empty value removes the
+/// stored one, so clearing a field falls back to its default.
+///
+/// # Errors
+///
+/// A sentence: the database would not open, or a write failed.
+pub fn save_preferences(
+    storage: &Storage,
+    extension_id: &str,
+    values: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let db = open_storage(storage).ok_or("Compass could not open its extension storage")?;
+    let local = compass_local_storage::LocalStorage::new(&db);
+    let scoped = local.scoped(&preferences_namespace(extension_id));
+    for (name, value) in values {
+        let cleared = value.is_null() || value.as_str() == Some("");
+        let written = if cleared {
+            scoped.remove(name).map(drop)
+        } else {
+            scoped.set(name, &compass_local_storage::Value::from_json(value))
+        };
+        written.map_err(|err| format!("Compass could not keep the preference {name}: {err}"))?;
+    }
+    Ok(())
+}
+
+/// Starts `command` and returns once the runtime has loaded it; the run
+/// continues on its own thread. Blocking: call it off the async runtime.
+///
+/// `data_dir` is where the runtime keeps each extension's support and asset
+/// directories (`vicinae_path`). `storage` is `None` when there is no keyring;
+/// the command then gets "not implemented" for local storage.
+///
+/// # Errors
+///
+/// A sentence for the launcher: the command cannot run here, the runtime
+/// would not start, or it did not accept the command.
+pub fn start(
+    runtime: &Runtime,
+    command: &ExtensionCommand,
+    data_dir: &Path,
+    host: Host,
+) -> Result<Started, String> {
+    let Host {
+        storage,
+        shell,
+        views,
+        preferences,
+        arguments,
+        apps,
+        files,
+        commands,
+        context,
+    } = host;
+
+    // The runtime creates these itself, but a sandbox can only grant a path
+    // that exists, so they are made first.
+    for dir in [tmp_dir(data_dir, command), assets_dir(data_dir, command)] {
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            tracing::info!(dir = %dir.display(), %err, "could not prepare an extension directory");
+        }
+    }
+    let bundle = [
+        compass_worker_host::cgroups::node_heap_flag(),
+        runtime.bundle.to_string_lossy().into_owned(),
+    ];
+    let mut process = match &runtime.sandbox {
+        Some(launcher) => {
+            policy(runtime, command, data_dir).command(launcher, &runtime.node, &bundle)
+        }
+        None => {
+            let mut process = std::process::Command::new(&runtime.node);
+            process.args(bundle);
+            process
+        }
+    };
+    process.env("TMPDIR", tmp_dir(data_dir, command));
+    // `environment.vicinaeVersion` in the SDK. The runtime reads these, and
+    // the `VICINAE_*` names the C++ set only when they are absent.
+    process.env("COMPASS_VERSION", crate::developer::git_tag());
+    process.env(
+        "COMPASS_COMMIT",
+        option_env!("COMPASS_GIT_COMMIT").unwrap_or("unknown"),
+    );
+    let spawned = Worker::spawn(process);
+    let mut worker =
+        spawned.map_err(|err| format!("The extension runtime would not start: {err}"))?;
+    let pid = worker.pid();
+    confine_memory(pid, &command.extension_id);
+
+    // The watchdog also bounds the handshake: a runtime that never answers
+    // `load` is stopped, which ends the read below.
+    let activity = Arc::new(Activity::new());
+    watch(pid, Arc::clone(&activity), LOAD_TIMEOUT);
+
+    let options = LoadOptions {
+        mode: match command.mode {
+            CommandMode::View => compass_worker_host::extension_manager::CommandMode::View,
+            CommandMode::NoView => compass_worker_host::extension_manager::CommandMode::NoView,
+        },
+        env: CommandEnv::Production,
+        vicinae_path: data_dir.to_string_lossy().into_owned(),
+        entrypoint: command.entrypoint.to_string_lossy().into_owned(),
+        is_raycast: command.is_raycast,
+        command_name: command.name.clone(),
+        extension_id: command.extension_id.clone(),
+        extension_name: command.extension_name.clone(),
+        owner_or_author_name: command.author.clone(),
+        arguments,
+        preferences,
+        launch_context: context.as_ref().map_or(serde_json::Value::Null, |context| {
+            context.launch_context.clone()
+        }),
+        launch_type: LaunchType::User,
+        capabilities: capabilities(shell.is_some(), files.as_ref()),
+        fallback_text: context.and_then(|context| context.fallback_text),
+        cwd: None,
+    };
+    let load_id = ManagerClient::new(&mut worker)
+        .load(&options)
+        .map_err(|err| format!("The extension runtime did not take the command: {err}"))?;
+    let session_id = loop {
+        let message = worker
+            .next_message()
+            .map_err(|err| format!("The extension runtime failed: {err}"))?
+            .ok_or_else(|| "The extension runtime stopped before loading the command".to_owned())?;
+        if message.id != Some(load_id) {
+            continue;
+        }
+        break message
+            .result
+            .as_ref()
+            .and_then(|result| result.get("session_id"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("The extension runtime would not load {}", command.title))?
+            .to_owned();
+    };
+    ManagerClient::new(&mut worker)
+        .ready(&session_id)
+        .map_err(|err| format!("The extension runtime failed: {err}"))?;
+    activity.touch();
+    // A view lives until the person leaves it; only a no-view run is timed.
+    let view = (command.mode == CommandMode::View).then(|| views.open(pid));
+    if view.is_some() {
+        activity.run_forever();
+    } else {
+        activity.run_for(LIFETIME);
+    }
+
+    let title = command.title.clone();
+    let name = command.name.clone();
+    let namespace = compass_local_storage::namespace_for(&command.extension_id);
+    let extension_id = command.extension_id.clone();
+    let extension_title = command.extension_title.clone();
+    let assets = command.extension_dir.join("assets");
+    let handle = tokio::runtime::Handle::try_current().ok();
+    let started = view
+        .as_ref()
+        .map_or(Started::Ran, |view| Started::View(view.session));
+    std::thread::Builder::new()
+        .name(format!("extension {}", command.id))
+        .spawn(move || {
+            serve(
+                worker,
+                Served {
+                    session_id,
+                    extension_id,
+                    extension_title,
+                    title,
+                    name,
+                    namespace,
+                    apps,
+                    files,
+                    commands,
+                    assets,
+                },
+                storage,
+                ShellClipboard {
+                    shell,
+                    handle: handle.clone(),
+                },
+                handle,
+                &activity,
+                view,
+            );
+        })
+        .map_err(|err| format!("could not start a thread for the command: {err}"))?;
+    Ok(started)
+}
+
+/// Caps the worker's memory on the user's systemd, where it is reachable.
+/// The heap flag already bounds the JavaScript side; this is the rest, and a
+/// host without it (a Flatpak, a container) still runs the command.
+fn confine_memory(pid: u32, extension_id: &str) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let scope = compass_worker_host::cgroups::scope_name(extension_id, pid);
+    handle.spawn(async move {
+        match compass_worker_host::cgroups::confine(pid, &scope).await {
+            Ok(()) => tracing::debug!(%scope, "extension worker memory capped"),
+            Err(err) => tracing::info!(
+                %err,
+                "no systemd user manager to cap the extension's memory; the heap cap still holds"
+            ),
+        }
+    });
+}
+
+/// What one run needs from the engine beyond the command itself.
+#[derive(Debug, Default)]
+pub struct Host {
+    /// Local storage, or `None` without a keyring.
+    pub storage: Option<Storage>,
+    /// The GNOME Shell extension, which is the clipboard on GNOME.
+    pub shell: Option<Arc<compass_shell::ShellClient>>,
+    /// Where a view command's session is published.
+    pub views: Arc<Views>,
+    /// The preference values the command reads, already resolved.
+    pub preferences: serde_json::Value,
+    /// The argument values it was launched with.
+    pub arguments: serde_json::Value,
+    /// What `open()` and `getApplications()` reach, or `None` to refuse them.
+    pub apps: Option<crate::extension_apps::EngineApps>,
+    /// The file index `FileSearch/search` asks, or `None` for no index.
+    pub files: Option<Arc<crate::file_search::FileSearch>>,
+    /// What `Command/*` reaches, or `None` to refuse it.
+    pub commands: Option<crate::extension_commands::EngineCommands>,
+    /// The launch context and fallback text another command launched this
+    /// one with.
+    pub context: Option<crate::extension_commands::Context>,
+}
+
+/// `opts.capabilities`, as `ExtensionCommandRuntime` fills it: no browser
+/// is ever connected (ADR-0008); windows where a backend lists them; the
+/// wallpaper where a backend sets it; files where the indexer runs.
+/// Blocking: it may probe the compositor and the wallpaper daemons once.
+fn capabilities(shell: bool, files: Option<&Arc<crate::file_search::FileSearch>>) -> Capabilities {
+    let windows = crate::wlroots::compositor().is_some()
+        || crate::wlroots::session().is_some_and(|wlroots| wlroots.toplevels.is_some())
+        || shell;
+    Capabilities {
+        browser_extension: false,
+        window_management: windows,
+        wallpaper: crate::extension_wallpaper::EngineWallpaper::new(
+            tokio::runtime::Handle::try_current().ok(),
+        )
+        .can_set(),
+        file_search: files.is_some_and(|files| {
+            crate::extension_files::EngineFiles::new(Arc::clone(files)).is_available()
+        }),
+    }
+}
+
+/// How a run began.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Started {
+    /// A no-view command, running on its own.
+    Ran,
+    /// A view command: the launcher follows this session in [`Views`].
+    View(u64),
+}
+
+struct Served {
+    session_id: String,
+    extension_id: String,
+    extension_title: String,
+    title: String,
+    name: String,
+    namespace: String,
+    apps: Option<crate::extension_apps::EngineApps>,
+    files: Option<Arc<crate::file_search::FileSearch>>,
+    commands: Option<crate::extension_commands::EngineCommands>,
+    assets: PathBuf,
+}
+
+fn serve(
+    worker: Worker,
+    served: Served,
+    storage: Option<Storage>,
+    clipboard: ShellClipboard,
+    handle: Option<tokio::runtime::Handle>,
+    activity: &Activity,
+    view: Option<ViewHandle>,
+) {
+    let Served {
+        session_id,
+        extension_id,
+        extension_title,
+        title,
+        name,
+        namespace,
+        apps,
+        files,
+        commands,
+        assets,
+    } = served;
+    let title = title.as_str();
+    let clipboard_handle = clipboard.handle.clone();
+    let windows = compass_worker_host::window_service::WindowService::new(
+        crate::extension_windows::EngineWindows::detect(
+            clipboard.shell.clone(),
+            clipboard.handle.clone(),
+            apps.as_ref()
+                .map(crate::extension_apps::EngineApps::window_classes)
+                .unwrap_or_default(),
+        ),
+    );
+    let selection = Selection {
+        shell: clipboard.shell.clone(),
+        handle: clipboard.handle.clone(),
+    };
+    let database = storage.and_then(|storage| open_storage(&storage));
+    let local = database
+        .as_ref()
+        .map(compass_local_storage::LocalStorage::new);
+    let scoped = local.as_ref().map(|local| local.scoped(&namespace));
+    let storage_service = scoped.map(StorageService::new);
+    let shell = UiShellService::new(
+        HeadlessShell {
+            title: title.to_owned(),
+            handle,
+            alert: std::sync::Mutex::new(None),
+            view: view.as_ref().map(|view| view.state.clone()),
+            selection,
+            assets: Some(assets),
+        },
+        CommandInfo {
+            name: name.to_owned(),
+            icon: String::new(),
+        },
+    );
+    let clipboard = ClipboardService::new(clipboard);
+    let ui = UiService::new();
+    let mut router = Router::new()
+        .with(&shell)
+        .with(&clipboard)
+        .with(&ui)
+        .with(&windows);
+    if let Some(service) = &storage_service {
+        router = router.with(service);
+    }
+    let applications = apps.map(ApplicationService::new);
+    if let Some(service) = &applications {
+        router = router.with(service);
+    }
+    let tokens = database.as_ref().map(|db| {
+        OAuthService::new(
+            compass_oauth_store::TokenStore::new(db),
+            extension_id.as_str(),
+        )
+    });
+    if let Some(service) = &tokens {
+        router = router.with(service);
+    }
+    let authorize = AuthorizeService::new(EngineAuthorizer::default());
+    router = router.with(&authorize);
+    let file_search =
+        files.map(|files| FileSearchService::new(crate::extension_files::EngineFiles::new(files)));
+    if let Some(service) = &file_search {
+        router = router.with(service);
+    }
+    let wallpaper = WallpaperService::new(crate::extension_wallpaper::EngineWallpaper::new(
+        clipboard_handle.clone(),
+    ));
+    router = router.with(&wallpaper);
+    let browser = BrowserService::new(crate::extension_browser::NoBrowsers);
+    router = router.with(&browser);
+    let command_service = commands.map(CommandService::new);
+    if let Some(service) = &command_service {
+        router = router.with(service);
+    }
+    let broker = crate::host_commands::SessionBroker::new(
+        extension_id.as_str(),
+        if extension_title.is_empty() {
+            title
+        } else {
+            extension_title.as_str()
+        },
+        crate::host_commands::Grants::from_environment(),
+        crate::host_commands::Runner::detect(),
+        compass_core::raycast_overrides::Manifest::shipped(),
+    );
+    let host_commands = HostCommandService::new(&*broker);
+    router = router.with(&host_commands);
+    let mut session = Session::new(worker, session_id.as_str(), router);
+    if let Some(view) = &view {
+        view.attach(session.events());
+    }
+    let mut ended = None;
+    loop {
+        let turn = match session.pump_once() {
+            Ok(turn) => turn,
+            Err(err) => {
+                if !activity.stopped() {
+                    tracing::warn!(command = title, error = %err, "extension session ended");
+                    ended = Some(format!("{title} stopped: {err}"));
+                }
+                break;
+            }
+        };
+        activity.touch();
+        match turn {
+            Turn::Closed => break,
+            Turn::Crashed { reason } => {
+                tracing::warn!(command = title, %reason, "extension command crashed");
+                ended = Some(format!("{title} crashed: {reason}"));
+                break;
+            }
+            Turn::Answered { method } if method == "UI/render" => {
+                if let (Some(view), Some(root)) = (&view, ui.top()) {
+                    let depth = u32::try_from(ui.stack().len()).unwrap_or(u32::MAX);
+                    view.publish(compass_worker_host::view_model::to_view(&root), depth);
+                }
+            }
+            Turn::Deferred { method, deferral } if method == "OAuth/authorize" => {
+                let request = authorize
+                    .authorizer()
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                let events = session.events();
+                let refused = match request {
+                    Some(request) => begin_authorization(
+                        &session_id,
+                        request,
+                        deferral.clone(),
+                        events,
+                        view.as_ref().map(|view| view.state.clone()),
+                        applications.as_ref().map(ApplicationService::apps),
+                    )
+                    .err(),
+                    None => Some("the authorization request was lost".to_owned()),
+                };
+                if let Some(reason) = refused
+                    && let Err(err) = session.fail_deferred(&deferral, &reason)
+                {
+                    tracing::warn!(command = title, error = %err, "could not refuse an authorization");
+                    break;
+                }
+            }
+            Turn::Deferred { method, deferral } if method == "HostCommand/run" => {
+                match broker.take() {
+                    Some(request) => broker.dispatch(
+                        request,
+                        deferral,
+                        Arc::new(session.events()),
+                        view.as_ref()
+                            .map(|view| view as &dyn crate::host_commands::Asker),
+                    ),
+                    None => {
+                        if let Err(err) =
+                            session.fail_deferred(&deferral, "the host command request was lost")
+                        {
+                            tracing::warn!(command = title, error = %err, "could not refuse a host command");
+                            break;
+                        }
+                    }
+                }
+            }
+            Turn::Deferred { method, deferral } => {
+                // Otherwise only an alert defers. A view shows it and the launcher
+                // answers; a command with no view has nowhere to show it, and
+                // "no" is the answer a dismissed alert gives.
+                let alert = shell
+                    .shell()
+                    .alert
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                if let (Some(view), Some(alert)) = (&view, alert) {
+                    view.ask(alert, deferral);
+                    continue;
+                }
+                tracing::info!(command = title, %method, "answered a dialog with no");
+                if let Err(err) = session.answer_deferred(&deferral, serde_json::json!(false)) {
+                    tracing::warn!(command = title, error = %err, "could not answer a dialog");
+                    break;
+                }
+            }
+            Turn::Answered { .. } | Turn::Nothing | Turn::OtherSession { .. } => {}
+        }
+    }
+    activity.stop();
+    OAUTH.abandon(&session_id);
+    if let Some(view) = view {
+        view.end(ended);
+    }
+}
+
+/// How the toast a view shows while an OAuth sign-in waits on the browser
+/// begins; the provider's name follows.
+pub const SIGN_IN_TOAST: &str = "Continue in your browser to connect";
+
+/// Authorizations waiting on a browser, by the `state` their URL carries.
+///
+/// Process-wide, like the C++ `OAuthService`'s request map: the redirect
+/// arrives as a deeplink over IPC, with nothing but the `state` to say which
+/// extension's call it answers.
+static OAUTH: std::sync::LazyLock<OAuthRequests> = std::sync::LazyLock::new(OAuthRequests::default);
+
+#[derive(Default)]
+struct OAuthRequests(std::sync::Mutex<std::collections::HashMap<String, PendingAuthorization>>);
+
+struct PendingAuthorization {
+    session_id: String,
+    provider: String,
+    events: SessionEvents,
+    deferral: Deferral,
+    view: Option<tokio::sync::watch::Sender<ViewState>>,
+}
+
+impl OAuthRequests {
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, PendingAuthorization>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Forgets `session_id`'s authorizations: its worker is gone, so there is
+    /// no promise left to settle.
+    fn abandon(&self, session_id: &str) {
+        self.lock()
+            .retain(|_, pending| pending.session_id != session_id);
+    }
+}
+
+/// Takes the `OAuth/authorize` call the service defers, for the serving
+/// loop to begin.
+#[derive(Debug, Default)]
+struct EngineAuthorizer(std::sync::Mutex<Option<AuthorizeRequest>>);
+
+impl Authorizer for EngineAuthorizer {
+    fn authorize(&self, request: AuthorizeRequest, _deferral: &Deferral) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(request);
+    }
+}
+
+/// Opens `request`'s URL in the browser and waits for [`oauth_redirect`].
+/// While it waits, the view says where the person has to go.
+fn begin_authorization(
+    session_id: &str,
+    request: AuthorizeRequest,
+    deferral: Deferral,
+    events: SessionEvents,
+    view: Option<tokio::sync::watch::Sender<ViewState>>,
+    apps: Option<&crate::extension_apps::EngineApps>,
+) -> Result<(), String> {
+    use compass_worker_host::application_service::Apps as _;
+    let state = request
+        .state
+        .clone()
+        .ok_or("the authorization URL has no state parameter")?;
+    let apps = apps.ok_or("Compass cannot open a browser for this command")?;
+    let browser = apps
+        .default_opener(&request.url)
+        .ok_or("No web browser is installed to sign in with")?;
+    let provider = if request.provider.is_empty() {
+        "the provider".to_owned()
+    } else {
+        request.provider.clone()
+    };
+    if let Some(view) = &view {
+        view.send_modify(|state| {
+            state.version += 1;
+            state.toast = Some(compass_ipc::ExtensionToast {
+                title: format!("{SIGN_IN_TOAST} {provider}"),
+                message: request.description.clone(),
+                style: compass_ipc::ExtensionToastStyle::Animated,
+            });
+        });
+    }
+    OAUTH.lock().insert(
+        state,
+        PendingAuthorization {
+            session_id: session_id.to_owned(),
+            provider,
+            events,
+            deferral,
+            view,
+        },
+    );
+    apps.launch(&browser, &request.url);
+    Ok(())
+}
+
+/// Answers the authorization a provider's redirect names: `url` is the
+/// `raycast://oauth?code=…&state=…` deeplink the desktop handed `compass`.
+///
+/// # Errors
+///
+/// A sentence: not an OAuth redirect, no authorization waiting on its state,
+/// or the extension could not be told.
+pub fn oauth_redirect(url: &str) -> Result<(), String> {
+    let redirect = Redirect::parse(url)?;
+    let pending = OAUTH
+        .lock()
+        .remove(redirect.state())
+        .ok_or("No extension is waiting on that authorization; it may have been closed")?;
+    let (answered, toast) = match &redirect {
+        Redirect::Code { code, .. } => (
+            pending
+                .events
+                .answer(&pending.deferral, serde_json::json!({ "code": code })),
+            compass_ipc::ExtensionToast {
+                title: format!("Connected to {}", pending.provider),
+                message: String::new(),
+                style: compass_ipc::ExtensionToastStyle::Success,
+            },
+        ),
+        Redirect::Refused { reason, .. } => (
+            pending.events.fail(&pending.deferral, reason),
+            compass_ipc::ExtensionToast {
+                title: format!("{} did not connect", pending.provider),
+                message: reason.clone(),
+                style: compass_ipc::ExtensionToastStyle::Failure,
+            },
+        ),
+    };
+    if let Some(view) = &pending.view {
+        view.send_modify(|state| {
+            state.version += 1;
+            state.toast = Some(toast);
+        });
+    }
+    answered.map_err(|err| format!("The extension did not take the authorization: {err}"))
+}
+
+pub(crate) fn open_storage(
+    storage: &Storage,
+) -> Option<compass_sqlcipher_sys::rusqlite::Connection> {
+    let opened = compass_sqlcipher_sys::open(&storage.path, &storage.key)
+        .map_err(|err| err.to_string())
+        .and_then(|db| {
+            compass_db::vicinae::run(&db)
+                .map(|()| db)
+                .map_err(|err| err.to_string())
+        });
+    match opened {
+        Ok(db) => Some(db),
+        Err(err) => {
+            tracing::warn!(path = %storage.path.display(), %err, "extension storage unavailable");
+            None
+        }
+    }
+}
+
+/// When a run last said anything, and whether it has been stopped.
+struct Activity {
+    started: Instant,
+    last: AtomicU64,
+    deadline: AtomicU64,
+    stopped: AtomicBool,
+}
+
+impl Activity {
+    fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            last: AtomicU64::new(0),
+            deadline: AtomicU64::new(u64::MAX),
+            stopped: AtomicBool::new(false),
+        }
+    }
+
+    fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    fn touch(&self) {
+        self.last.store(self.elapsed_ms(), Ordering::Relaxed);
+    }
+
+    /// From now on, the run is over after [`IDLE`] of quiet or `lifetime`.
+    fn run_for(&self, lifetime: Duration) {
+        let lifetime = u64::try_from(lifetime.as_millis()).unwrap_or(u64::MAX);
+        self.deadline.store(
+            self.elapsed_ms().saturating_add(lifetime),
+            Ordering::Relaxed,
+        );
+    }
+
+    /// A view's run: over only when stopped.
+    fn run_forever(&self) {
+        self.deadline.store(u64::MAX - 1, Ordering::Relaxed);
+        self.last.store(u64::MAX, Ordering::Relaxed);
+    }
+
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Relaxed);
+    }
+
+    fn stopped(&self) -> bool {
+        self.stopped.load(Ordering::Relaxed)
+    }
+
+    /// Whether the run should be ended now. Before [`Self::run_for`], only
+    /// `handshake` bounds it.
+    fn expired(&self, handshake: Duration) -> bool {
+        let now = self.elapsed_ms();
+        let deadline = self.deadline.load(Ordering::Relaxed);
+        if deadline == u64::MAX {
+            return now > u64::try_from(handshake.as_millis()).unwrap_or(u64::MAX);
+        }
+        if deadline == u64::MAX - 1 {
+            return false;
+        }
+        let idle = u64::try_from(IDLE.as_millis()).unwrap_or(u64::MAX);
+        now > deadline || now.saturating_sub(self.last.load(Ordering::Relaxed)) > idle
+    }
+}
+
+/// Stops the runtime at `pid` once the run is over, which closes its output
+/// and ends [`serve`]'s loop.
+fn watch(pid: u32, activity: Arc<Activity>, handshake: Duration) {
+    let spawned = std::thread::Builder::new()
+        .name("extension watchdog".to_owned())
+        .spawn(move || {
+            while !activity.stopped() {
+                if activity.expired(handshake) {
+                    activity.stop();
+                    // The runtime is our own child; SIGTERM lets Node end its
+                    // worker threads, and `serve` then reads end-of-file.
+                    // kill(1) rather than kill(2): this crate forbids unsafe.
+                    let _ = std::process::Command::new("kill")
+                        .arg("-TERM")
+                        .arg(pid.to_string())
+                        .status();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
+    if let Err(err) = spawned {
+        tracing::warn!(error = %err, "no watchdog for an extension run");
+    }
+}
+
+/// The shell around a command with no view: what it would show on screen
+/// becomes a desktop notification.
+struct HeadlessShell {
+    title: String,
+    handle: Option<tokio::runtime::Handle>,
+    /// The alert `show_alert` was last given, for the serving loop to hand
+    /// the launcher when the call defers.
+    alert: std::sync::Mutex<Option<compass_ipc::ExtensionAlert>>,
+    /// A view's state, where its toasts are shown; `None` for a no-view run,
+    /// whose toasts become notifications.
+    view: Option<tokio::sync::watch::Sender<ViewState>>,
+    /// Where `getSelectedText` reads from.
+    selection: Selection,
+    /// The extension's `assets` directory, which a notification's icon may
+    /// name a file in.
+    assets: Option<PathBuf>,
+}
+
+/// `getSelectedText`'s answer, verbatim from the C++, when nothing is
+/// selected or there is nowhere to read a selection from.
+pub const NO_SELECTED_TEXT: &str = "Unable to get selected text";
+
+/// The primary selection, as `LinuxSelectionService` reads it: over
+/// data-control on a wlroots compositor, and through the Shell extension on
+/// GNOME, where Mutter has no data-control and only a focused client may read
+/// the primary selection.
+struct Selection {
+    shell: Option<Arc<compass_shell::ShellClient>>,
+    handle: Option<tokio::runtime::Handle>,
+}
+
+impl Selection {
+    fn text(&self) -> Result<String, String> {
+        let text = if data_control() {
+            compass_wayland::clipboard::read_primary_text().unwrap_or_else(|err| {
+                tracing::info!(error = %err, "could not read the primary selection");
+                None
+            })
+        } else if let (Some(shell), Some(handle)) = (&self.shell, &self.handle) {
+            let shell = Arc::clone(shell);
+            handle
+                .block_on(async move { shell.primary_selection().await })
+                .unwrap_or_else(|err| {
+                    tracing::info!(error = %err, "could not read the primary selection");
+                    None
+                })
+        } else {
+            None
+        };
+        text.ok_or_else(|| NO_SELECTED_TEXT.to_owned())
+    }
+}
+
+/// The notification `FreedesktopNotificationClient::send` posts: from
+/// `Compass`, with the extension's urgency as the `urgency` hint when it gave
+/// one, and its icon as the file [`crate::notification_icon`] made of it.
+fn desktop_notification(
+    title: &str,
+    body: &str,
+    urgency: Option<compass_worker_host::ui_shell_service::Urgency>,
+    icon: Option<&Path>,
+) -> notify_rust::Notification {
+    use compass_worker_host::ui_shell_service::Urgency;
+    let mut notification = notify_rust::Notification::new();
+    notification.appname("Compass").summary(title).body(body);
+    if let Some(urgency) = urgency {
+        notification.urgency(match urgency {
+            Urgency::Low => notify_rust::Urgency::Low,
+            Urgency::Normal => notify_rust::Urgency::Normal,
+            Urgency::High => notify_rust::Urgency::Critical,
+        });
+    }
+    if let Some(path) = icon {
+        notification.icon(&path.to_string_lossy());
+    }
+    notification
+}
+
+impl HeadlessShell {
+    fn notify(&self, title: &str, body: &str) {
+        self.post(desktop_notification(title, body, None, None));
+    }
+
+    fn post(&self, notification: notify_rust::Notification) {
+        let (title, body) = (notification.summary.clone(), notification.body.clone());
+        let Some(handle) = &self.handle else {
+            tracing::info!(
+                command = self.title,
+                title,
+                body,
+                "no runtime to notify from"
+            );
+            return;
+        };
+        if let Err(err) = handle.block_on(notification.show_async()) {
+            tracing::info!(command = self.title, title, body, error = %err, "not notified");
+        }
+    }
+}
+
+impl Shell for HeadlessShell {
+    fn set_toast(&self, title: &str, style: ToastStyle, message: &str) {
+        if let Some(view) = &self.view {
+            let toast = compass_ipc::ExtensionToast {
+                title: title.to_owned(),
+                message: message.to_owned(),
+                style: match style {
+                    ToastStyle::Success => compass_ipc::ExtensionToastStyle::Success,
+                    ToastStyle::Info => compass_ipc::ExtensionToastStyle::Info,
+                    ToastStyle::Warning => compass_ipc::ExtensionToastStyle::Warning,
+                    ToastStyle::Danger => compass_ipc::ExtensionToastStyle::Failure,
+                    ToastStyle::Dynamic => compass_ipc::ExtensionToastStyle::Animated,
+                },
+            };
+            view.send_modify(|state| {
+                state.version += 1;
+                state.toast = Some(toast);
+            });
+            return;
+        }
+        // A no-view command's success toast is the same news as the HUD it
+        // usually shows next; only a failure is worth interrupting for.
+        if style == ToastStyle::Danger {
+            self.notify(title, message);
+        } else {
+            tracing::info!(command = self.title, title, message, "toast");
+        }
+    }
+
+    fn clear_toast(&self) {
+        if let Some(view) = &self.view {
+            view.send_modify(|state| {
+                if state.toast.take().is_some() {
+                    state.version += 1;
+                }
+            });
+        }
+    }
+
+    fn close_window(&self, _options: CloseWindow) {}
+
+    fn show_hud(&self, text: &str) {
+        self.notify(&self.title, text);
+    }
+
+    fn pop_to_root(&self, _clear_search: bool) {}
+
+    fn push_view(&self, _command: &CommandInfo) {}
+
+    fn pop_view(&self) {}
+
+    fn set_search_text(&self, _text: &str) {}
+
+    fn selected_text(&self) -> Result<String, String> {
+        self.selection.text()
+    }
+
+    fn send_notification(&self, notification: &Notification) {
+        let icon = notification.icon.as_ref().and_then(|icon| {
+            crate::notification_icon::icon_path(
+                icon,
+                &crate::notification_icon::Sources::from_environment(self.assets.as_deref()),
+            )
+        });
+        self.post(desktop_notification(
+            &notification.title,
+            &notification.body,
+            Some(notification.urgency),
+            icon.as_deref(),
+        ));
+    }
+
+    fn show_alert(&self, alert: &Alert, _deferral: &Deferral) {
+        *self
+            .alert
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(compass_ipc::ExtensionAlert {
+                title: alert.title.clone(),
+                message: alert.message.clone(),
+                confirm_text: alert.confirm_text.clone(),
+                cancel_text: alert.cancel_text.clone(),
+                remember_text: None,
+            });
+    }
+}
+
+/// Running view commands, as the launcher follows them.
+///
+/// Each session has a [`ViewState`] the launcher long-polls
+/// (`ExtensionView`), and a way to reach the extension (`ExtensionEvent`)
+/// while the serving thread blocks reading it.
+#[derive(Debug, Default)]
+pub struct Views {
+    next: std::sync::atomic::AtomicU64,
+    sessions: std::sync::Mutex<std::collections::HashMap<u64, ViewEntry>>,
+}
+
+#[derive(Debug)]
+struct ViewEntry {
+    state: tokio::sync::watch::Sender<ViewState>,
+    events: Arc<std::sync::Mutex<Option<SessionEvents>>>,
+    pid: u32,
+    /// What a shown alert is waiting to answer.
+    asking: Arc<std::sync::Mutex<Option<Asking>>>,
+}
+
+/// What a view session shows now.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ViewState {
+    /// Bumped on every change.
+    pub version: u64,
+    /// The view, as `compass_extension_api::View` JSON; `None` before the
+    /// first render.
+    pub view: Option<String>,
+    /// Why it cannot be drawn (a component Compass does not support), or why
+    /// it ended.
+    pub problem: Option<String>,
+    /// Whether the command has ended.
+    pub ended: bool,
+    /// How many views the extension has pushed, the root one included.
+    pub depth: u32,
+    /// A confirmation the extension waits on.
+    pub alert: Option<compass_ipc::ExtensionAlert>,
+    /// The toast the extension shows over its view.
+    pub toast: Option<compass_ipc::ExtensionToast>,
+}
+
+impl Views {
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<u64, ViewEntry>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn open(self: &Arc<Self>, pid: u32) -> ViewHandle {
+        let session = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        let (state, _) = tokio::sync::watch::channel(ViewState::default());
+        let events = Arc::new(std::sync::Mutex::new(None));
+        let asking = Arc::new(std::sync::Mutex::new(None));
+        self.lock().insert(
+            session,
+            ViewEntry {
+                state: state.clone(),
+                events: Arc::clone(&events),
+                pid,
+                asking: Arc::clone(&asking),
+            },
+        );
+        ViewHandle {
+            session,
+            state,
+            events,
+            asking,
+            views: Arc::clone(self),
+        }
+    }
+
+    /// A session number no view has, for a view this module does not run
+    /// (a Rhai script's), so the launcher's session numbers stay unique.
+    #[must_use]
+    pub fn reserve(&self) -> u64 {
+        self.next.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Follows `session`'s state; `None` for a session that is not running.
+    #[must_use]
+    pub fn watch(&self, session: u64) -> Option<tokio::sync::watch::Receiver<ViewState>> {
+        self.lock()
+            .get(&session)
+            .map(|entry| entry.state.subscribe())
+    }
+
+    /// Sends `handler` with `args` to `session`'s extension.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: the session is gone, or its worker is.
+    pub fn activate(
+        &self,
+        session: u64,
+        handler: &str,
+        args: &[serde_json::Value],
+    ) -> Result<(), String> {
+        let events = self
+            .lock()
+            .get(&session)
+            .map(|entry| Arc::clone(&entry.events))
+            .ok_or_else(|| "That extension view has closed".to_owned())?;
+        let events = events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| "That extension view has not started yet".to_owned())?;
+        events
+            .handler_activated(
+                &compass_extension_api::action::HandlerId::new(handler),
+                args,
+            )
+            .map_err(|err| format!("The extension did not take it: {err}"))
+    }
+
+    /// Answers the alert `session` is showing: confirmed or not.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: no such session, no alert waiting, or the worker is gone.
+    pub fn answer_alert(&self, session: u64, confirmed: bool) -> Result<(), String> {
+        self.answer_with(session, if confirmed { Answer::Yes } else { Answer::No })
+    }
+
+    /// Answers the alert `session` is showing with its third choice, the one
+    /// that is remembered (a host program's "Always Allow"). An alert with no
+    /// third choice takes it as confirming.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: no such session, no alert waiting, or the worker is gone.
+    pub fn answer_alert_always(&self, session: u64) -> Result<(), String> {
+        self.answer_with(session, Answer::Always)
+    }
+
+    fn answer_with(&self, session: u64, answer: Answer) -> Result<(), String> {
+        let (events, asking, state) = {
+            let sessions = self.lock();
+            let entry = sessions
+                .get(&session)
+                .ok_or_else(|| "That extension view has closed".to_owned())?;
+            (
+                Arc::clone(&entry.events),
+                Arc::clone(&entry.asking),
+                entry.state.clone(),
+            )
+        };
+        let asking = asking
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .ok_or_else(|| "That extension is not asking anything".to_owned())?;
+        state.send_modify(|state| {
+            state.version += 1;
+            state.alert = None;
+        });
+        let events = events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| "That extension view has not started yet".to_owned())?;
+        asking.settle(answer, &events)
+    }
+
+    /// Pops `session`'s top view, as Escape on a pushed view does. An alert
+    /// the view was showing is answered "no" first: leaving a view is one of
+    /// the ways out of a dialog that is not its confirm button.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: the session is gone, or its worker is.
+    pub fn pop(&self, session: u64) -> Result<(), String> {
+        let (events, asking, state) = {
+            let sessions = self.lock();
+            let entry = sessions
+                .get(&session)
+                .ok_or_else(|| "That extension view has closed".to_owned())?;
+            (
+                Arc::clone(&entry.events),
+                Arc::clone(&entry.asking),
+                entry.state.clone(),
+            )
+        };
+        let events = events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| "That extension view has not started yet".to_owned())?;
+        settle(&asking, &state, Some(&events));
+        events
+            .view_popped()
+            .map_err(|err| format!("The extension did not take it: {err}"))
+    }
+
+    /// Ends `session`: its runtime is stopped. `false` when it was not running.
+    pub fn close(&self, session: u64) -> bool {
+        let Some(entry) = self.lock().remove(&session) else {
+            return false;
+        };
+        let _ = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(entry.pid.to_string())
+            .status();
+        true
+    }
+}
+
+/// The serving thread's side of one view session.
+struct ViewHandle {
+    session: u64,
+    state: tokio::sync::watch::Sender<ViewState>,
+    events: Arc<std::sync::Mutex<Option<SessionEvents>>>,
+    asking: Arc<std::sync::Mutex<Option<Asking>>>,
+    views: Arc<Views>,
+}
+
+impl ViewHandle {
+    fn attach(&self, events: SessionEvents) {
+        *self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(events);
+    }
+
+    fn publish(
+        &self,
+        view: Result<compass_extension_api::View, compass_worker_host::view_model::Unsupported>,
+        depth: u32,
+    ) {
+        // The extension navigated (pushed or popped a view) while a dialog
+        // was open: that is a way out of the dialog, and it answers "no".
+        // Its first render is not navigating: a question asked while the
+        // command loads (a host program's consent) stays open across it.
+        let previous = self.state.borrow().depth;
+        if previous != 0 && previous != depth {
+            self.settle();
+        }
+        self.state.send_modify(|state| {
+            state.version += 1;
+            state.depth = depth;
+            match view {
+                Ok(view) => {
+                    state.view = serde_json::to_string(&view).ok();
+                    state.problem = None;
+                }
+                Err(unsupported) => state.problem = Some(unsupported.to_string()),
+            }
+        });
+    }
+
+    /// Shows `alert` and holds `deferral` until the launcher answers. An
+    /// alert already showing is answered "no" first, as `AlertModel` cancels
+    /// the one a second replaces: it is some promise the extension is still
+    /// waiting on.
+    fn ask(&self, alert: compass_ipc::ExtensionAlert, deferral: Deferral) {
+        self.show(alert, Asking::Alert(deferral));
+    }
+
+    fn show(&self, alert: compass_ipc::ExtensionAlert, asking: Asking) {
+        self.settle();
+        *self
+            .asking
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(asking);
+        self.state.send_modify(|state| {
+            state.version += 1;
+            state.alert = Some(alert);
+        });
+    }
+
+    /// Answers "no" to the alert this view is showing, if it is showing one.
+    fn settle(&self) {
+        let events = self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        settle(&self.asking, &self.state, events.as_ref());
+    }
+
+    fn end(self, why: Option<String>) {
+        self.state.send_modify(|state| {
+            state.version += 1;
+            state.ended = true;
+            if why.is_some() {
+                state.problem = why;
+            }
+        });
+        self.views.lock().remove(&self.session);
+    }
+}
+
+impl crate::host_commands::Asker for ViewHandle {
+    /// Shows `alert`; `answered` gets the person's answer, or [`Answer::No`]
+    /// if the view navigates or another alert replaces it.
+    fn ask(&self, alert: compass_ipc::ExtensionAlert, answered: crate::host_commands::Answered) {
+        self.show(alert, Asking::Consent(answered));
+    }
+}
+
+/// What a person answered an alert with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    /// Escape, or any way out of the alert that is not a button.
+    No,
+    /// Enter.
+    Yes,
+    /// The third, remembered choice.
+    Always,
+}
+
+/// What a shown alert answers.
+pub(crate) enum Asking {
+    /// An extension's `confirmAlert`, which gets `true` or `false`.
+    Alert(Deferral),
+    /// The engine's own question, asked for an extension (a host program's
+    /// consent); the engine acts on the answer.
+    Consent(Box<dyn FnOnce(Answer) + Send>),
+}
+
+impl std::fmt::Debug for Asking {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Alert(deferral) => f.debug_tuple("Alert").field(deferral).finish(),
+            Self::Consent(_) => f.write_str("Consent"),
+        }
+    }
+}
+
+impl Asking {
+    fn settle(self, answer: Answer, events: &SessionEvents) -> Result<(), String> {
+        match self {
+            Self::Alert(deferral) => events
+                .answer(&deferral, serde_json::json!(answer != Answer::No))
+                .map_err(|err| format!("The extension did not take the answer: {err}")),
+            Self::Consent(answered) => {
+                answered(answer);
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Takes what the shown alert is waiting on, if anything, clears it from
+/// `state` and answers it "no": through `events` for an extension's alert,
+/// to the engine for its own question.
+fn settle(
+    asking: &std::sync::Mutex<Option<Asking>>,
+    state: &tokio::sync::watch::Sender<ViewState>,
+    events: Option<&SessionEvents>,
+) {
+    let Some(asking) = asking
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+    else {
+        return;
+    };
+    state.send_modify(|state| {
+        state.version += 1;
+        state.alert = None;
+    });
+    let answered = match (asking, events) {
+        (Asking::Consent(answered), _) => {
+            answered(Answer::No);
+            Ok(())
+        }
+        (asking, Some(events)) => asking.settle(Answer::No, events),
+        (Asking::Alert(_), None) => Err("no session".to_owned()),
+    };
+    if answered.is_err() {
+        tracing::warn!("could not answer a dismissed dialog; the extension may wait on it");
+    }
+}
+
+/// The clipboard an extension reaches: the GNOME Shell extension's, or
+/// data-control on a wlroots compositor.
+pub(crate) struct ShellClipboard {
+    shell: Option<Arc<compass_shell::ShellClient>>,
+    handle: Option<tokio::runtime::Handle>,
+}
+
+impl ShellClipboard {
+    /// The clipboard through `shell`, or data-control on wlroots; `None`
+    /// when this session has neither.
+    pub(crate) fn available(
+        shell: Option<Arc<compass_shell::ShellClient>>,
+        handle: Option<tokio::runtime::Handle>,
+    ) -> Option<Self> {
+        (data_control() || (shell.is_some() && handle.is_some())).then_some(Self { shell, handle })
+    }
+}
+
+impl ShellClipboard {
+    fn run<T>(
+        &self,
+        what: &str,
+        call: impl FnOnce(
+            Arc<compass_shell::ShellClient>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = compass_shell::Result<T>> + Send>,
+        >,
+    ) -> Option<T> {
+        let (Some(shell), Some(handle)) = (&self.shell, &self.handle) else {
+            tracing::info!(
+                what,
+                "no GNOME Shell extension; the clipboard call did nothing"
+            );
+            return None;
+        };
+        match handle.block_on(call(Arc::clone(shell))) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                tracing::info!(what, error = %err, "clipboard call failed");
+                None
+            }
+        }
+    }
+
+    fn selection(content: Content) -> Option<compass_shell::ClipboardContent> {
+        match content {
+            Content::NoData => None,
+            Content::Text(text) => Some(compass_shell::ClipboardContent::text(text)),
+            Content::Html {
+                text: Some(text), ..
+            } => Some(compass_shell::ClipboardContent::text(text)),
+            Content::Html { html, text: None } => Some(compass_shell::ClipboardContent::binary(
+                html.into_bytes(),
+                "text/html",
+            )),
+            Content::Urls(urls) => Some(compass_shell::ClipboardContent::binary(
+                urls.join("\r\n").into_bytes(),
+                "text/uri-list",
+            )),
+        }
+    }
+}
+
+/// The selection as data-control offers, for a wlroots compositor.
+///
+/// Richer than [`ShellClipboard::selection`]: data-control can offer several
+/// types at once, so HTML keeps its plain-text alternative and a concealed
+/// copy carries the marker the history watcher skips.
+fn data_control_offers(
+    content: Content,
+    concealed: bool,
+) -> Option<Vec<compass_wayland::data_control::Offer>> {
+    use compass_wayland::data_control::{CONCEALED_MIME_TYPE, Offer};
+    let offer = |mime: &str, data: Vec<u8>| Offer {
+        mime_type: mime.to_owned(),
+        data,
+    };
+    let mut offers = match content {
+        Content::NoData => return None,
+        Content::Text(text) => vec![offer("text/plain;charset=utf-8", text.into_bytes())],
+        Content::Html { html, text } => {
+            let mut offers = vec![offer("text/html", html.into_bytes())];
+            if let Some(text) = text {
+                offers.push(offer("text/plain;charset=utf-8", text.into_bytes()));
+            }
+            offers
+        }
+        Content::Urls(urls) => vec![offer("text/uri-list", urls.join("\r\n").into_bytes())],
+    };
+    if concealed {
+        offers.push(offer(CONCEALED_MIME_TYPE, Vec::new()));
+    }
+    Some(offers)
+}
+
+/// Whether this session's clipboard is reached over data-control.
+fn data_control() -> bool {
+    crate::wlroots::session().is_some_and(|wlroots| wlroots.capabilities.data_control)
+}
+
+fn data_control_set(what: &str, offers: Vec<compass_wayland::data_control::Offer>) {
+    if let Err(err) = compass_wayland::clipboard::set(offers) {
+        tracing::info!(what, error = %err, "clipboard call failed");
+    }
+}
+
+fn data_control_read() -> ReadContent {
+    let text = |mime: &str| {
+        compass_wayland::clipboard::read(mime)
+            .ok()
+            .flatten()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    };
+    ReadContent {
+        text: text("text/plain").unwrap_or_default(),
+        html: text("text/html"),
+        urls: text("text/uri-list")
+            .map(|list| {
+                list.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+impl Clipboard for ShellClipboard {
+    fn copy(&self, content: Content, options: CopyOptions) {
+        if data_control() {
+            if let Some(offers) = data_control_offers(content, options.concealed) {
+                data_control_set("copy", offers);
+            }
+            return;
+        }
+        let Some(selection) = Self::selection(content) else {
+            return;
+        };
+        self.run("copy", move |shell| {
+            Box::pin(async move { shell.set_clipboard(&selection).await })
+        });
+    }
+
+    fn paste(&self, content: Content) {
+        if data_control() {
+            if let Some(offers) = data_control_offers(content, false) {
+                match &self.handle {
+                    Some(handle) => crate::paste::paste_blocking(handle, offers),
+                    None => data_control_set("paste", offers),
+                }
+            }
+            return;
+        }
+        let Some(selection) = Self::selection(content) else {
+            return;
+        };
+        self.run("paste", move |shell| {
+            Box::pin(async move {
+                shell.set_clipboard(&selection).await?;
+                shell.paste(&[]).await
+            })
+        });
+    }
+
+    fn clear(&self) {
+        if data_control() {
+            if let Err(err) = compass_wayland::clipboard::clear() {
+                tracing::info!(error = %err, "clipboard clear failed");
+            }
+            return;
+        }
+        self.run("clear", |shell| {
+            Box::pin(async move {
+                shell
+                    .set_clipboard(&compass_shell::ClipboardContent::text(""))
+                    .await
+            })
+        });
+    }
+
+    fn read(&self) -> ReadContent {
+        if data_control() {
+            return data_control_read();
+        }
+        self.run("read", |shell| {
+            Box::pin(async move { shell.clipboard().await })
+        })
+        .map(|content| ReadContent {
+            text: content.as_text().unwrap_or_default().to_owned(),
+            ..ReadContent::default()
+        })
+        .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn storage(dir: &Path) -> Storage {
+        Storage {
+            path: dir.join(STORAGE_DATABASE),
+            key: [3; compass_crypto::KEY_SIZE],
+        }
+    }
+
+    #[test]
+    fn a_notification_carries_the_urgency_and_an_icon_file() {
+        use compass_worker_host::ui_shell_service::Urgency;
+        use notify_rust::Hint;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let png = dir.path().join("bell.png");
+        std::fs::write(&png, b"\x89PNG").expect("icon");
+        let png = png.to_string_lossy().into_owned();
+
+        for (urgency, hint) in [
+            (Urgency::Low, notify_rust::Urgency::Low),
+            (Urgency::Normal, notify_rust::Urgency::Normal),
+            (Urgency::High, notify_rust::Urgency::Critical),
+        ] {
+            let posted = desktop_notification("T", "B", Some(urgency), None);
+            assert!(posted.hints.contains(&Hint::Urgency(hint)), "{urgency:?}");
+            assert_eq!((posted.summary.as_str(), posted.body.as_str()), ("T", "B"));
+            assert_eq!(posted.appname, "Compass");
+        }
+        let plain = desktop_notification("T", "B", None, None);
+        assert!(plain.hints.is_empty(), "a HUD sends no urgency, as before");
+
+        assert_eq!(
+            desktop_notification("T", "B", None, Some(Path::new(&png))).icon,
+            png
+        );
+        assert_eq!(plain.icon, "", "no icon, none passed");
+    }
+
+    fn command_in(extension_dir: &Path) -> ExtensionCommand {
+        ExtensionCommand {
+            id: "@me/ssh:hosts".to_owned(),
+            provider_id: "@me/ssh".to_owned(),
+            extension_id: "ssh".to_owned(),
+            extension_dir: extension_dir.to_path_buf(),
+            name: "hosts".to_owned(),
+            title: "Hosts".to_owned(),
+            extension_title: "SSH".to_owned(),
+            keywords: Vec::new(),
+            mode: compass_core::manifest::CommandMode::View,
+            entrypoint: extension_dir.join("hosts.js"),
+            default_disabled: false,
+            extension_name: "ssh".to_owned(),
+            author: "me".to_owned(),
+            is_raycast: false,
+            preferences: Vec::new(),
+            arguments: Vec::new(),
+            icon: None,
+            extension_icon: String::new(),
+        }
+    }
+
+    #[test]
+    fn the_policy_reads_only_the_allowlisted_home_paths_and_never_writes_them() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("home");
+        let ssh = home.join(".ssh");
+        std::fs::create_dir_all(&ssh).expect("ssh");
+        std::fs::write(ssh.join("config"), "Host box\n").expect("config");
+        std::fs::write(ssh.join("id_ed25519"), "PRIVATE\n").expect("key");
+        std::fs::create_dir_all(home.join(".password-store")).expect("pass");
+        std::fs::create_dir_all(home.join(".config/niri")).expect("niri");
+        std::fs::create_dir_all(home.join(".gnupg")).expect("gnupg");
+        std::fs::create_dir_all(home.join("Documents")).expect("documents");
+        let extension = root.path().join("extensions/ssh");
+        std::fs::create_dir_all(&extension).expect("extension");
+        let data = root.path().join("data");
+        let runtime = Runtime {
+            node: PathBuf::from("/usr/bin/node"),
+            bundle: root.path().join("runtime/runtime.js"),
+            sandbox: None,
+        };
+        let command = command_in(&extension);
+        std::fs::create_dir_all(support_dir(&data, &command)).expect("support");
+
+        let policy = policy_in(&runtime, &command, &data, Some(&home));
+        let home = std::fs::canonicalize(&home).expect("canonical home");
+        for granted in [".ssh/config", ".password-store", ".config/niri"] {
+            assert!(
+                policy.read.contains(&home.join(granted)),
+                "{granted} is readable: {:?}",
+                policy.read
+            );
+        }
+        let under_home = |paths: &[PathBuf]| -> Vec<PathBuf> {
+            paths
+                .iter()
+                .filter(|path| path.starts_with(&home))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            under_home(&policy.read),
+            [
+                home.join(".ssh/config"),
+                home.join(".password-store"),
+                home.join(".config/niri"),
+            ],
+            "nothing else of $HOME: not the keys, ~/.ssh, ~/.gnupg or the home itself"
+        );
+        assert!(under_home(&policy.write).is_empty(), "read-only");
+        assert!(under_home(&policy.execute).is_empty(), "not executable");
+
+        let without = policy_in(&runtime, &command, &data, None);
+        assert!(under_home(&without.read).is_empty());
+    }
+
+    #[test]
+    fn a_resolver_file_linked_out_of_etc_is_granted_where_it_points() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let etc = root.path().join("etc");
+        let run = root.path().join("run/systemd/resolve");
+        std::fs::create_dir_all(&etc).expect("etc");
+        std::fs::create_dir_all(&run).expect("run");
+        std::fs::write(run.join("stub-resolv.conf"), "nameserver 127.0.0.53\n").expect("stub");
+        std::os::unix::fs::symlink(run.join("stub-resolv.conf"), etc.join("resolv.conf"))
+            .expect("link");
+        std::fs::write(etc.join("hosts"), "127.0.0.1 localhost\n").expect("hosts");
+
+        let targets = resolver_targets(&etc);
+        assert_eq!(
+            targets,
+            [std::fs::canonicalize(run.join("stub-resolv.conf")).expect("canonical")],
+            "only the linked-out file, not what /etc already covers"
+        );
+    }
+
+    #[test]
+    fn preferences_round_trip_and_clearing_one_removes_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let storage = storage(dir.path());
+        assert!(load_preferences(&storage, "github").is_empty());
+
+        let values = serde_json::json!({"token": "ghp_x", "limit": 50, "private": true});
+        save_preferences(&storage, "github", values.as_object().unwrap()).expect("saved");
+        assert_eq!(
+            serde_json::Value::Object(load_preferences(&storage, "github")),
+            serde_json::json!({"token": "ghp_x", "limit": 50.0, "private": true}),
+            "strings and booleans come back as they went in, and a number as the \
+             double JavaScript would have had anyway"
+        );
+        assert!(
+            load_preferences(&storage, "other").is_empty(),
+            "per extension"
+        );
+
+        let cleared = serde_json::json!({"token": ""});
+        save_preferences(&storage, "github", cleared.as_object().unwrap()).expect("saved");
+        assert!(!load_preferences(&storage, "github").contains_key("token"));
+    }
+
+    #[test]
+    fn preferences_are_out_of_the_extensions_own_storage() {
+        // An extension's LocalStorage is scoped to `<id>:data`. Keeping
+        // preferences there would let it read and rewrite its own token.
+        assert_ne!(
+            preferences_namespace("github"),
+            compass_local_storage::namespace_for("github")
+        );
+    }
+}

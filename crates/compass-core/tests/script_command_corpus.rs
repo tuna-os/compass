@@ -1,10 +1,11 @@
 //! The C++ test suite, replayed through the Rust parser.
 //!
-//! `src/lib/script-command/tests/` holds 73 Catch2 cases, each of which is a
+//! `tests/fixtures/script-command/` holds 73 Catch2 cases, each of which is a
 //! script in a raw string literal plus an expectation about whether it parses.
-//! Building that suite needs CMake, Catch2 and glaze; reading it needs none of
-//! them, and the scripts in it are the closest thing this port has to a corpus
-//! written by someone other than itself.
+//! They are the C++ engine's `src/lib/script-command/tests`, kept as a fixture
+//! when that engine was removed (ADR-0021): nothing compiles them, and the
+//! scripts in them are the closest thing this port has to a corpus written by
+//! someone other than itself.
 //!
 //! So this extracts every `R"(...)"` source together with the `REQUIRE` that
 //! follows it, and asserts the Rust parser agrees about accept-or-reject. It
@@ -13,7 +14,7 @@
 //! broken C++ interpreter. Field-level parity is covered by the unit tests in
 //! `script_command.rs`, which were written from the C++ source.
 //!
-//! When the C++ suite gains a case, this gains a case.
+//! A case added to the fixture is a case this replays.
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +25,7 @@ fn tests_dir() -> PathBuf {
         .parent()
         .and_then(Path::parent)
         .expect("two levels below the repository root")
-        .join("src/lib/script-command/tests")
+        .join("crates/compass-core/tests/fixtures/script-command")
 }
 
 /// One extracted case.

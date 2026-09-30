@@ -1,0 +1,30 @@
+{
+    "address": "0x5581c8a4f310",
+    "mapped": true,
+    "hidden": false,
+    "at": [1290, 42],
+    "size": [1260, 1388],
+    "workspace": {
+        "id": 1,
+        "name": "1"
+    },
+    "floating": false,
+    "pseudo": false,
+    "monitor": 0,
+    "class": "foot",
+    "title": "~/src/compass",
+    "initialClass": "foot",
+    "initialTitle": "foot",
+    "pid": 2398,
+    "xwayland": false,
+    "pinned": false,
+    "fullscreen": 0,
+    "fullscreenClient": 0,
+    "grouped": [],
+    "tags": [],
+    "swallowing": "0x0",
+    "focusHistoryID": 0,
+    "inhibitingIdle": false,
+    "xdgTag": "",
+    "xdgDescription": ""
+}

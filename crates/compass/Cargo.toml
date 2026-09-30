@@ -1,0 +1,104 @@
+[package]
+name = "compass"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "compass"
+path = "src/lib.rs"
+
+[[bin]]
+name = "compass"
+path = "src/main.rs"
+
+[[bin]]
+name = "compass-file-indexer"
+path = "src/bin/compass-file-indexer.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+compass-core.workspace = true
+compass-db = { path = "../compass-db" }
+compass-ipc.workspace = true
+notify.workspace = true
+compass-portals.workspace = true
+compass-media = { path = "../compass-media" }
+compass-power = { path = "../compass-power" }
+futures-util.workspace = true
+compass-ui.workspace = true
+compass-platform.workspace = true
+compass-platform-linux.workspace = true
+compass-xdg.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+zbus.workspace = true
+oo7.workspace = true
+compass-clipboard.workspace = true
+compass-worker-host.workspace = true
+compass-extension-api = { path = "../compass-extension-api" }
+compass-script.workspace = true
+compass-local-storage = { path = "../compass-local-storage" }
+compass-oauth-store = { path = "../compass-oauth-store" }
+wait-timeout = "0.2"
+notify-rust = { version = "4.18", default-features = false, features = ["z-with-tokio"] }
+compass-sandbox = { path = "../compass-sandbox" }
+compass-shell.workspace = true
+compass-wayland.workspace = true
+# The launcher's Wayland connection, shared with `iced_layershell` and the
+# shortcut inhibitor (the same 0.31 the toolkit uses).
+wayland-client = "0.31"
+# The launcher's own `wl_surface` under winit, for background blur: the
+# workspace's one `unsafe` bridge, kept in a crate of its own (ADR-0019).
+compass-wayland-foreign.workspace = true
+compass-crypto.workspace = true
+compass-sqlcipher-sys.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
+landlock.workspace = true
+seccompiler.workspace = true
+libc.workspace = true
+nix.workspace = true
+tempfile.workspace = true
+url = "2"
+# Finding image links in a store README (already in the tree through iced's Markdown).
+pulldown-cmark = { version = "0.12", default-features = false }
+fontdb = "0.23"
+ttf-parser = "0.25"
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
+uuid = { version = "1", features = ["v4"] }
+ureq.workspace = true
+# Drawing a builtin or SVG icon into a notification's PNG (already in the tree through iced's SVG).
+resvg = { version = "0.45", default-features = false }
+# A notification icon's PNG or JPEG fitted into that PNG (the decoders compass-ui already builds).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# A `data:` URL notification icon (already in the tree through usvg).
+data-url = "0.3"
+# The StatusNotifierItem host and its watcher, over the zbus 5 already in the tree.
+system-tray = "0.8"
+# Compass's own tray icon: the StatusNotifierItem *item* side and its dbusmenu,
+# over the same zbus 5 (system-tray only hosts).
+ksni = "0.3"
+
+[dev-dependencies]
+base64.workspace = true
+iced = { version = "0.14", features = ["tokio"] }
+iced_winit = "0.14"
+compass-testkit.workspace = true
+tempfile = "3"
+tiny_http.workspace = true
+zip.workspace = true
+# The headless-Sway harness shared with compass-wayland (tests/wlroots_engine.rs).
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+# Holding a primary selection for the engine to read (tests/wlroots_engine.rs).
+wl-clipboard-rs = "0.9"

@@ -1,4 +1,4 @@
-//! `vicinae.json`: defaults, partial files, error messages, and forward compatibility.
+//! `compass.json`: defaults, partial files, error messages, and forward compatibility.
 
 use compass_core::config::{
     DEFAULT_AUTO_UPDATE, DEFAULT_CLOSE_ON_FOCUS_LOSS, DEFAULT_COLOR_SCHEME, DEFAULT_HOTKEY,
@@ -8,7 +8,7 @@ use compass_core::{Config, ConfigError};
 use std::path::Path;
 
 fn parse(json: &str) -> Config {
-    Config::parse(json, Path::new("/test/vicinae.json")).expect("valid config")
+    Config::parse(json, Path::new("/test/compass.json")).expect("valid config")
 }
 
 #[test]
@@ -48,7 +48,28 @@ fn root_settings_use_upstream_ids_and_preserve_provider_preferences() {
 
 #[test]
 fn absent_root_settings_stay_absent_and_malformed_settings_are_rejected() {
-    assert_eq!(parse("{}").root_config(), Default::default());
+    // The default file's favourites, Clipboard History by its C++ id, read
+    // as the Compass command.
+    assert_eq!(
+        parse("{}").root_config(),
+        compass_core::root_items::RootConfig {
+            favorites: vec!["commands:clipboard-history".to_owned()],
+            ..Default::default()
+        }
+    );
+    assert!(
+        parse(r#"{"favorites": []}"#)
+            .root_config()
+            .favorites
+            .is_empty(),
+        "an empty list the user wrote stays empty"
+    );
+    assert_eq!(
+        parse("{}").fallback_ids(),
+        ["files:search"],
+        "the default file's"
+    );
+    assert!(parse(r#"{"fallbacks": []}"#).fallback_ids().is_empty());
     assert_eq!(
         serde_json::to_value(parse("{}")).unwrap(),
         serde_json::json!({})
@@ -120,7 +141,7 @@ fn an_empty_file_produces_the_defaults() {
 #[test]
 fn a_missing_file_produces_the_defaults() {
     let dir = tempfile::tempdir().unwrap();
-    let config = Config::load_from(dir.path().join("vicinae.json")).unwrap();
+    let config = Config::load_from(dir.path().join("compass.json")).unwrap();
     assert_all_defaults(&config);
 }
 
@@ -335,7 +356,7 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
 #[test]
 fn unknown_fields_survive_an_edit_by_an_older_build() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("vicinae").join("vicinae.json");
+    let path = dir.path().join("compass").join("compass.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         &path,
@@ -377,7 +398,7 @@ fn clearing_a_field_restores_its_default() {
 
 #[test]
 fn malformed_json_names_the_problem_and_where_it_is() {
-    let path = Path::new("/test/vicinae.json");
+    let path = Path::new("/test/compass.json");
     let err = Config::parse("{\n  \"launcher\": {\n    \"hotkey\": ,\n  }\n}", path).unwrap_err();
 
     let ConfigError::Parse {
@@ -397,7 +418,7 @@ fn malformed_json_names_the_problem_and_where_it_is() {
     );
 
     let rendered = err.to_string();
-    assert!(rendered.contains("/test/vicinae.json"), "{rendered}");
+    assert!(rendered.contains("/test/compass.json"), "{rendered}");
     assert!(rendered.contains("line 3"), "{rendered}");
     assert!(rendered.contains("expected value"), "{rendered}");
 }
@@ -406,7 +427,7 @@ fn malformed_json_names_the_problem_and_where_it_is() {
 fn a_wrongly_typed_field_is_a_clear_error() {
     let err = Config::parse(
         r#"{"launcher": {"max_results": "lots"}}"#,
-        Path::new("/test/vicinae.json"),
+        Path::new("/test/compass.json"),
     )
     .unwrap_err();
 
@@ -420,7 +441,7 @@ fn a_wrongly_typed_field_is_a_clear_error() {
 
 #[test]
 fn a_top_level_non_object_is_a_clear_error() {
-    let err = Config::parse("[1, 2, 3]", Path::new("/test/vicinae.json")).unwrap_err();
+    let err = Config::parse("[1, 2, 3]", Path::new("/test/compass.json")).unwrap_err();
     assert!(matches!(err, ConfigError::Parse { .. }), "{err:?}");
 }
 
@@ -435,7 +456,7 @@ fn an_unreadable_path_is_distinguished_from_a_missing_one() {
 #[test]
 fn saving_creates_the_parent_directory() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("a").join("b").join("vicinae.json");
+    let path = dir.path().join("a").join("b").join("compass.json");
 
     let mut config = Config::default();
     config.extensions_mut().set_auto_update(Some(false));
@@ -452,7 +473,7 @@ fn saving_creates_the_parent_directory() {
 #[test]
 fn saving_leaves_no_temporary_file_behind() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("vicinae.json");
+    let path = dir.path().join("compass.json");
     Config::default().save_to(&path).unwrap();
 
     let names: Vec<String> = std::fs::read_dir(dir.path())
@@ -460,7 +481,7 @@ fn saving_leaves_no_temporary_file_behind() {
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["vicinae.json"]);
+    assert_eq!(names, ["compass.json"]);
 }
 
 /// `tint` is a *known* key, not an unknown one that survives by accident.
@@ -563,4 +584,171 @@ fn provider_preferences_are_read_from_the_provider_object() {
     assert!(config.provider_preferences("broken").is_none());
     assert!(config.provider_preferences("missing").is_none());
     assert!(parse("{}").provider_preferences("files").is_none());
+}
+
+#[test]
+fn set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font() {
+    let mut config =
+        parse(r#"{"font": {"rendering": "qt", "normal": {"family": "auto", "size": 10.5}}}"#);
+    assert_eq!(config.font_family(), None, "auto is not a family");
+    config.set_font_family("Fira Sans");
+    assert_eq!(config.font_family(), Some("Fira Sans"));
+    let written = config.to_json_pretty().unwrap();
+    assert_eq!(parse(&written).font_family(), Some("Fira Sans"));
+    assert!(written.contains("\"rendering\": \"qt\""), "{written}");
+    assert!(written.contains("10.5"), "{written}");
+
+    let mut empty = Config::default();
+    empty.set_font_family("Noto Serif");
+    assert_eq!(empty.font_family(), Some("Noto Serif"));
+}
+
+#[test]
+fn the_root_panel_writes_favorites_whole_and_an_items_alias_and_switch() {
+    use compass_core::root_items::RootEdit;
+    let mut config = parse(r#"{"launcher": {"max_results": 9}}"#);
+
+    // Favouriting writes the list out whole, default included, the new one
+    // first (`setItemAsFavorite` takes the merged list).
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Favorite(true)));
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert_eq!(
+        written["favorites"],
+        serde_json::json!(["applications:firefox", "commands:clipboard-history"])
+    );
+    assert!(!config.apply_root_edit("applications:firefox", &RootEdit::Favorite(true)));
+    assert!(config.apply_root_edit(
+        "applications:firefox",
+        &RootEdit::MoveFavorite { down: true }
+    ));
+    assert_eq!(
+        config.root_config().favorites,
+        ["commands:clipboard-history", "applications:firefox"]
+    );
+    assert!(
+        !config.apply_root_edit(
+            "applications:firefox",
+            &RootEdit::MoveFavorite { down: true }
+        ),
+        "the last cannot move down"
+    );
+    assert!(config.apply_root_edit("commands:clipboard-history", &RootEdit::Favorite(false)));
+    assert_eq!(config.root_config().favorites, ["applications:firefox"]);
+
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Alias("ff".into())));
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Disable));
+    let item = &config.root_config().providers["applications"].entrypoints["firefox"];
+    assert_eq!(item.alias.as_deref(), Some("ff"));
+    assert_eq!(item.enabled, Some(false));
+    assert!(!config.apply_root_edit("applications:firefox", &RootEdit::ResetRanking));
+    assert_eq!(config.launcher().max_results(), 9, "the rest is kept");
+}
+
+#[test]
+fn the_settings_switches_turn_an_item_and_a_provider_back_on() {
+    use compass_core::root_items::RootEdit;
+    let mut config = parse(r#"{"providers": {"applications": {"enabled": false}}}"#);
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Disable));
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Enabled(true)));
+    config.set_provider_enabled("applications", true);
+    let root = config.root_config();
+    assert_eq!(root.providers["applications"].enabled, Some(true));
+    assert_eq!(
+        root.providers["applications"].entrypoints["firefox"].enabled,
+        Some(true)
+    );
+
+    let mut local = compass_core::root_items::RootConfig::default();
+    assert!(compass_core::root_items::apply_edit(
+        &mut local,
+        "applications:firefox",
+        &RootEdit::Enabled(false)
+    ));
+    assert_eq!(
+        local.providers["applications"].entrypoints["firefox"].enabled,
+        Some(false)
+    );
+}
+
+#[test]
+fn the_clock_is_on_every_minute_in_hh_mm_unless_set() {
+    let clock = parse("{}");
+    let clock = clock.launcher().clock();
+    assert!(clock.enabled());
+    assert_eq!(clock.format(), "hh:mm");
+    assert_eq!(clock.interval(), 60);
+
+    let set = parse(
+        r#"{"launcher": {"clock": {"enabled": false, "format": "hh:mm:ss", "interval": 0}}}"#,
+    );
+    let clock = set.launcher().clock();
+    assert!(!clock.enabled());
+    assert_eq!(clock.format(), "hh:mm:ss");
+    assert_eq!(clock.interval(), 1, "never zero");
+    assert_eq!(
+        serde_json::to_value(&set).unwrap()["launcher"]["clock"]["format"],
+        "hh:mm:ss"
+    );
+}
+
+#[test]
+fn a_fallback_is_enabled_first_and_disabled_as_the_cpp_writes_them() {
+    use compass_core::root_items::RootEdit;
+    let mut config = parse(r#"{"launcher": {"max_results": 9}}"#);
+    assert_eq!(config.fallback_ids(), ["files:search"], "the default");
+    assert!(config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(true)));
+    assert_eq!(config.fallback_ids(), ["@a/notes:new", "files:search"]);
+    assert!(
+        !config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(true)),
+        "already one"
+    );
+    assert!(config.apply_root_edit("files:search", &RootEdit::Fallback(false)));
+    assert!(
+        !config.apply_root_edit("files:search", &RootEdit::Fallback(false)),
+        "not one any more"
+    );
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert_eq!(written["fallbacks"], serde_json::json!(["@a/notes:new"]));
+    assert!(config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(false)));
+    assert!(
+        config.fallback_ids().is_empty(),
+        "an emptied list stays empty"
+    );
+}
+
+#[test]
+fn a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared() {
+    use compass_core::root_items::{RootEdit, RootItem, RootItemMeta};
+    let mut config = parse(r#"{"launcher": {"max_results": 9}}"#);
+    assert!(config.apply_root_edit(
+        "applications:firefox",
+        &RootEdit::Shortcut("control+shift+F".into())
+    ));
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert_eq!(
+        written["providers"]["applications"]["entrypoints"]["firefox"]["shortcut"],
+        "control+shift+F"
+    );
+    let mut firefox = RootItem {
+        id: "applications:firefox".into(),
+        title: "Firefox".into(),
+        unlocalized_title: None,
+        subtitle: String::new(),
+        keywords: Vec::new(),
+        meta: RootItemMeta::default(),
+    };
+    firefox.merge_config(&config.root_config(), false);
+    assert_eq!(firefox.meta.shortcut.as_deref(), Some("control+shift+F"));
+
+    // Cleared, it is gone from the file and from the item at the next merge.
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Shortcut(String::new())));
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert!(
+        written["providers"]["applications"]["entrypoints"]["firefox"]
+            .get("shortcut")
+            .is_none_or(serde_json::Value::is_null),
+        "{written}"
+    );
+    firefox.merge_config(&config.root_config(), false);
+    assert_eq!(firefox.meta.shortcut, None);
 }

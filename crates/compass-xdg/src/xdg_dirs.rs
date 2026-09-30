@@ -21,7 +21,7 @@ const FLATPAK_INFO: &str = "/.flatpak-info";
 /// The result was an index of zero applications on a machine with 88 desktop entries (#95): the
 /// permissions were right and every path we looked in was the wrong one.
 ///
-/// Each entry mirrors a `--filesystem=` grant in `packaging/flatpak/com.vicinae.Vicinae.yaml`,
+/// Each entry mirrors a `--filesystem=` grant in `packaging/flatpak/org.tunaos.compass.yaml`,
 /// and `flatpak_manifest_grants_are_searched` asserts that correspondence, so a grant added to
 /// the manifest without a path added here fails the build rather than silently indexing nothing.
 const SANDBOX_HOST_ROOTS: &[&str] = &[
@@ -55,7 +55,7 @@ pub fn in_flatpak() -> bool {
 /// Extra data roots to search inside a Flatpak sandbox; empty everywhere else.
 ///
 /// Deliberately NOT filtered by existence. A missing directory is already harmless to the
-/// scanner, and `vicinae doctor` reports each searched directory with its file count or
+/// scanner, and `compass doctor` reports each searched directory with its file count or
 /// `absent` — which is how #95 was finally diagnosed. Filtering here would delete exactly the
 /// evidence that makes the next instance diagnosable.
 #[must_use]
@@ -65,7 +65,7 @@ pub fn sandbox_data_roots() -> Vec<PathBuf> {
 
 /// [`sandbox_data_roots`] with the sandbox signal and home supplied explicitly.
 ///
-/// Public so `vicinae doctor` can report the directories the index really searches rather than
+/// Public so `compass doctor` can report the directories the index really searches rather than
 /// rebuilding the list and drifting from it -- which is how #95 stayed invisible: the doctor's
 /// own report listed six directories, none of them the ones that would have had the answer.
 #[must_use]
@@ -294,7 +294,7 @@ mod tests {
     fn flatpak_manifest_grants_are_searched() {
         let manifest = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../packaging/flatpak/com.vicinae.Vicinae.yaml"
+            "/../../packaging/flatpak/org.tunaos.compass.yaml"
         );
         let text =
             std::fs::read_to_string(manifest).unwrap_or_else(|e| panic!("read {manifest}: {e}"));
@@ -358,7 +358,7 @@ mod tests {
     fn a_granted_flatpak_exports_tree_has_its_deploy_tree_granted() {
         let manifest = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../packaging/flatpak/com.vicinae.Vicinae.yaml"
+            "/../../packaging/flatpak/org.tunaos.compass.yaml"
         );
         let text =
             std::fs::read_to_string(manifest).unwrap_or_else(|e| panic!("read {manifest}: {e}"));

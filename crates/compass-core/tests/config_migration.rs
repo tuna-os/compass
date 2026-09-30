@@ -1,4 +1,4 @@
-//! Migrating the C++ engine's `settings.json` to `vicinae.json`.
+//! Migrating the C++ engine's `settings.json` to `compass.json`.
 
 use std::path::Path;
 
@@ -37,7 +37,11 @@ const CPP_SETTINGS: &str = r#"// This configuration is merged with the default v
     "dark": { "name": "catppuccin-mocha", "icon_theme": "Papirus" },
     "light": { "name": "catppuccin-latte" }
   },
-  "launcher_window": { "opacity": 0.9, "blur": { "enabled": false } },
+  "launcher_window": {
+    "opacity": 0.9,
+    "blur": { "enabled": false },
+    "clock": { "enabled": false, "format": "hh:mm:ss", "interval": 30 }
+  },
   "providers": {
     "applications": {
       "enabled": true,
@@ -68,7 +72,8 @@ fn every_shared_setting_is_carried_across() {
                 "close_on_focus_loss": true,
                 "keybinding": "emacs",
                 "wrap_navigation": true,
-                "appearance": { "theme": "catppuccin" }
+                "appearance": { "theme": "catppuccin" },
+                "clock": { "enabled": false, "format": "hh:mm:ss", "interval": 30 }
             },
             "providers": {
                 "applications": {
@@ -81,7 +86,8 @@ fn every_shared_setting_is_carried_across() {
                 }
             },
             "favorites": ["applications:firefox", "clipboard:history"],
-            "fallbacks": ["files:search"]
+            "fallbacks": ["files:search"],
+            "global_shortcuts": { "inhibit_apps": ["steam"] }
         })
     );
     assert_eq!(migration.sources, vec![path]);
@@ -99,7 +105,6 @@ fn settings_with_no_equivalent_are_reported_not_smuggled_in() {
         migration.unmapped(),
         vec![
             "font.normal.size",
-            "global_shortcuts.inhibit_apps",
             "keybinds.open-search-filter",
             "launcher_window.blur.enabled",
             "launcher_window.opacity",
@@ -109,7 +114,7 @@ fn settings_with_no_equivalent_are_reported_not_smuggled_in() {
     );
     assert!(
         migration.config.unknown_fields().is_empty(),
-        "C++-only keys must not reappear as unknown vicinae.json fields"
+        "C++-only keys must not reappear as unknown compass.json fields"
     );
     assert!(
         migration
@@ -125,13 +130,14 @@ fn the_migrated_file_round_trips_through_the_rust_reader() {
     let path = write(dir.path(), "settings.json", CPP_SETTINGS);
     let migration = migrate_file(&path).unwrap();
 
-    let out = dir.path().join("vicinae.json");
+    let out = dir.path().join("compass.json");
     migration.config.save_to(&out).unwrap();
     let reread = Config::load_from(&out).unwrap();
 
     assert_eq!(reread, migration.config);
     assert_eq!(reread.launcher().keybinding(), "emacs");
     assert_eq!(reread.launcher().hotkey(), "super+space");
+    assert_eq!(reread.global_shortcuts().inhibit_apps(), ["steam"]);
     assert!(reread.launcher().close_on_focus_loss());
     assert_eq!(reread.launcher().appearance().theme(), "catppuccin");
     assert_eq!(reread.schema(), Some(SCHEMA_URL));
@@ -216,7 +222,11 @@ fn a_value_of_the_wrong_type_is_skipped_with_a_reason() {
 
     assert!(migration.config.launcher().wrap_navigation());
     assert!(!migration.config.launcher().close_on_focus_loss());
-    assert!(migration.config.root_config().favorites.is_empty());
+    // Nothing of the file's: an unset list is the default file's.
+    assert_eq!(
+        migration.config.root_config().favorites,
+        ["commands:clipboard-history"]
+    );
     assert!(migration.config.root_config().providers.is_empty());
     let reasons: Vec<(&str, &str)> = migration
         .skipped
@@ -287,7 +297,7 @@ fn a_broken_settings_file_is_an_error_naming_it() {
 #[test]
 fn loading_falls_back_to_the_cpp_settings_only_when_there_is_no_vicinae_json() {
     let dir = tempfile::tempdir().unwrap();
-    let primary = dir.path().join("vicinae.json");
+    let primary = dir.path().join("compass.json");
     let legacy = write(dir.path(), "settings.json", r#"{ "keybinding": "emacs" }"#);
 
     let config = Config::load_or_migrate(&primary, Some(&legacy)).unwrap();
@@ -296,7 +306,7 @@ fn loading_falls_back_to_the_cpp_settings_only_when_there_is_no_vicinae_json() {
 
     std::fs::write(&primary, r#"{ "launcher": { "keybinding": "vim" } }"#).unwrap();
     let config = Config::load_or_migrate(&primary, Some(&legacy)).unwrap();
-    assert_eq!(config.launcher().keybinding(), "vim", "vicinae.json wins");
+    assert_eq!(config.launcher().keybinding(), "vim", "compass.json wins");
 
     let config = Config::load_or_migrate(&dir.path().join("none.json"), None).unwrap();
     assert_eq!(config, Config::default());
@@ -306,6 +316,6 @@ fn loading_falls_back_to_the_cpp_settings_only_when_there_is_no_vicinae_json() {
 fn a_broken_cpp_settings_file_does_not_stop_the_rust_engine() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = write(dir.path(), "settings.json", "{ not json");
-    let config = Config::load_or_migrate(&dir.path().join("vicinae.json"), Some(&legacy)).unwrap();
+    let config = Config::load_or_migrate(&dir.path().join("compass.json"), Some(&legacy)).unwrap();
     assert_eq!(config, Config::default());
 }

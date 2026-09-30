@@ -15,7 +15,7 @@ use std::time::Duration;
 use compass_wayland::clipboard::{self, SelectionChange};
 use compass_wayland::compositor::{self, Family};
 use compass_wayland::data_control::{Offer, PASSWORD_HINT_MIME_TYPE};
-use compass_wayland::hotkey::{self, Hotkey, HotkeyError, HotkeyRequest};
+use compass_wayland::hotkey::{self, HotkeyClient, HotkeyError};
 use compass_wayland::toplevel::{Source, ToplevelError, Toplevels};
 use support::{Sway, TestWindow, child_role, eventually};
 
@@ -106,6 +106,76 @@ fn a_change_to_the_window_set_is_announced() {
     let _window = TestWindow::open(&sway, "Gamma", "test.Gamma");
     assert!(eventually(WAIT, || *changes.borrow() != before));
     assert!(eventually(WAIT, || toplevels.list().len() == 1));
+}
+
+#[test]
+fn the_headless_output_is_listed_with_its_name_and_mode() {
+    let Some(sway) = Sway::start("the_headless_output_is_listed") else {
+        return;
+    };
+    let outputs = compass_wayland::output::list_on(&sway.connect()).expect("the outputs");
+    assert_eq!(outputs.len(), 1, "{outputs:?}");
+    let output = &outputs[0];
+    assert_eq!(output.name, "HEADLESS-1");
+    assert_eq!((output.pixel_width, output.pixel_height), (1280, 800));
+    assert_eq!(
+        (output.x, output.y, output.width, output.height),
+        (0, 0, 1280, 800)
+    );
+}
+
+/// Child role: select `COMPASS_WLR_TEXT` (the primary selection), then read
+/// it back as an extension's `getSelectedText` would.
+#[test]
+fn child_selects_text() {
+    if child_role().is_none() {
+        return;
+    }
+    let text = std::env::var("COMPASS_WLR_TEXT").unwrap();
+    assert_eq!(
+        clipboard::read_primary_text().expect("nothing selected yet"),
+        None
+    );
+    let mut options = wl_clipboard_rs::copy::Options::new();
+    options.clipboard(wl_clipboard_rs::copy::ClipboardType::Primary);
+    options
+        .copy(
+            wl_clipboard_rs::copy::Source::Bytes(text.clone().into_bytes().into_boxed_slice()),
+            wl_clipboard_rs::copy::MimeType::Text,
+        )
+        .expect("selecting");
+    assert!(
+        eventually(WAIT, || clipboard::read_primary_text()
+            .ok()
+            .flatten()
+            .is_some_and(|read| read == text)),
+        "the selection never read back"
+    );
+    assert_eq!(
+        clipboard::read("text/plain").expect("the clipboard"),
+        None,
+        "selecting is not copying"
+    );
+    println!("CHILD-OK");
+}
+
+#[test]
+fn the_primary_selection_reads_back_and_is_not_the_clipboard() {
+    let Some(sway) = Sway::start("the_primary_selection_reads_back") else {
+        return;
+    };
+    let child = sway.run_child(
+        "child_selects_text",
+        "select",
+        &[("COMPASS_WLR_TEXT", "selected words")],
+    );
+    let output = child.wait_with_output().expect("the child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("CHILD-OK"),
+        "child failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// Child role: put `COMPASS_WLR_TEXT` on the clipboard through
@@ -214,15 +284,78 @@ fn a_compositor_without_xx_hotkey_says_so_and_the_fallback_names_the_command() {
         return;
     };
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let request = HotkeyRequest {
-        app_id: "com.vicinae.Vicinae".to_owned(),
-        description: "Open the launcher".to_owned(),
-        keysym: hotkey::KEYSYM_SPACE,
-        modifiers: hotkey::modifiers::SUPER,
-    };
-    match Hotkey::bind_on(sway.connect(), &request, tx) {
+    match HotkeyClient::connect_on(sway.connect(), "org.tunaos.compass", tx) {
         Err(HotkeyError::Unsupported) => {}
-        other => panic!("Sway 1.x has no xx-hotkey-v1, got {other:?}"),
+        other => panic!("Sway 1.x has neither hotkey protocol, got {other:?}"),
     }
-    assert!(hotkey::manual_binding_hint(Some("sway")).contains("vicinae toggle"));
+    assert!(hotkey::manual_binding_hint(Some("sway")).contains("compass toggle"));
+}
+
+#[test]
+fn background_effect_is_bound_where_advertised_and_refused_by_name_where_not() {
+    use compass_wayland::material::{Applied, BackgroundEffects, MaterialError, Params, Rect};
+    use wayland_client::protocol::wl_compositor::WlCompositor;
+    let Some(sway) = Sway::start("background_effect") else {
+        return;
+    };
+    let connection = sway.connect();
+    let advertised = compositor::probe_connection(&connection)
+        .expect("the registry")
+        .names()
+        .any(|name| name == "ext_background_effect_manager_v1");
+    match BackgroundEffects::bind(&connection) {
+        Err(MaterialError::Unsupported) => {
+            assert!(!advertised, "the manager is there but was refused");
+        }
+        Err(other) => panic!("{other}"),
+        Ok(mut effects) => {
+            assert!(advertised);
+            // A surface of this connection, as the launcher's would be.
+            let (globals, queue) =
+                wayland_client::globals::registry_queue_init::<Surfaces>(&connection).unwrap();
+            let compositor = globals
+                .bind::<WlCompositor, _, _>(&queue.handle(), 1..=6, ())
+                .unwrap();
+            let surface = compositor.create_surface(&queue.handle(), ());
+            let params = Params {
+                radius: 10,
+                region: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 640,
+                    height: 480,
+                },
+            };
+            let first = effects.apply(&surface, params);
+            if effects.supports_blur() {
+                assert_eq!(first, Applied::Created);
+                assert_eq!(effects.apply(&surface, params), Applied::Unchanged);
+                assert!(effects.clear(&surface));
+            } else {
+                assert_eq!(first, Applied::Unsupported);
+            }
+        }
+    }
+}
+
+struct Surfaces;
+
+wayland_client::delegate_noop!(Surfaces: wayland_client::protocol::wl_compositor::WlCompositor);
+wayland_client::delegate_noop!(Surfaces: ignore wayland_client::protocol::wl_surface::WlSurface);
+
+impl
+    wayland_client::Dispatch<
+        wayland_client::protocol::wl_registry::WlRegistry,
+        wayland_client::globals::GlobalListContents,
+    > for Surfaces
+{
+    fn event(
+        _: &mut Self,
+        _: &wayland_client::protocol::wl_registry::WlRegistry,
+        _: wayland_client::protocol::wl_registry::Event,
+        _: &wayland_client::globals::GlobalListContents,
+        _: &wayland_client::Connection,
+        _: &wayland_client::QueueHandle<Self>,
+    ) {
+    }
 }

@@ -37,6 +37,54 @@ pub struct SnippetsPage {
     pub status: Status,
     /// Why the last action did not happen, until the next keystroke.
     pub notice: Option<String>,
+    /// The selected snippet's detail pane, once the engine has expanded it.
+    pub detail: Option<Detail>,
+}
+
+/// Manage Snippets' detail pane for one snippet (`loadDetail`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Detail {
+    /// The snippet's id, so a late answer for another row is dropped.
+    pub id: String,
+    /// Its text expanded with its shell placeholders shown, not run
+    /// (`updateExpandedText`); empty for a file snippet, as the C++ leaves
+    /// it; or why the engine could not expand it.
+    pub expanded: Result<String, String>,
+}
+
+/// The pane's metadata, as `loadDetail` lists it: the type, when it was
+/// created and last updated, its keyword, and the applications it expands in
+/// (`app_name` names one by its id, as `appDb->findById` does, else the id).
+/// `date` writes a Unix time as `QDateTime::toString()` does.
+#[must_use]
+pub fn detail_fields(
+    snippet: &Snippet,
+    app_name: impl Fn(&str) -> Option<String>,
+    date: impl Fn(u64) -> String,
+) -> Vec<(&'static str, String)> {
+    let kind = match snippet.data {
+        compass_core::snippet_store::SnippetData::Text { .. } => "Text",
+        compass_core::snippet_store::SnippetData::File { .. } => "File",
+    };
+    let mut fields = vec![
+        ("Type", kind.to_owned()),
+        ("Created at", date(snippet.created_at)),
+    ];
+    if let Some(updated) = snippet.updated_at {
+        fields.push(("Updated at", date(updated)));
+    }
+    if let Some(expansion) = &snippet.expansion {
+        fields.push(("Keyword", expansion.keyword.clone()));
+        if !expansion.apps.is_empty() {
+            let apps: Vec<String> = expansion
+                .apps
+                .iter()
+                .map(|id| app_name(id).unwrap_or_else(|| id.clone()))
+                .collect();
+            fields.push(("Apps", apps.join(", ")));
+        }
+    }
+    fields
 }
 
 impl Default for SnippetsPage {
@@ -48,6 +96,7 @@ impl Default for SnippetsPage {
             selected: 0,
             status: Status::Loading,
             notice: None,
+            detail: None,
         }
     }
 }
@@ -215,8 +264,9 @@ pub fn form_values(page: &PreferencesPage) -> (String, String, String, bool) {
 #[must_use]
 pub fn arguments_form(snippet: &Snippet, paste: bool) -> Option<PreferencesPage> {
     let text = snippet.text()?;
-    let arguments =
-        compass_core::snippet_expander::arguments(&compass_core::shortcut::parse_link(text).parts);
+    let arguments = compass_core::snippet_expander::arguments(
+        &compass_core::placeholder::parse_snippet_text(text).parts,
+    );
     if arguments.is_empty() {
         return None;
     }
@@ -298,6 +348,54 @@ mod tests {
             }),
             ..Snippet::default()
         }
+    }
+
+    #[test]
+    fn the_pane_lists_what_load_detail_lists_in_its_order() {
+        let mut with_keyword = snippet("a", "Signature", "Best regards", Some(";sig"));
+        with_keyword.created_at = 10;
+        with_keyword.updated_at = Some(20);
+        let names = |id: &str| (id == "gedit.desktop").then(|| "Text Editor".to_owned());
+        let date = |at: u64| format!("t{at}");
+        assert_eq!(
+            detail_fields(&with_keyword, names, date),
+            [
+                ("Type", "Text".to_owned()),
+                ("Created at", "t10".to_owned()),
+                ("Updated at", "t20".to_owned()),
+                ("Keyword", ";sig".to_owned()),
+                ("Apps", "Text Editor".to_owned()),
+            ]
+        );
+        let file = Snippet {
+            data: SnippetData::File {
+                file: "/tmp/a.png".into(),
+            },
+            expansion: Some(StoredExpansion {
+                keyword: ";img".into(),
+                apps: vec!["gone.desktop".into()],
+                word: true,
+            }),
+            ..Snippet::default()
+        };
+        assert_eq!(
+            detail_fields(&file, |_| None, date),
+            [
+                ("Type", "File".to_owned()),
+                ("Created at", "t0".to_owned()),
+                ("Keyword", ";img".to_owned()),
+                ("Apps", "gone.desktop".to_owned()),
+            ],
+            "no update time, and an unknown application by its id"
+        );
+    }
+
+    #[test]
+    fn an_escaped_brace_asks_for_no_argument() {
+        let escaped = snippet("a", "Code", r"fn f() \{x}", None);
+        assert!(arguments_form(&escaped, false).is_none());
+        let plain = snippet("b", "Code", "fn f() {x}", None);
+        assert!(arguments_form(&plain, false).is_some());
     }
 
     #[test]

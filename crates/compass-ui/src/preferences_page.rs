@@ -26,6 +26,9 @@ pub enum Purpose {
     Preferences,
     /// This one run's arguments.
     Arguments,
+    /// A command's preferences, opened by the extension
+    /// (`openCommandPreferences`): kept, and the command not run.
+    CommandPreferences,
     /// A shortcut's arguments, to open it with; the form's `command_id` is
     /// the shortcut's id.
     ShortcutArguments,
@@ -56,6 +59,15 @@ pub enum Purpose {
     ScriptArguments,
     /// The Create Extension form.
     CreateExtension,
+    /// A media command's optional argument (the player, or the volume
+    /// step); `command_id` is the command's entrypoint.
+    MediaArguments,
+    /// The emoji picker's keywords for one glyph; `command_id` is the glyph.
+    GlyphKeywords,
+    /// A clipboard history entry's keywords; `command_id` is the entry.
+    ClipboardKeywords,
+    /// A root item's alias; `command_id` is the item's entrypoint id.
+    Alias,
 }
 
 impl Purpose {
@@ -64,12 +76,16 @@ impl Purpose {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Preferences | Self::Arguments => "Enter: save and run    Esc: back",
+            Self::CommandPreferences
+            | Self::GlyphKeywords
+            | Self::ClipboardKeywords
+            | Self::Alias => "Enter: save    Esc: back",
             Self::ShortcutArguments => "Enter: open    Esc: back",
             Self::ShortcutForm { .. } => "Enter: save    Esc: back",
             Self::SnippetArguments { paste: false } => "Enter: copy    Esc: back",
             Self::SnippetArguments { paste: true } => "Enter: paste    Esc: back",
             Self::SnippetForm { .. } => "Ctrl+Enter: save    Esc: back",
-            Self::ScriptArguments => "Enter: run    Esc: cancel",
+            Self::ScriptArguments | Self::MediaArguments => "Enter: run    Esc: cancel",
             Self::CreateExtension => "Enter: create extension    Esc: back",
         }
     }

@@ -40,6 +40,9 @@ pub enum Message {
     },
     /// A result was selected (by keyboard navigation).
     ResultSelected(usize),
+    /// A root row was clicked, by position: select it and do what Enter on
+    /// it does.
+    ResultClicked(usize),
     /// Move the selection one row, wrapping at both ends.
     MoveSelection(Direction),
     /// Launch the selected result.
@@ -58,6 +61,14 @@ pub enum Message {
     /// The engine armed a paste of the selected entry, or could not; on a
     /// refusal the entry is copied instead.
     ClipboardPasted(Result<(), String>),
+    /// The engine pasted a glyph from the emoji picker, or could not; on a
+    /// refusal the glyph is copied instead.
+    EmojiPasted {
+        /// The glyph, as it would be copied.
+        text: String,
+        /// The engine's answer.
+        result: Result<(), String>,
+    },
     /// The engine started an extension command, or said why it could not.
     ExtensionCommandStarted {
         /// The command's entrypoint id.
@@ -97,18 +108,52 @@ pub enum Message {
     ClipboardEntryChanged(Result<(), String>),
     /// A clipboard row was clicked.
     ClipboardSelected(usize),
+    /// The clipboard kind filter was changed, to this label.
+    ClipboardKindChanged(String),
+    /// The detail pane's metadata for entry `id` arrived.
+    ClipboardDetailLoaded {
+        /// Which entry.
+        id: String,
+        /// What the engine answered.
+        result: Result<crate::backend::ClipboardDetail, String>,
+    },
+    /// The detail pane's content for entry `id` arrived.
+    ClipboardDetailContent {
+        /// Which entry.
+        id: String,
+        /// What the engine answered.
+        result: Result<crate::backend::ClipboardContent, String>,
+    },
+    /// An entry's keywords arrived, to open the keyword form with.
+    ClipboardKeywordsLoaded(Result<crate::backend::ClipboardDetail, String>),
+    /// Whether copies are being recorded, as the engine answered.
+    ClipboardMonitoringLoaded(Result<crate::backend::ClipboardMonitoring, String>),
+    /// The engine kept (or refused) what the root row's panel changed.
+    RootItemEdited(Result<(), String>),
+    /// A second passed; the root search's clock may need redrawing.
+    ClockTick,
     /// Leave a command's view for the root list.
     Back,
     /// The window switcher's filter changed.
     WindowsQueryChanged(String),
     /// The engine answered a power or media command.
     BuiltinCommandDone(Result<(), String>),
+    /// Now Playing's players arrived.
+    NowPlayingLoaded(Result<Vec<crate::backend::MediaPlayerRow>, String>),
+    /// Now Playing's filter changed.
+    NowPlayingQueryChanged(String),
+    /// A player row was clicked, by position in the shown list.
+    NowPlayingSelected(usize),
+    /// A player did what it was asked, or could not.
+    NowPlayingActed(Result<(), String>),
     /// The emoji picker's filter changed.
     EmojiQueryChanged(String),
     /// An emoji row was clicked, by position in the shown list.
     EmojiSelected(usize),
     /// Search Files' text changed.
     FilesQueryChanged(String),
+    /// Search Files' category filter changed, by its key.
+    FilesCategoryChanged(String),
     /// The debounce for Search Files query `generation` ran out; ask, unless
     /// the text moved on meanwhile.
     FilesDebounced(u64),
@@ -138,6 +183,8 @@ pub enum Message {
     SnippetsQueryChanged(String),
     /// A Manage Snippets row was clicked, by position.
     SnippetSelected(usize),
+    /// Manage Snippets' detail pane for a snippet arrived.
+    SnippetDetailLoaded(crate::snippets_page::Detail),
     /// Create Extension finished, for the extension called `title`: where
     /// it was written, or why not.
     ExtensionCreated {
@@ -148,12 +195,83 @@ pub enum Message {
     },
     /// Opening the new extension's folder finished.
     CreatedFolderOpened(Result<(), String>),
+    /// A store's rows arrived for search `generation`, or why not.
+    StoreLoaded {
+        /// The search text's generation when it was asked for.
+        generation: u64,
+        /// The rows.
+        result: Result<crate::backend::StoreList, String>,
+    },
+    /// A store's search text changed.
+    StoreQueryChanged(String),
+    /// A store's search text has settled for generation `u64`.
+    StoreSearchDue(u64),
+    /// A store row was clicked, by position.
+    StoreSelected(usize),
+    /// A store extension's detail page arrived, or why not.
+    StoreDetailLoaded(Result<crate::backend::StoreDetail, String>),
+    /// An install finished: the id and title, or why not.
+    StoreInstalled(Result<(String, String), String>),
+    /// An uninstall of `id` finished.
+    StoreUninstalled {
+        /// The id.
+        id: String,
+        /// Whether it worked.
+        result: Result<(), String>,
+    },
+    /// Opening a store link finished.
+    StoreUrlOpened(Result<(), String>),
     /// Browse Fonts' families arrived, or why they could not be listed.
     FontsLoaded(Result<crate::backend::FontList, String>),
     /// Browse Fonts' search text changed.
     FontsQueryChanged(String),
     /// Browse Fonts' category filter changed, to the option titled so.
     FontsCategoryChanged(String),
+    /// "Set as Compass font" was saved, with the family, or could not be.
+    FontSet(Result<String, String>),
+    /// Search Tray's items arrived.
+    TrayItemsLoaded(Result<Vec<crate::backend::TrayItemRow>, String>),
+    /// A tray item's menu arrived.
+    TrayMenuLoaded {
+        /// The item's key.
+        key: String,
+        /// Its entries, or why not.
+        result: Result<Vec<crate::backend::TrayMenuRow>, String>,
+    },
+    /// Search Tray's filter changed.
+    TrayQueryChanged(String),
+    /// A Search Tray row was clicked, by position in the shown list.
+    TraySelected(usize),
+    /// A tray action ran: `true` when the launcher should close.
+    TrayActed(Result<bool, String>),
+    /// Script Permissions' list arrived.
+    GrantsLoaded(Result<Vec<crate::backend::ScriptGrant>, String>),
+    /// Browse Apps' or a default picker's filter changed.
+    AppsQueryChanged(String),
+    /// A row of Browse Apps or a default picker was clicked.
+    AppsSelected(usize),
+    /// Whether Browse Apps' selected application has windows open.
+    BrowseAppRuntime {
+        /// The application's desktop id, so a late answer is dropped.
+        id: String,
+        /// Its windows.
+        result: Result<crate::backend::AppRuntimeInfo, String>,
+    },
+    /// A default picker's candidates arrived.
+    DefaultAppsLoaded(Result<Vec<crate::backend::DefaultAppRow>, String>),
+    /// A default picker's choice was written, or could not be.
+    DefaultAppSet(Result<(), String>),
+    /// The engine's catalog generation, asked on every summon: when it moved,
+    /// applications or extensions were installed or removed.
+    CatalogGeneration(Result<u64, String>),
+    /// Script Permissions' filter changed.
+    GrantsQueryChanged(String),
+    /// A script row was clicked, by position in the shown list.
+    GrantSelected(usize),
+    /// A revoke was done, with the list after it, or could not be.
+    GrantRevoked(Result<Vec<crate::backend::ScriptGrant>, String>),
+    /// The uninstall dialog was answered: `true` uninstalls.
+    StoreConfirmAnswered(bool),
     /// A Browse Fonts row was clicked, by position.
     FontSelected(usize),
     /// A family's specimen arrived, or why not.
@@ -194,6 +312,25 @@ pub enum Message {
     ProgramRan(Result<(), String>),
     /// The script commands arrived, or why they could not be listed.
     ScriptsLoaded(Result<Vec<compass_core::script_scan::ScriptItem>, String>),
+    /// The script commands' icons arrived, `(id, icon URL)`, or why not.
+    ScriptIconsLoaded(Result<Vec<(String, String)>, String>),
+    /// The Rhai scripts arrived, or why they could not be listed.
+    RhaiScriptsLoaded(Result<Vec<compass_core::rhai_scripts::RhaiScriptItem>, String>),
+    /// The launch an extension asked for arrived, or why it could not.
+    LaunchFetched(Result<crate::backend::ExtensionLaunch, String>),
+    /// The subtitles extensions set for their commands arrived.
+    ExtensionSubtitlesLoaded(Result<Vec<(String, String)>, String>),
+    /// The engine's answer to whether a newer Compass release is out.
+    UpdateStatusLoaded(Result<Option<crate::backend::UpdateOffer>, String>),
+    /// "Skip This Version" finished for the tag.
+    UpdateSkipped(String, Result<(), String>),
+    /// A command's preferences form arrived, to edit without running it.
+    PreferencesOpened {
+        /// The command's root id.
+        id: String,
+        /// The form, or why it could not be had.
+        result: Result<crate::backend::ExtensionStart, String>,
+    },
     /// A script started: the run to follow, if any.
     ScriptStarted {
         /// Which script.
@@ -232,6 +369,67 @@ pub enum Message {
     WindowActivated(Result<(), String>),
     /// Closing a window finished; the list is reloaded either way.
     ShellWindowClosed(Result<(), String>),
+    /// What the window manager can do, which decides the window-management
+    /// commands root search offers.
+    WindowCapabilities(Result<compass_core::window_switcher::Capabilities, String>),
+    /// Switch Workspaces' filter changed.
+    WorkspacesQueryChanged(String),
+    /// The workspaces arrived, or why they could not be listed.
+    WorkspacesLoaded(Result<Vec<crate::backend::WorkspaceRow>, String>),
+    /// A workspace row was clicked, by position.
+    WorkspaceSelected(usize),
+    /// Switching to a workspace finished.
+    WorkspaceFocused(Result<(), String>),
+    /// A fullscreen, floating or overview toggle finished.
+    WindowToggled(Result<(), String>),
+    /// What "Open with…" opens and what its applications are looked up by,
+    /// once worked out (a shortcut's link is expanded first).
+    OpenWithTarget(Result<(String, String), String>),
+    /// "Open with…"'s applications arrived.
+    OpenersLoaded(Result<Vec<crate::backend::OpenerRow>, String>),
+    /// "Open with…"'s filter changed.
+    OpenWithQueryChanged(String),
+    /// An "Open with…" row was clicked, by position.
+    OpenWithSelected(usize),
+    /// Opening with the chosen application finished.
+    OpenedWith(Result<(), String>),
+    /// What the selected file's action panel depends on arrived.
+    FileActionsLoaded {
+        /// The file it describes, so a late answer for another is dropped.
+        path: String,
+        /// What the panel depends on, or why it is unknown.
+        result: Result<crate::backend::FileActions, String>,
+    },
+    /// A file action that hides the launcher on success finished.
+    FileActionDone(Result<(), String>),
+    /// Manage Shortcuts' detail pane for a shortcut arrived.
+    ShortcutDetailLoaded(crate::shortcuts_page::Detail),
+    /// Whether the application under the root row's panel runs, by its key.
+    AppRuntimeLoaded {
+        /// The application's key, so a late answer for another row is dropped.
+        key: String,
+        /// Whether it runs, and its windows.
+        result: Result<crate::backend::AppRuntimeInfo, String>,
+    },
+    /// Quit, Force Quit, or a root row's Focus or Close Window finished.
+    AppQuit(Result<(), String>),
+    /// Calculator History's filter changed.
+    CalculatorQueryChanged(String),
+    /// Calculator History's rows arrived for request `generation`.
+    CalculatorLoaded {
+        /// The request they answer; a stale one is dropped.
+        generation: u64,
+        /// The groups, or why there are none.
+        result: Result<Vec<crate::backend::CalculatorGroupRow>, String>,
+    },
+    /// A Calculator History row was clicked, by position.
+    CalculatorSelected(usize),
+    /// A pin, unpin or removal finished, with what to say.
+    CalculatorEdited(Result<&'static str, String>),
+    /// The engine's exchange rates arrived, for currency conversions.
+    ExchangeRatesLoaded(Result<Option<compass_core::exchange_rates::ExchangeRates>, String>),
+    /// Refresh Exchange Rates finished.
+    ExchangeRatesRefreshed(Result<compass_core::exchange_rates::ExchangeRates, String>),
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must
@@ -294,6 +492,10 @@ pub enum Message {
     /// Distinct from [`Message::Dismiss`]: this is the window telling us it is
     /// gone, not a request to make it go.
     Closed(iced::window::Id),
+    /// The card was laid out at this size: shown, resized, or its
+    /// translucency or corner radius changed. Where the blur goes (see
+    /// `crate::material`).
+    CardMeasured(iced::Size),
     /// Leave for good.
     ///
     /// The one thing that still ends the process, now that dismissing only
@@ -331,4 +533,68 @@ pub enum Message {
         /// The chosen paths.
         result: Result<Vec<String>, String>,
     },
+    /// Something in the settings view.
+    Settings(crate::settings_page::SettingsMessage),
+    /// A tick while the HUD is up, at this time.
+    HudTick(std::time::Instant),
+    /// An action that hides the launcher finished: on success it hides,
+    /// with this HUD where there is one (`Quit Files`, `Wallpaper set`); on
+    /// failure the reason shows in the view.
+    ActionDone(Option<crate::hud::Hud>, Result<(), String>),
+    /// The first-run flow's Continue (or Finish on its last step).
+    OnboardingContinue,
+    /// The first-run flow's Back.
+    OnboardingBack,
+    /// A step dot was clicked.
+    OnboardingJump(usize),
+    /// A theme was chosen in the first-run flow.
+    OnboardingTheme(crate::onboarding_page::ThemeOption),
+    /// One of the first-run flow's links was clicked.
+    OnboardingOpen(&'static str),
+    /// The link opened, or why not.
+    OnboardingLinkOpened(Result<(), String>),
+    /// Configure Fallback Commands' filter changed.
+    FallbacksQueryChanged(String),
+    /// A row of Configure Fallback Commands was clicked: its action runs.
+    FallbackSelected(usize),
+    /// Show Installed Extensions' filter changed.
+    ExtensionsQueryChanged(String),
+    /// Search Builtin Icons' filter changed.
+    IconsQueryChanged(String),
+    /// A row of Show Installed Extensions or Search Builtin Icons was
+    /// clicked: its first action runs.
+    CompassRowSelected(usize),
+    /// An extension was uninstalled from Show Installed Extensions, or why
+    /// not.
+    ExtensionUninstalled {
+        /// The extension's id.
+        id: String,
+        /// Whether it went.
+        result: Result<(), String>,
+    },
+    /// Inspect Local Storage's filter changed.
+    StorageQueryChanged(String),
+    /// Manage OAuth Token Sets' filter changed.
+    TokensQueryChanged(String),
+    /// Inspect Local Storage's namespaces arrived, or why not.
+    StorageNamespacesLoaded(Result<Vec<String>, String>),
+    /// A namespace's items arrived, or why not.
+    StorageItemsLoaded {
+        /// The namespace.
+        namespace: String,
+        /// Its items.
+        result: Result<Vec<crate::backend::StorageItemRow>, String>,
+    },
+    /// Manage OAuth Token Sets' list arrived, or why not.
+    TokenSetsLoaded(Result<Vec<crate::backend::TokenSetRow>, String>),
+    /// A token set was removed, or why not.
+    TokenSetRemoved(Result<(), String>),
+    /// The launcher window gained (`true`) or lost the keyboard focus.
+    WindowFocusChanged(bool),
+    /// The engine's answer to the recorder suspending or resuming the
+    /// global shortcuts.
+    ShortcutCaptureSet(Result<(), String>),
+    /// The engine's answer to the recorder asking whether the desktop would
+    /// bind a combination: the combination, and the refusal if any.
+    ShortcutProbed(String, Result<Option<String>, String>),
 }

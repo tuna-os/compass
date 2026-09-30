@@ -120,6 +120,7 @@ mod tests {
             wm_class: app.to_lowercase(),
             pid: Some(pid),
             can_close: true,
+            app_known: true,
         }
     }
 

@@ -39,6 +39,15 @@ pub enum CommandKind {
     ClipboardHistory,
     /// Focus an open window.
     SwitchWindows,
+    /// Switch to another workspace. Offered only where the compositor has
+    /// workspaces (see [`crate::window_switcher::command_offered`]).
+    SwitchWorkspaces,
+    /// Toggle fullscreen on the window the person was in.
+    ToggleFullscreen,
+    /// Float the window the person was in, or tile it again.
+    ToggleFloating,
+    /// Open or close the compositor's overview.
+    ToggleOverview,
     /// Find an emoji or symbol and copy it.
     SearchEmojis,
     /// Search the file index and open a file.
@@ -60,10 +69,36 @@ pub enum CommandKind {
     CreateExtension,
     /// Browse the installed fonts by script, and preview one.
     BrowseFonts,
+    /// Browse, install and uninstall extensions from the Vicinae store.
+    ExtensionStore,
+    /// Browse, install and uninstall extensions from the Raycast store.
+    RaycastStore,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
+    /// Browse and control the running media players.
+    NowPlaying,
+    /// Review and revoke what the user's Rhai scripts and extensions were allowed.
+    ScriptPermissions,
+    /// Browse, pin and remove past calculations.
+    CalculatorHistory,
+    /// Fetch the calculator's exchange rates now (`refresh-rates`).
+    RefreshExchangeRates,
     /// A media command, by its id in [`crate::media_commands`].
     Media(&'static str),
+    /// Browse every installed application, hidden ones included on request.
+    BrowseApps,
+    /// Choose the web browser links open in.
+    SetDefaultBrowser,
+    /// Choose the terminal commands run in.
+    SetDefaultTerminal,
+    /// Other applications' tray icons and their menus.
+    SearchTray,
+    /// The settings view: every setting of `compass.json`, by page.
+    OpenSettings,
+    /// One of Compass's own commands (the C++ `VicinaeExtension`), by its
+    /// C++ id: the fallback manager, the installed extensions, the icon
+    /// gallery, the storage browsers, and the links and files it opens.
+    Compass(&'static str),
 }
 
 /// Every builtin command, in the order an empty query lists them. The power
@@ -87,6 +122,38 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             "windows", "window", "switch", "focus", "alt tab", "switcher",
         ],
         icon: "switch-windows",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SwitchWorkspaces,
+        entrypoint: "switch-workspaces",
+        title: "Switch Workspaces",
+        subtitle: "Go to another workspace",
+        keywords: crate::window_switcher::SWITCH_WORKSPACES_KEYWORDS,
+        icon: "carousel",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleFullscreen,
+        entrypoint: "toggle-fullscreen",
+        title: "Toggle Fullscreen",
+        subtitle: "Make the active window fullscreen, or not",
+        keywords: &["fullscreen", "window", "maximize"],
+        icon: "fullscreen",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleFloating,
+        entrypoint: "toggle-floating",
+        title: "Toggle Floating",
+        subtitle: "Float the active window, or tile it",
+        keywords: &["floating", "float", "tile", "window"],
+        icon: "floating-window",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleOverview,
+        entrypoint: "toggle-overview",
+        title: "Toggle Overview",
+        subtitle: "Open or close the overview",
+        keywords: &["overview", "expose", "workspaces"],
+        icon: "overview",
     },
     BuiltinCommand {
         kind: CommandKind::SearchEmojis,
@@ -177,6 +244,22 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         icon: "text",
     },
     BuiltinCommand {
+        kind: CommandKind::ExtensionStore,
+        entrypoint: "store",
+        title: "Extension Store",
+        subtitle: "Install extensions from the Vicinae store",
+        keywords: &["store", "extensions", "install", "vicinae", "plugins"],
+        icon: "cart",
+    },
+    BuiltinCommand {
+        kind: CommandKind::RaycastStore,
+        entrypoint: "raycast-store",
+        title: "Raycast Store",
+        subtitle: "Install compatible extensions from the Raycast store",
+        keywords: &["store", "extensions", "install", "raycast", "plugins"],
+        icon: "raycast",
+    },
+    BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),
         entrypoint: power_commands::COMMANDS[0].id,
         title: power_commands::COMMANDS[0].name,
@@ -239,6 +322,47 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: power_commands::COMMANDS[7].description,
         keywords: power_commands::COMMANDS[7].keywords,
         icon: "rotate-clockwise",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ScriptPermissions,
+        entrypoint: "script-permissions",
+        title: "Script Permissions",
+        subtitle: "Review and revoke what your Rhai scripts and extensions may do",
+        keywords: &[
+            "rhai",
+            "scripts",
+            "permissions",
+            "consent",
+            "grants",
+            "revoke",
+            "extensions",
+            "host",
+        ],
+        icon: "key",
+    },
+    BuiltinCommand {
+        kind: CommandKind::CalculatorHistory,
+        entrypoint: "calculator-history",
+        title: "Calculator History",
+        subtitle: "Browse past calculations",
+        keywords: &["calculator", "history", "calc", "math", "calculations"],
+        icon: "calculator",
+    },
+    BuiltinCommand {
+        kind: CommandKind::RefreshExchangeRates,
+        entrypoint: "refresh-rates",
+        title: "Refresh Exchange Rates",
+        subtitle: "Refresh the rates the calculator converts currencies with",
+        keywords: &["calculator", "currency", "exchange", "rates", "ecb"],
+        icon: "globe-01",
+    },
+    BuiltinCommand {
+        kind: CommandKind::NowPlaying,
+        entrypoint: "now-playing",
+        title: "Now Playing",
+        subtitle: "Browse and control running media players",
+        keywords: &["media", "music", "player", "mpris"],
+        icon: "music",
     },
     BuiltinCommand {
         kind: CommandKind::Media("play-pause"),
@@ -328,7 +452,229 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &["audio", "sound", "volume", "mute", "unmute"],
         icon: "speaker-off",
     },
+    // The system extension's other three (`system-extension.hpp`). Browse
+    // Apps is `isDefaultDisabled`: see `BuiltinCommand::default_disabled`.
+    BuiltinCommand {
+        kind: CommandKind::BrowseApps,
+        entrypoint: "browse-apps",
+        title: "Browse Apps",
+        subtitle: "Browse all applications that are installed on the system",
+        keywords: &[],
+        icon: "box",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SetDefaultTerminal,
+        entrypoint: "set-default-terminal",
+        title: "Set Default Terminal",
+        subtitle: "Change the default system terminal",
+        keywords: &[],
+        icon: "terminal",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SetDefaultBrowser,
+        entrypoint: "set-default-browser",
+        title: "Set Default Browser",
+        subtitle: "Change the default system web browser",
+        keywords: &[],
+        icon: "globe-01",
+    },
+    // `SearchTrayCommand`: the C++ core extension's, over the tray host.
+    BuiltinCommand {
+        kind: CommandKind::SearchTray,
+        entrypoint: "search-tray",
+        title: "Search Tray",
+        subtitle: "Browse system tray items and trigger their menu actions",
+        keywords: &["status", "notifier", "indicator"],
+        icon: "app-window-list",
+    },
+    // `OpenSettingsCommand`: the C++ core extension's `settings`.
+    BuiltinCommand {
+        kind: CommandKind::OpenSettings,
+        entrypoint: "settings",
+        title: "Open Settings",
+        subtitle: "Every setting of the launcher, its extensions and commands",
+        keywords: &["preferences", "settings", "configure", "options"],
+        icon: "cog",
+    },
+    // The C++ `VicinaeExtension`'s own commands, in its registration order.
+    BuiltinCommand {
+        kind: CommandKind::Compass("manage-fallback"),
+        entrypoint: "manage-fallback",
+        title: "Configure Fallback Commands",
+        subtitle: "Configure what commands are to be presented as fallback options when nothing matches the search in the root search.",
+        keywords: &[],
+        icon: "undo",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("list-extensions"),
+        entrypoint: "list-extensions",
+        title: "Show Installed Extensions",
+        subtitle: "Show all third-party extensions that have been installed. This includes local extensions as well as extensions downloaded from the stores (Vicinae and Raycast).",
+        keywords: &[],
+        icon: "plug",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("refresh-apps"),
+        entrypoint: "refresh-apps",
+        title: "Refresh Apps",
+        subtitle: "Force a refresh of the application database. The database should normally automatically update itself on changes, but this can help working around some edge cases.",
+        keywords: &[],
+        icon: "redo",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("report-bug"),
+        entrypoint: "report-bug",
+        title: "Report a Compass Bug",
+        subtitle: "Open the Compass issue page with the relevant information pre-filled.",
+        keywords: &["create issue"],
+        icon: "bug",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("sponsor"),
+        entrypoint: "sponsor",
+        title: "Sponsor Upstream Vicinae",
+        subtitle: "Open the GitHub Sponsors page of Vicinae, the project Compass is built on",
+        keywords: &["sponsor", "donate", "vicinae"],
+        icon: "heart",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("project-page"),
+        entrypoint: "project-page",
+        title: "Compass on GitHub",
+        subtitle: "Open the Compass project page for help, releases and discussion.",
+        keywords: &["help", "support", "github"],
+        icon: "globe-01",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("open-config-file"),
+        entrypoint: "open-config-file",
+        title: "Open Config File",
+        subtitle: "Open the main Compass configuration file",
+        keywords: &[],
+        icon: "pencil",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("open-default-config"),
+        entrypoint: "open-default-config",
+        title: "Open Default Config File",
+        subtitle: "Open the default Compass configuration file",
+        keywords: &[],
+        icon: "pencil",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("reload-scripts"),
+        entrypoint: "reload-scripts",
+        title: "Reload Script Directories",
+        subtitle: "Reload script directories",
+        keywords: &[],
+        icon: "code",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("show-logs"),
+        entrypoint: "show-logs",
+        title: "Show Log File",
+        subtitle: "Open the Compass log file in your file browser",
+        keywords: &[],
+        icon: "paragraph",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("search-builtin-icons"),
+        entrypoint: "search-builtin-icons",
+        title: "Search Builtin Icons",
+        subtitle: "Search Compass's builtin set of icons",
+        keywords: &[],
+        icon: "box",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("oauth-token-store"),
+        entrypoint: "oauth-token-store",
+        title: "Manage OAuth Token Sets",
+        subtitle: "Manage OAuth token sets that have been saved by extensions providing OAuth integrations.",
+        keywords: &[],
+        icon: "key",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Compass("inspect-local-storage"),
+        entrypoint: "inspect-local-storage",
+        title: "Inspect Local Storage",
+        subtitle: "Browse data stored in Compass's local storage. This includes data stored for builtin extensions as well as third-party extensions making use of the LocalStorage API.",
+        keywords: &[],
+        icon: "coin",
+    },
 ];
+
+/// The colour a builtin command's icon tile is filled with: the C++ command's
+/// `setBackgroundTint`, a theme accent or the literal grey `(128, 132, 138)`
+/// the media and default-app commands use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tile {
+    /// `SemanticColor::Red`.
+    Red,
+    /// `SemanticColor::Orange`.
+    Orange,
+    /// `SemanticColor::Yellow`.
+    Yellow,
+    /// `SemanticColor::Green`.
+    Green,
+    /// `SemanticColor::Cyan`.
+    Cyan,
+    /// `SemanticColor::Blue`.
+    Blue,
+    /// `SemanticColor::Purple`.
+    Purple,
+    /// `SemanticColor::Accent` (`Omnicast::ACCENT_COLOR`).
+    Accent,
+    /// `QColor(128, 132, 138)`.
+    Gray,
+}
+
+impl CommandKind {
+    /// The tile behind the command's icon, as its C++ `iconUrl()` sets it.
+    #[must_use]
+    pub fn tile(self) -> Tile {
+        match self {
+            Self::ClipboardHistory | Self::RaycastStore => Tile::Red,
+            Self::SearchFiles => Tile::Yellow,
+            Self::SwitchWindows
+            | Self::SwitchWorkspaces
+            | Self::ToggleFullscreen
+            | Self::ToggleFloating
+            | Self::ToggleOverview
+            | Self::CalculatorHistory
+            | Self::RefreshExchangeRates => Tile::Blue,
+            Self::CreateShortcut | Self::ManageShortcuts | Self::SetTheme => Tile::Purple,
+            Self::CreateSnippet | Self::ManageSnippets | Self::BrowseFonts => Tile::Orange,
+            Self::CreateExtension => Tile::Green,
+            Self::RunProgram | Self::BrowseApps => Tile::Cyan,
+            Self::SearchEmojis
+            | Self::ExtensionStore
+            | Self::ScriptPermissions
+            | Self::SearchTray
+            | Self::OpenSettings
+            | Self::Compass(_) => Tile::Accent,
+            Self::NowPlaying
+            | Self::Media(_)
+            | Self::SetDefaultBrowser
+            | Self::SetDefaultTerminal => Tile::Gray,
+            Self::Power(id) => match id {
+                "power-off" | "logout" => Tile::Red,
+                "soft-reboot" => Tile::Cyan,
+                _ => Tile::Accent,
+            },
+        }
+    }
+
+    /// The small builtin icon drawn in the tile's corner, as the C++'s
+    /// `setBadge`: a plus on the create commands, an arrow on the stores.
+    #[must_use]
+    pub fn badge(self) -> Option<&'static str> {
+        match self {
+            Self::CreateShortcut | Self::CreateSnippet | Self::CreateExtension => Some("plus"),
+            Self::ExtensionStore | Self::RaycastStore => Some("arrow-down"),
+            _ => None,
+        }
+    }
+}
 
 impl BuiltinCommand {
     /// The `commands:<entrypoint>` id that addresses it in root search, on the
@@ -336,6 +682,20 @@ impl BuiltinCommand {
     #[must_use]
     pub fn id(&self) -> String {
         entrypoint_id(COMMANDS_PROVIDER_ID, self.entrypoint)
+    }
+
+    /// Whether the command is left out of the root list until the user
+    /// enables it: `isDefaultDisabled`, which Browse Apps and the Vicinae
+    /// extension's inspection commands set.
+    #[must_use]
+    pub fn default_disabled(&self) -> bool {
+        matches!(
+            self.kind,
+            CommandKind::BrowseApps
+                | CommandKind::Compass(
+                    "search-builtin-icons" | "oauth-token-store" | "inspect-local-storage"
+                )
+        )
     }
 
     /// Its root-list row.
@@ -349,7 +709,7 @@ impl BuiltinCommand {
             keywords: self.keywords.iter().map(|&k| k.to_owned()).collect(),
             meta: RootItemMeta {
                 provider_id: COMMANDS_PROVIDER_ID.to_owned(),
-                enabled: true,
+                enabled: !self.default_disabled(),
                 ..RootItemMeta::default()
             },
         }
@@ -362,9 +722,140 @@ pub fn by_id(id: &str) -> Option<&'static BuiltinCommand> {
     BUILTIN_COMMANDS.iter().find(|command| command.id() == id)
 }
 
+/// The C++ id of Search Files, which the default `fallbacks` list names.
+pub const SEARCH_FILES_FALLBACK_ID: &str = "files:search";
+
+/// The builtin command a `fallbacks` entry names, when it is one that can be
+/// a fallback (`isFallback`): Search Files, by its C++ id or its Compass one.
+#[must_use]
+pub fn fallback(id: &str) -> Option<&'static BuiltinCommand> {
+    let command = if id == SEARCH_FILES_FALLBACK_ID {
+        BUILTIN_COMMANDS
+            .iter()
+            .find(|command| command.kind == CommandKind::SearchFiles)
+    } else {
+        by_id(id)
+    }?;
+    (command.kind == CommandKind::SearchFiles).then_some(command)
+}
+
+/// The C++ ids of the builtin commands a configuration is likely to name,
+/// with the command each is here. The C++ addresses a builtin as
+/// `<extension>:<command>` (`clipboard:history`), Compass as
+/// `commands:<entrypoint>`; the default `favorites` list and a file written
+/// by the C++ use the former.
+pub const CPP_BUILTIN_IDS: &[(&str, CommandKind)] = &[
+    ("clipboard:history", CommandKind::ClipboardHistory),
+    ("files:search", CommandKind::SearchFiles),
+    ("core:search-emojis", CommandKind::SearchEmojis),
+    (
+        "core:manage-fallback",
+        CommandKind::Compass("manage-fallback"),
+    ),
+    (
+        "core:list-extensions",
+        CommandKind::Compass("list-extensions"),
+    ),
+    ("core:refresh-apps", CommandKind::Compass("refresh-apps")),
+    ("core:report-bug", CommandKind::Compass("report-bug")),
+    ("core:sponsor", CommandKind::Compass("sponsor")),
+    // Compass has no Discord server; the C++ id opens its project page.
+    (
+        "core:join-discord-server",
+        CommandKind::Compass("project-page"),
+    ),
+    (
+        "core:open-config-file",
+        CommandKind::Compass("open-config-file"),
+    ),
+    (
+        "core:open-default-config",
+        CommandKind::Compass("open-default-config"),
+    ),
+    (
+        "core:reload-scripts",
+        CommandKind::Compass("reload-scripts"),
+    ),
+    ("core:show-logs", CommandKind::Compass("show-logs")),
+    (
+        "core:search-builtin-icons",
+        CommandKind::Compass("search-builtin-icons"),
+    ),
+    (
+        "core:oauth-token-store",
+        CommandKind::Compass("oauth-token-store"),
+    ),
+    (
+        "core:inspect-local-storage",
+        CommandKind::Compass("inspect-local-storage"),
+    ),
+];
+
+/// The id Compass knows an entrypoint by: a C++ builtin's id becomes its
+/// command's `commands:` id, and anything else is returned as it is.
+#[must_use]
+pub fn canonical_id(id: &str) -> String {
+    CPP_BUILTIN_IDS
+        .iter()
+        .find(|(cpp, _)| *cpp == id)
+        .and_then(|(_, kind)| {
+            BUILTIN_COMMANDS
+                .iter()
+                .find(|command| command.kind == *kind)
+        })
+        .map_or_else(|| id.to_owned(), BuiltinCommand::id)
+}
+
+/// Whether running the command opens a view in the launcher, which is what
+/// lets its alias and a space open it (`supportsAliasSpaceShortcut`, which
+/// the C++ answers with `isView()`): a command that runs and hides has
+/// nothing to show for it.
+#[must_use]
+pub fn opens_a_view(kind: CommandKind) -> bool {
+    match kind {
+        CommandKind::Power(_)
+        | CommandKind::Media(_)
+        | CommandKind::ToggleFullscreen
+        | CommandKind::ToggleFloating
+        | CommandKind::ToggleOverview => false,
+        CommandKind::Compass(id) => COMPASS_VIEWS.contains(&id),
+        _ => true,
+    }
+}
+
+/// Compass's own commands that open a view (`BuiltinViewCommand`);
+/// the rest run and hide, or open something outside the launcher.
+pub const COMPASS_VIEWS: &[&str] = &[
+    "manage-fallback",
+    "list-extensions",
+    "search-builtin-icons",
+    "oauth-token-store",
+    "inspect-local-storage",
+];
+
+/// Where Sponsor Upstream Vicinae goes (`Omnicast::GH_SPONSOR_LINK`).
+pub const SPONSOR_URL: &str = crate::tray::SPONSOR_URL;
+
+/// Where Compass on GitHub goes. The C++ command it replaces opened
+/// `Omnicast::DISCORD_INVITE_LINK`, upstream Vicinae's Discord.
+pub const PROJECT_URL: &str = crate::tray::PROJECT_URL;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cpp_builtin_id_names_its_compass_command_and_others_are_kept() {
+        assert_eq!(
+            canonical_id("clipboard:history"),
+            "commands:clipboard-history"
+        );
+        assert_eq!(canonical_id("core:search-emojis"), "commands:search-emojis");
+        assert_eq!(canonical_id("applications:firefox"), "applications:firefox");
+        for (_, kind) in CPP_BUILTIN_IDS {
+            assert!(BUILTIN_COMMANDS.iter().any(|command| command.kind == *kind));
+        }
+    }
 
     #[test]
     fn the_power_commands_are_the_power_catalogue_in_order() {
@@ -391,6 +882,20 @@ mod tests {
     }
 
     #[test]
+    fn search_files_is_the_one_fallback_by_either_id() {
+        assert_eq!(
+            fallback("files:search").map(|c| c.kind),
+            Some(CommandKind::SearchFiles)
+        );
+        assert_eq!(
+            fallback("commands:search-files").map(|c| c.kind),
+            Some(CommandKind::SearchFiles)
+        );
+        assert_eq!(fallback("commands:clipboard-history"), None);
+        assert_eq!(fallback("nothing:here"), None);
+    }
+
+    #[test]
     fn ids_are_unique_and_round_trip() {
         let mut ids: Vec<String> = BUILTIN_COMMANDS.iter().map(BuiltinCommand::id).collect();
         for id in &ids {
@@ -407,6 +912,71 @@ mod tests {
             Some(CommandKind::ClipboardHistory)
         );
         assert!(by_id("applications:clipboard-history").is_none());
+    }
+
+    #[test]
+    fn each_command_keeps_the_cpps_tile_and_badge() {
+        let tile = |id: &str| by_id(id).map(|c| c.kind.tile());
+        assert_eq!(tile("commands:clipboard-history"), Some(Tile::Red));
+        assert_eq!(tile("commands:search-files"), Some(Tile::Yellow));
+        assert_eq!(tile("commands:manage-snippets"), Some(Tile::Orange));
+        assert_eq!(tile("commands:set-theme"), Some(Tile::Purple));
+        assert_eq!(tile("commands:browse-apps"), Some(Tile::Cyan));
+        assert_eq!(tile("commands:set-default-browser"), Some(Tile::Gray));
+        assert_eq!(CommandKind::Power("power-off").tile(), Tile::Red);
+        assert_eq!(CommandKind::Power("lock").tile(), Tile::Accent);
+        assert_eq!(CommandKind::Power("soft-reboot").tile(), Tile::Cyan);
+        assert_eq!(CommandKind::CreateSnippet.badge(), Some("plus"));
+        assert_eq!(CommandKind::ExtensionStore.badge(), Some("arrow-down"));
+        assert_eq!(CommandKind::ManageSnippets.badge(), None);
+        for command in BUILTIN_COMMANDS {
+            if let Some(badge) = command.kind.badge() {
+                assert!(crate::builtin_icon::is_builtin(badge), "{badge}");
+            }
+        }
+    }
+
+    #[test]
+    fn compass_own_commands_keep_their_cpp_ids() {
+        for id in [
+            "manage-fallback",
+            "list-extensions",
+            "refresh-apps",
+            "report-bug",
+            "sponsor",
+            "project-page",
+            "open-config-file",
+            "open-default-config",
+            "reload-scripts",
+            "show-logs",
+            "search-builtin-icons",
+            "oauth-token-store",
+            "inspect-local-storage",
+        ] {
+            let command = by_id(&format!("commands:{id}")).expect(id);
+            assert_eq!(command.kind, CommandKind::Compass(id));
+            // The one command Compass replaced keeps the C++ id it stands in for.
+            let cpp = if id == "project-page" {
+                "join-discord-server"
+            } else {
+                id
+            };
+            assert_eq!(canonical_id(&format!("core:{cpp}")), command.id());
+            assert_eq!(command.kind.tile(), Tile::Accent);
+            assert_eq!(opens_a_view(command.kind), COMPASS_VIEWS.contains(&id));
+        }
+        for id in [
+            "commands:search-builtin-icons",
+            "commands:oauth-token-store",
+            "commands:inspect-local-storage",
+        ] {
+            assert!(by_id(id).unwrap().default_disabled(), "{id}");
+        }
+        assert!(
+            !by_id("commands:manage-fallback")
+                .unwrap()
+                .default_disabled()
+        );
     }
 
     #[test]

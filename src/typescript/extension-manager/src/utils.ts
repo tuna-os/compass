@@ -11,7 +11,7 @@ const platformDataDir = () => {
 	return process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
 };
 
-export const dataDir = () => join(platformDataDir(), "vicinae");
+export const dataDir = () => join(platformDataDir(), "compass");
 
 export const runtimeDir = () => join(dataDir(), "runtime");
 

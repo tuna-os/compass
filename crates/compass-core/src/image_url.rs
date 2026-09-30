@@ -95,7 +95,7 @@ const COLOR_TINTS: &[(&str, &str)] = &[
 pub const SCHEME: &str = "icon";
 
 /// How an icon is clipped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum ImageMask {
     /// Not clipped.
     #[default]
@@ -295,7 +295,10 @@ impl ImageUrl {
     /// reordering would make two equal icons look different.
     #[must_use]
     pub fn to_url(&self) -> String {
-        let mut url = format!("{SCHEME}://{}/{}", name_for_type(self.kind), self.name);
+        // `QUrl::setPath` escapes what would end the path, so an `https`
+        // image's own query string survives the round trip.
+        let name = escape_path(&self.name);
+        let mut url = format!("{SCHEME}://{}/{name}", name_for_type(self.kind));
         let mut query: Vec<String> = Vec::new();
 
         if let Some(fallback) = &self.fallback {
@@ -395,6 +398,104 @@ impl ImageUrl {
             path.to_owned()
         }
     }
+}
+
+/// What [`ImageUrl::from_source`] asks of the disk and the icon theme,
+/// injected so the decision can be tested without either.
+pub trait SourceLookup {
+    /// Whether the builtin icon set has an icon by this name.
+    fn builtin(&self, name: &str) -> bool;
+    /// Whether a file exists at this path.
+    fn file(&self, path: &str) -> bool;
+    /// The file `relative` names among the extension's assets, if any
+    /// (`RelativeAssetResolver`).
+    fn asset(&self, relative: &str) -> Option<String>;
+    /// Whether the icon theme has an icon by this name.
+    fn themed(&self, name: &str) -> bool;
+}
+
+impl ImageUrl {
+    /// What a bare icon string an extension or a manifest gives names, as
+    /// `ImageURL(const ImageLikeModel &)` reads one: an `icon://` URL as
+    /// itself; a `file:`, `data:` or `http(s):` URL; an emoji; another glyph
+    /// in the glyph table (an emoji or a symbol by its kind); a builtin icon
+    /// by name, filled in the text colour; a file that exists; a file among
+    /// the extension's assets; an icon of the theme. Anything else is
+    /// invalid, as the C++ leaves it.
+    #[must_use]
+    pub fn from_source(source: &str, lookup: &dyn SourceLookup) -> Self {
+        if let Some(scheme) = scheme_of(source) {
+            match scheme.as_str() {
+                SCHEME => return Self::parse(source),
+                "file" => {
+                    let rest = &source[scheme.len() + 1..];
+                    let path = rest.strip_prefix("//").unwrap_or(rest);
+                    return Self::local(
+                        percent_encoding::percent_decode_str(path)
+                            .decode_utf8_lossy()
+                            .into_owned(),
+                    );
+                }
+                "data" => return Self::new(ImageUrlType::DataUri, source),
+                "http" | "https" => return Self::http(source),
+                _ => {}
+            }
+        }
+        if crate::glyph::is_emoji(source) {
+            return Self::new(ImageUrlType::Emoji, source);
+        }
+        if let Some(glyph) = crate::glyph::lookup(source) {
+            let kind = if glyph.kind == crate::glyph::Kind::Emoji {
+                ImageUrlType::Emoji
+            } else {
+                ImageUrlType::Symbol
+            };
+            return Self::new(kind, source);
+        }
+        if lookup.builtin(source) {
+            return Self::builtin(source).with_fill(Some(ColorLike::Semantic("Foreground".into())));
+        }
+        if lookup.file(source) {
+            return Self::local(source);
+        }
+        if let Some(resolved) = lookup.asset(source) {
+            return Self::local(resolved);
+        }
+        if lookup.themed(source) {
+            return Self::new(ImageUrlType::System, source);
+        }
+        Self::default()
+    }
+}
+
+/// The scheme `text` opens with, lowercased, as `QUrl` reads one: a letter,
+/// then letters, digits, `+`, `-` and `.`, then a colon. A Windows drive
+/// letter is not one, which is moot on Linux.
+fn scheme_of(text: &str) -> Option<String> {
+    let (scheme, _) = text.split_once(':')?;
+    let mut chars = scheme.chars();
+    if !chars.next()?.is_ascii_alphabetic() {
+        return None;
+    }
+    chars
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        .then(|| scheme.to_ascii_lowercase())
+}
+
+/// A name as the URL's path carries it: what would start the query or the
+/// fragment, and the escape character itself, escaped; everything else,
+/// Unicode included, as written, as `QUrl::toString()` prints a path.
+fn escape_path(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            '?' => out.push_str("%3F"),
+            '#' => out.push_str("%23"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Percent-encode a query component.

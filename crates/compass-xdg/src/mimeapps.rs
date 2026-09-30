@@ -400,17 +400,6 @@ impl Lists {
 mod tests {
     use super::*;
 
-    const CPP_PATHS: &str = "src/lib/xdgpp/xdgpp/env/env.cpp";
-
-    fn read_cpp(rel: &str) -> String {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("two levels below the repository root")
-            .join(rel);
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-    }
-
     #[test]
     fn the_three_groups_are_read() {
         let list = Associations::parse(
@@ -445,15 +434,6 @@ mod tests {
         // `getMimeLikeConfigPaths`: config home, config dirs, data home's
         // applications/, then each data dir's applications/ -- and within each,
         // the desktop-prefixed names before the bare one.
-        let cpp = read_cpp(CPP_PATHS);
-        assert!(
-            cpp.contains(r#"paths.emplace_back(xdgpp::configHome() / fileName);"#)
-                && cpp.contains(
-                    r#"paths.emplace_back(xdgpp::dataHome() / "applications" / fileName);"#
-                ),
-            "{CPP_PATHS} no longer builds the path list this port reproduces"
-        );
-
         let paths = search_paths_for(
             Some(Path::new("/home/u/.config")),
             &[PathBuf::from("/etc/xdg")],

@@ -7,11 +7,12 @@
 //! which commits macOS and Windows to their own phases and so makes the shape
 //! of the seam something the later work inherits rather than fights.
 //!
-//! Nothing selects this crate except the `vicinae` binary. That is the point:
+//! Nothing selects this crate except the `compass` binary. That is the point:
 //! a platform backend a shared crate can reach is not a backend.
 
 #![deny(missing_docs)]
 
+pub mod compositor;
 pub mod dir_watcher;
 pub mod keyboard;
 mod launch;

@@ -291,7 +291,7 @@ to know that the box contained the action panel rather than something else.
 ## The wlroots rung — headless Sway, per PR
 
 ```sh
-cargo build -p vicinae && scripts/wlroots/launcher-on-sway.sh   # ~15 s
+cargo build -p compass && scripts/wlroots/launcher-on-sway.sh   # ~15 s
 ```
 
 The t2 of the second compositor family. Sway runs with `WLR_BACKENDS=headless`
@@ -299,12 +299,12 @@ and the pixman renderer — no container, no D-Bus, no GPU — so it is cheaper
 than the Mutter tier and runs on the CI runner itself
 (`.github/workflows/wlroots.yaml`). It answers what only a wlroots compositor
 can: that the launcher is a **layer surface** (on screen, yet absent from
-Sway's window tree), that `vicinae toggle` hides and re-shows it, and that
+Sway's window tree), that `compass toggle` hides and re-shows it, and that
 typed text reaches it (`wtype`). Screenshots come from `grim`; the screen
 starts as a solid `#202020` background, so "on screen" is a pixel count.
 
 Its control is the same launcher forced onto `xdg_toplevel`
-(`VICINAE_LAYER_SHELL=0`), which must show up in the tree. The typing gate
+(`COMPASS_LAYER_SHELL=0`), which must show up in the tree. The typing gate
 has one too, found the hard way: its first version passed while the keys went
 nowhere, because the root list filling in changed the screen on its own. It
 now waits for a settled frame first, and it fails against the build that

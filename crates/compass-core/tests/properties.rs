@@ -104,7 +104,7 @@ proptest! {
     /// Parsing arbitrary bytes as a config never panics: it is either a config or an error.
     #[test]
     fn parsing_arbitrary_config_text_never_panics(text in "\\PC{0,200}") {
-        let _ = Config::parse(&text, std::path::Path::new("/test/vicinae.json"));
+        let _ = Config::parse(&text, std::path::Path::new("/test/compass.json"));
     }
 
     /// Any config that parses round-trips byte-for-byte through JSON.

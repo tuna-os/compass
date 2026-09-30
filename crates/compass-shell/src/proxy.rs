@@ -18,11 +18,11 @@ use std::collections::HashMap;
 
 use zbus::zvariant::OwnedValue;
 
-/// Proxy for `org.gnome.Shell.Extensions.Vicinae.Windows`.
+/// Proxy for `org.tunaos.compass.Shell.Windows`.
 #[zbus::proxy(
-    interface = "org.gnome.Shell.Extensions.Vicinae.Windows",
+    interface = "org.tunaos.compass.Shell.Windows",
     default_service = "org.gnome.Shell",
-    default_path = "/org/gnome/Shell/Extensions/Vicinae/Windows"
+    default_path = "/org/tunaos/compass/Shell/Windows"
 )]
 pub trait Windows {
     /// Contract version implemented by the extension.
@@ -41,13 +41,19 @@ pub trait Windows {
     /// Something in the window set changed; re-read `ListWindows`.
     #[zbus(signal)]
     fn windows_changed(&self) -> zbus::Result<()>;
+
+    /// The workspaces, in order (contract 4).
+    fn list_workspaces(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
+
+    /// Switch to the workspace at `index` (contract 4).
+    fn activate_workspace(&self, index: i32) -> zbus::Result<()>;
 }
 
-/// Proxy for `org.gnome.Shell.Extensions.Vicinae.Clipboard`.
+/// Proxy for `org.tunaos.compass.Shell.Clipboard`.
 #[zbus::proxy(
-    interface = "org.gnome.Shell.Extensions.Vicinae.Clipboard",
+    interface = "org.tunaos.compass.Shell.Clipboard",
     default_service = "org.gnome.Shell",
-    default_path = "/org/gnome/Shell/Extensions/Vicinae/Clipboard"
+    default_path = "/org/tunaos/compass/Shell/Clipboard"
 )]
 pub trait Clipboard {
     /// Contract version implemented by the extension.
@@ -63,6 +69,9 @@ pub trait Clipboard {
     /// Paste the selection into the window focus moves to next, with
     /// Ctrl+Shift+V for the listed `WM_CLASS`es.
     fn paste(&self, shift_wm_classes: &[&str]) -> zbus::Result<()>;
+
+    /// The primary selection as text; `""` when there is none.
+    fn get_primary_selection(&self) -> zbus::Result<String>;
 
     /// The selection changed.
     #[zbus(signal)]

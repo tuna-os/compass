@@ -34,7 +34,13 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // (xx-hotkey-v1), split out of compass-wayland only because the
     // generated code needs `unsafe`.
     "compass-wayland-protocols",
-    "vicinae",
+    // Turns a toolkit window's raw `wl_display*` and `wl_surface*` into
+    // wayland-client proxies (background blur on the launcher's own surface).
+    // libwayland's handles are the Linux mechanism, and the crate is split out
+    // only because the bridge needs `unsafe` (ADR-0019). Other platforms'
+    // `WindowMaterial` implementations would be their own crates.
+    "compass-wayland-foreign",
+    "compass",
     // The test harness drives Linux surfaces on purpose.
     "compass-testkit",
     // Same story: logind is the Linux mechanism, and the C++ has a separate
@@ -48,6 +54,10 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // cgroups are the Linux mechanism the way MPRIS is the Linux protocol —
     // the C++ has a separate supervisor per platform.
     "compass-worker-host",
+    // compass-input-server: evdev and uinput are the Linux mechanism for
+    // reading and injecting keys; the C++ has a separate snippet server for
+    // macOS and Windows, and so will the ports of those.
+    "compass-input-server",
 ];
 
 /// Crates whose presence in a manifest makes that crate Linux-bound.
@@ -56,11 +66,14 @@ const LINUX_ONLY_CRATES: &[&str] = &[
     "compass-shell",
     "compass-wayland",
     "compass-wayland-protocols",
+    "compass-wayland-foreign",
     "compass-platform-linux",
     // The direct ones, in case a shared crate reaches past our wrappers.
     "zbus",
     "ashpd",
     "wayland-client",
+    "wayland-backend",
+    "wayland-sys",
     "wayland-protocols",
     "smithay",
 ];
@@ -152,7 +165,7 @@ fn no_shared_crate_depends_on_a_linux_only_crate() {
          ADR-0013 commits macOS and Windows to their own phases. An edge like this makes that \
          work more expensive and is invisible in review, which is how `compass-ui` ended up \
          carrying compass-portals and compass-wayland without using either. Put the \
-         implementation behind a trait in compass-platform and select it in the `vicinae` \
+         implementation behind a trait in compass-platform and select it in the `compass` \
          binary; if the crate genuinely is a platform backend, add it to MAY_BE_LINUX_BOUND and \
          say why.",
         violations.join("\n  ")

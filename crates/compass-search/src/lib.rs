@@ -11,6 +11,7 @@
 #![deny(missing_docs)]
 
 mod coherence;
+mod highlight;
 mod matcher;
 mod query;
 mod rank;
@@ -19,6 +20,7 @@ mod translit;
 mod typo;
 
 pub use coherence::is_coherent;
+pub use highlight::term_ranges;
 pub use matcher::{MatchResult, Matcher};
 pub use query::{Query, Variant, Word};
 pub use rank::{

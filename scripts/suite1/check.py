@@ -15,6 +15,12 @@ because the ledger was recorded on one machine and CI runs on another: a
 runner with a system bus fails a D-Bus extension differently from a
 container without one, and neither is the host's doing.
 
+An entry may carry per-environment overrides, for a command whose result
+is decided by what the environment has rather than by the host: gnome-dnd
+reads GSettings schemas the Flatpak's runtime ships and the runner does not.
+`--environment flatpak` judges against `entry["flatpak"]` where there is
+one, and against the entry itself where there is not.
+
 The summary goes to stdout and, in GitHub Actions, to the job summary.
 """
 
@@ -41,22 +47,32 @@ def main():
     parser.add_argument("report", type=pathlib.Path)
     parser.add_argument("--expected", type=pathlib.Path, default=HERE / "expected.json")
     parser.add_argument("--write-expected", action="store_true")
+    parser.add_argument("--environment", choices=["host", "flatpak"], default="host",
+                        help="which of an entry's per-environment verdicts applies")
     args = parser.parse_args()
 
     report = json.loads(args.report.read_text())
     outcomes = {key(o): o for o in report["outcomes"]}
 
     if args.write_expected:
+        # This run is one environment's; the other's overrides are kept.
+        previous = (json.loads(args.expected.read_text())
+                    if args.expected.exists() else {})
         ledger = {
             k: {"verdict": o["verdict"], **({"why": first_line(o.get("detail"))}
-                                            if not o["pass"] else {})}
+                                            if not o["pass"] else {}),
+                **{env: previous[k][env] for env in ("flatpak",)
+                   if env in previous.get(k, {})}}
             for k, o in sorted(outcomes.items())
         }
         args.expected.write_text(json.dumps(ledger, indent=2, ensure_ascii=False) + "\n")
         print(f"wrote {len(ledger)} entries to {args.expected}")
         return 0
 
-    expected = json.loads(args.expected.read_text())
+    expected = {
+        k: want.get(args.environment, want)
+        for k, want in json.loads(args.expected.read_text()).items()
+    }
     regressions, moved, improved, missing = [], [], [], []
     for k, want in expected.items():
         got = outcomes.get(k)

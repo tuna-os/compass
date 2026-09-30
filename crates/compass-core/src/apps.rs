@@ -415,12 +415,17 @@ impl AppIndexBuilder {
     /// because one `.desktop` file on the system is broken is not shippable.
     #[must_use]
     pub fn build(self) -> AppIndex {
+        let scan = AppIndexBuilder {
+            extension_dirs: Vec::new(),
+            ..self.clone()
+        };
         let mut items: Vec<AppItem> = Vec::new();
         let mut skipped: Vec<SkippedEntry> = Vec::new();
         // Desktop file id -> the file that claimed it. Claiming happens before any visibility
         // check, so a higher-precedence Hidden entry really does delete the lower-precedence one.
         let mut claimed: HashMap<String, PathBuf> = HashMap::new();
         let mut by_key: HashMap<String, usize> = HashMap::new();
+        let mut hidden: Vec<AppItem> = Vec::new();
 
         for dir in &self.dirs {
             let scan = scan_desktop_files(dir);
@@ -444,7 +449,14 @@ impl AppIndexBuilder {
                 }
                 claimed.insert(id.to_owned(), path.to_path_buf());
 
-                self.index_file(&file, &self.desktops, &mut items, &mut by_key, &mut skipped);
+                self.index_file(
+                    &file,
+                    &self.desktops,
+                    &mut items,
+                    &mut by_key,
+                    &mut skipped,
+                    &mut hidden,
+                );
             }
         }
 
@@ -499,7 +511,12 @@ impl AppIndexBuilder {
             extensions,
             shortcuts: Vec::new(),
             scripts: Vec::new(),
+            rhai_scripts: Vec::new(),
             root_config: crate::root_items::RootConfig::default(),
+            extension_dirs: self.extension_dirs,
+            scan,
+            hidden,
+            window_capabilities: crate::window_switcher::Capabilities::default(),
         }
     }
 
@@ -510,6 +527,7 @@ impl AppIndexBuilder {
         items: &mut Vec<AppItem>,
         by_key: &mut HashMap<String, usize>,
         skipped: &mut Vec<SkippedEntry>,
+        hidden: &mut Vec<AppItem>,
     ) {
         let id = file.id();
         let path = file.path();
@@ -552,6 +570,25 @@ impl AppIndexBuilder {
                 path: path.to_path_buf(),
                 reason: SkipReason::NotShown,
             });
+            // `NoDisplay` or another desktop's: not in the root, but still an
+            // installed application, which Browse Apps lists as "Hidden".
+            // `Hidden=true` is a deletion, as the C++ scan's `deleted()`.
+            if !entry.hidden() && entry.is_application() && entry.exec().is_some() {
+                let launchable = entry
+                    .try_exec()
+                    .is_none_or(|try_exec| self.resolves(try_exec));
+                let name = entry.name().to_owned();
+                hidden.push(AppItem {
+                    key: id.to_owned(),
+                    desktop_id: id.to_owned(),
+                    action_id: None,
+                    action_index: None,
+                    name: name.clone(),
+                    app_name: name,
+                    entry: Arc::new(entry),
+                    launchable,
+                });
+            }
             return;
         }
 
@@ -680,8 +717,22 @@ pub struct AppIndex {
     shortcuts: Vec<crate::shortcut_service::CachedShortcut>,
     /// Script commands, in scan order; their roots come after the shortcuts'.
     scripts: Vec<crate::script_scan::ScriptItem>,
+    /// Rhai scripts, in id order; their roots come after the script commands'.
+    rhai_scripts: Vec<crate::rhai_scripts::RhaiScriptItem>,
     /// The configuration last applied, kept for roots added later.
     root_config: crate::root_items::RootConfig,
+    /// Where installed extensions are looked for, kept for a rescan.
+    extension_dirs: Vec<PathBuf>,
+    /// How the applications were scanned, kept for a rescan
+    /// ([`AppIndex::application_scan`]); without the extension directories,
+    /// which [`AppIndex::rescan_extensions`] covers.
+    scan: AppIndexBuilder,
+    /// Applications installed but not shown (`NoDisplay`, or for another
+    /// desktop), in scan order; never in the root.
+    hidden: Vec<AppItem>,
+    /// What the compositor's window manager can do, which decides the
+    /// window-management commands root search offers; none until told.
+    window_capabilities: crate::window_switcher::Capabilities,
 }
 
 /// One row of a root search over applications and commands.
@@ -717,6 +768,13 @@ pub enum RootHit<'a> {
         /// Match score on the IPC scale, excluding frecency.
         match_score: u32,
     },
+    /// A Rhai script.
+    RhaiScript {
+        /// Which one.
+        script: &'a crate::rhai_scripts::RhaiScriptItem,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
 }
 
 /// A root application match with its stable index into the application catalog.
@@ -742,6 +800,19 @@ pub struct ApplicationRootHit<'a> {
 }
 
 impl AppIndex {
+    /// Sets what the window manager can do: root search offers Switch
+    /// Workspaces and the toggles only where the C++
+    /// `WindowManagementExtension` registers them.
+    pub fn set_window_capabilities(&mut self, caps: crate::window_switcher::Capabilities) {
+        self.window_capabilities = caps;
+    }
+
+    /// What [`Self::set_window_capabilities`] last set.
+    #[must_use]
+    pub const fn window_capabilities(&self) -> crate::window_switcher::Capabilities {
+        self.window_capabilities
+    }
+
     /// Applies user settings without changing catalog positions or launch keys.
     pub fn apply_root_config(&mut self, config: &crate::root_items::RootConfig) {
         self.root_config = config.clone();
@@ -750,7 +821,9 @@ impl AppIndex {
             // removed setting cannot survive a subsequent configuration merge.
             root.meta.alias = None;
             root.meta.shortcut = None;
-            root.merge_config(config, false);
+            let default_disabled = crate::commands::by_id(&root.id)
+                .is_some_and(crate::commands::BuiltinCommand::default_disabled);
+            root.merge_config(config, default_disabled);
         }
     }
 
@@ -811,6 +884,51 @@ impl AppIndex {
         pattern: &str,
         history: Option<&dyn crate::FrecencyStore>,
     ) -> Vec<RootHit<'_>> {
+        self.search_root_with(
+            pattern,
+            history,
+            &crate::root_items::SearchOptions::default(),
+        )
+    }
+
+    /// Whether any root item, enabled or not, comes from the provider `id`
+    /// (`findProviderById` for the providers that have items).
+    #[must_use]
+    pub fn has_provider(&self, id: &str) -> bool {
+        self.roots.iter().any(|root| root.meta.provider_id == id)
+    }
+
+    /// A provider's display name: the one each C++ root provider gives
+    /// itself, and an extension's title for an extension. `None` for a
+    /// provider no root item comes from.
+    #[must_use]
+    pub fn provider_title(&self, id: &str) -> Option<String> {
+        if !self.has_provider(id) {
+            return None;
+        }
+        Some(match id {
+            crate::root_items::APPS_PROVIDER_ID => "Applications".to_owned(),
+            crate::shortcut::SHORTCUTS_PROVIDER_ID => "Shortcuts".to_owned(),
+            crate::script_scan::SCRIPTS_PROVIDER_ID => "Script Commands".to_owned(),
+            crate::rhai_scripts::RHAI_PROVIDER_ID => "Rhai Scripts".to_owned(),
+            crate::commands::COMMANDS_PROVIDER_ID => "Commands".to_owned(),
+            _ => self
+                .extensions
+                .iter()
+                .find(|command| command.provider_id == id)
+                .map_or_else(|| id.to_owned(), |command| command.extension_title.clone()),
+        })
+    }
+
+    /// [`Self::search_root_all`] with the search's options: the provider
+    /// search view's (`providerId`) among them.
+    #[must_use]
+    pub fn search_root_with(
+        &self,
+        pattern: &str,
+        history: Option<&dyn crate::FrecencyStore>,
+        options: &crate::root_items::SearchOptions,
+    ) -> Vec<RootHit<'_>> {
         let now = history.map_or(0, crate::FrecencyStore::now);
         let key = |index: usize| -> &str {
             match self.root_indices.get(index) {
@@ -823,59 +941,92 @@ impl AppIndex {
                 .and_then(|store| store.record(key(index)))
                 .map_or(0.0, |record| record.score_at(now))
         };
-        crate::root_items::search_with_frecency(
-            &self.roots,
-            pattern,
-            &crate::root_items::SearchOptions::default(),
-            frecency,
-        )
-        .into_iter()
-        .filter_map(|hit| {
-            let match_score = if pattern.trim().is_empty() {
-                0
-            } else {
-                (hit.score - compass_search::FRECENCY_WEIGHT * frecency(hit.index, hit.item))
-                    .round()
-                    .clamp(0.0, 100.0) as u32
-            };
-            let entrypoint_id = &self.roots[hit.index].id;
-            match self.root_indices.get(hit.index) {
-                Some(&index) => Some(RootHit::App(ApplicationRootHit {
-                    item: &self.items[index],
-                    index,
-                    entrypoint_id,
-                    match_score,
-                })),
-                None => crate::commands::by_id(entrypoint_id)
-                    .map(|command| RootHit::Command {
-                        command,
+        crate::root_items::search_with_frecency(&self.roots, pattern, options, frecency)
+            .into_iter()
+            .filter_map(|hit| {
+                let match_score = if pattern.trim().is_empty() {
+                    0
+                } else {
+                    (hit.score - compass_search::FRECENCY_WEIGHT * frecency(hit.index, hit.item))
+                        .round()
+                        .clamp(0.0, 100.0) as u32
+                };
+                let entrypoint_id = &self.roots[hit.index].id;
+                match self.root_indices.get(hit.index) {
+                    Some(&index) => Some(RootHit::App(ApplicationRootHit {
+                        item: &self.items[index],
+                        index,
+                        entrypoint_id,
                         match_score,
-                    })
-                    .or_else(|| {
-                        self.extension(entrypoint_id)
-                            .map(|command| RootHit::Extension {
-                                command,
-                                match_score,
-                            })
-                    })
-                    .or_else(|| {
-                        self.shortcut_by_entrypoint(entrypoint_id).map(|shortcut| {
-                            RootHit::Shortcut {
-                                shortcut,
-                                match_score,
-                            }
+                    })),
+                    None => crate::commands::by_id(entrypoint_id)
+                        .filter(|command| {
+                            crate::window_switcher::command_offered(
+                                command.kind,
+                                self.window_capabilities,
+                            )
                         })
-                    })
-                    .or_else(|| {
-                        self.script_by_entrypoint(entrypoint_id)
-                            .map(|script| RootHit::Script {
-                                script,
-                                match_score,
+                        .map(|command| RootHit::Command {
+                            command,
+                            match_score,
+                        })
+                        .or_else(|| {
+                            self.extension(entrypoint_id)
+                                .map(|command| RootHit::Extension {
+                                    command,
+                                    match_score,
+                                })
+                        })
+                        .or_else(|| {
+                            self.shortcut_by_entrypoint(entrypoint_id).map(|shortcut| {
+                                RootHit::Shortcut {
+                                    shortcut,
+                                    match_score,
+                                }
                             })
-                    }),
-            }
-        })
-        .collect()
+                        })
+                        .or_else(|| {
+                            self.script_by_entrypoint(entrypoint_id)
+                                .map(|script| RootHit::Script {
+                                    script,
+                                    match_score,
+                                })
+                        })
+                        .or_else(|| {
+                            self.rhai_script_by_entrypoint(entrypoint_id).map(|script| {
+                                RootHit::RhaiScript {
+                                    script,
+                                    match_score,
+                                }
+                            })
+                        }),
+                }
+            })
+            .collect()
+    }
+
+    /// The root row an entrypoint id names, with the metadata the
+    /// configuration last applied gave it (alias, favourite, enabled).
+    #[must_use]
+    pub fn root(&self, entrypoint_id: &str) -> Option<&crate::root_items::RootItem> {
+        self.roots.iter().find(|root| root.id == entrypoint_id)
+    }
+
+    /// The key an entrypoint's launches are recorded under: an
+    /// application's desktop key, anything else's own id.
+    #[must_use]
+    pub fn history_key(&self, entrypoint_id: &str) -> String {
+        self.position_by_entrypoint(entrypoint_id).map_or_else(
+            || entrypoint_id.to_owned(),
+            |position| self.items[position].key().to_owned(),
+        )
+    }
+
+    /// Every root item: applications, builtin commands, extension commands,
+    /// shortcuts and scripts, disabled ones included, in index order.
+    #[must_use]
+    pub fn roots(&self) -> &[crate::root_items::RootItem] {
+        &self.roots
     }
 
     /// Installed extensions' commands, in the registry's precedence order.
@@ -951,6 +1102,34 @@ impl AppIndex {
         self.scripts = scripts;
     }
 
+    /// The Rhai scripts root search lists, in id order.
+    #[must_use]
+    pub fn rhai_scripts(&self) -> &[crate::rhai_scripts::RhaiScriptItem] {
+        &self.rhai_scripts
+    }
+
+    /// The Rhai script a `rhai:<id>` entrypoint id names.
+    #[must_use]
+    pub fn rhai_script_by_entrypoint(
+        &self,
+        entrypoint_id: &str,
+    ) -> Option<&crate::rhai_scripts::RhaiScriptItem> {
+        let id = crate::rhai_scripts::script_id(entrypoint_id)?;
+        self.rhai_scripts.iter().find(|script| script.id == id)
+    }
+
+    /// Replaces the Rhai scripts root search lists, as
+    /// [`AppIndex::set_shortcuts`] replaces the quicklinks: scripts come and
+    /// go while the launcher runs (hot reload).
+    pub fn set_rhai_scripts(&mut self, scripts: Vec<crate::rhai_scripts::RhaiScriptItem>) {
+        let roots = scripts
+            .iter()
+            .map(crate::rhai_scripts::RhaiScriptItem::root_item)
+            .collect();
+        self.replace_provider_roots(crate::rhai_scripts::RHAI_PROVIDER_ID, roots);
+        self.rhai_scripts = scripts;
+    }
+
     /// Drops `provider`'s roots and appends `roots` in their place, merged
     /// with the configuration last applied.
     fn replace_provider_roots(&mut self, provider: &str, roots: Vec<crate::root_items::RootItem>) {
@@ -959,6 +1138,106 @@ impl AppIndex {
             root.merge_config(&self.root_config, false);
             self.roots.push(root);
         }
+    }
+
+    /// The directories applications are scanned from, highest precedence
+    /// first: what `AppService` watches (`reinstallWatches(searchPaths())`).
+    #[must_use]
+    pub fn application_dirs(&self) -> &[PathBuf] {
+        &self.scan.dirs
+    }
+
+    /// A builder that scans the applications again exactly as this index
+    /// was scanned, without the extensions. Built off the lock and handed to
+    /// [`AppIndex::replace_applications`], so a rescan never holds up a query.
+    #[must_use]
+    pub fn application_scan(&self) -> AppIndexBuilder {
+        self.scan.clone()
+    }
+
+    /// Scans the application directories again and takes what is installed
+    /// now, as `AppService::scanSync` does after a directory changed.
+    pub fn rescan_applications(&mut self) {
+        let fresh = self.application_scan().build();
+        self.replace_applications(fresh);
+    }
+
+    /// Takes `fresh`'s applications in place of this index's, keeping every
+    /// other root (commands, extensions, shortcuts, scripts) and the
+    /// configuration last applied, which the new application rows get too:
+    /// an alias or a disabled flag survives an application being reinstalled.
+    pub fn replace_applications(&mut self, fresh: AppIndex) {
+        let mut roots: Vec<crate::root_items::RootItem> = fresh
+            .roots
+            .into_iter()
+            .take(fresh.root_indices.len())
+            .collect();
+        for root in &mut roots {
+            root.merge_config(&self.root_config, false);
+        }
+        roots.extend(
+            self.roots
+                .drain(self.root_indices.len().min(self.roots.len())..),
+        );
+        self.roots = roots;
+        self.root_indices = fresh.root_indices;
+        self.items = fresh.items;
+        self.by_key = fresh.by_key;
+        self.skipped = fresh.skipped;
+        self.hidden = fresh.hidden;
+    }
+
+    /// Installed applications the root does not show: `NoDisplay`, or
+    /// meant for another desktop. What `displayable()` is false for, and
+    /// what Browse Apps' `showHidden` adds.
+    #[must_use]
+    pub fn hidden_applications(&self) -> &[AppItem] {
+        &self.hidden
+    }
+
+    /// Where installed extensions are looked for, highest precedence first:
+    /// what the registry watches.
+    #[must_use]
+    pub fn extension_dirs(&self) -> &[PathBuf] {
+        &self.extension_dirs
+    }
+
+    /// Scans the extension directories the index was built with again and
+    /// takes what is installed now, as `ExtensionRegistry::requestScan`
+    /// does after an install or an uninstall.
+    pub fn rescan_extensions(&mut self) {
+        let extensions = if self.extension_dirs.is_empty() {
+            Vec::new()
+        } else {
+            crate::extension_commands::ExtensionCommand::from_manifests(
+                &crate::manifest::registry::scan(&self.extension_dirs).extensions,
+            )
+        };
+        self.set_extensions(extensions);
+    }
+
+    /// Replaces the installed extensions' commands, applying the
+    /// configuration last given to [`AppIndex::apply_root_config`] to their
+    /// rows. Every other row keeps its position.
+    pub fn set_extensions(&mut self, extensions: Vec<crate::extension_commands::ExtensionCommand>) {
+        let old: std::collections::HashSet<&str> = self
+            .extensions
+            .iter()
+            .map(|command| command.id.as_str())
+            .collect();
+        let first_non_app = self.root_indices.len();
+        let mut position = 0;
+        self.roots.retain(|root| {
+            let keep = position < first_non_app || !old.contains(root.id.as_str());
+            position += 1;
+            keep
+        });
+        for command in &extensions {
+            let mut root = command.root_item();
+            root.merge_config(&self.root_config, false);
+            self.roots.push(root);
+        }
+        self.extensions = extensions;
     }
 
     /// The installed extension command with this entrypoint id.
@@ -1040,7 +1319,7 @@ impl AppIndex {
 
     /// Files the scanner looked at and did not index, with the reason.
     ///
-    /// This is what `vicinae doctor` should print when a user asks why their application is
+    /// This is what `compass doctor` should print when a user asks why their application is
     /// missing.
     #[must_use]
     pub fn skipped(&self) -> &[SkippedEntry] {

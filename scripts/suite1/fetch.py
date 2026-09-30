@@ -7,7 +7,7 @@ Downloads every extension corpus.json names from its store — the prebuilt
 bundles the stores serve, exactly what a user's install gets — and unpacks
 each where the engine looks: `<extensions-dir>/store.raycast.<name>` and
 `store.vicinae.<name>`, the ids the C++ and `compass-core::extension_install`
-use. Then writes a plan (`vicinae conformance --plan`) naming each one's
+use. Then writes a plan (`compass conformance --plan`) naming each one's
 pinned command.
 
 The stores only serve the current build, so the corpus pins *which*

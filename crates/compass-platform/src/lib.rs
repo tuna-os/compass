@@ -2,7 +2,7 @@
 //!
 //! This crate names platform operations; it does not implement them. The
 //! implementations live in per-platform crates and are selected at
-//! composition, in the `vicinae` binary. See
+//! composition, in the `compass` binary. See
 //! [ADR-0013](../../docs/rust-engine/adr/0013-qt-leaves-the-repository.md).
 //!
 //! It previously described itself as handling "launching applications, file
@@ -19,5 +19,11 @@
 #![deny(missing_docs)]
 
 pub mod launch;
+pub mod shortcut_inhibit;
+pub mod window_material;
 
 pub use launch::{AppLauncher, LaunchError, LaunchFuture, LaunchMethod, NullLauncher};
+pub use shortcut_inhibit::ShortcutInhibitor;
+pub use window_material::{
+    MaterialOutcome, MaterialRegion, NativeWindow, WindowMaterial, raw_window_handle,
+};

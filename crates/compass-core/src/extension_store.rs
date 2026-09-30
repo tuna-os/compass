@@ -14,6 +14,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Reads a field the API may send as `null`, as its default.
+///
+/// The stores send `null` for fields that are usually strings (a command's
+/// `subtitle`, a Raycast listing's `readme_url`); the C++ reads them through
+/// glaze, which leaves the default in place. A strict reader refused the
+/// whole listing over one such field.
+fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
 /// The default page requested, from `ListPaginationOptions`.
 pub const DEFAULT_PAGE: u32 = 1;
 
@@ -89,12 +103,16 @@ impl Icons {
 #[serde(rename_all = "camelCase")]
 pub struct Author {
     /// Their handle.
+    #[serde(default, deserialize_with = "nullable")]
     pub handle: String,
     /// Their display name.
+    #[serde(default, deserialize_with = "nullable")]
     pub name: String,
     /// Their avatar.
+    #[serde(default, deserialize_with = "nullable")]
     pub avatar_url: String,
     /// Their profile page.
+    #[serde(default, deserialize_with = "nullable")]
     pub profile_url: String,
 }
 
@@ -102,8 +120,10 @@ pub struct Author {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Category {
     /// The category's id.
+    #[serde(default, deserialize_with = "nullable")]
     pub id: String,
     /// Its display name.
+    #[serde(default, deserialize_with = "nullable")]
     pub name: String,
 }
 
@@ -112,28 +132,34 @@ pub struct Category {
 #[serde(rename_all = "camelCase")]
 pub struct Command {
     /// The command's id.
+    #[serde(default, deserialize_with = "nullable")]
     pub id: String,
     /// Its name.
+    #[serde(default, deserialize_with = "nullable")]
     pub name: String,
     /// Its title.
+    #[serde(default, deserialize_with = "nullable")]
     pub title: String,
     /// Its subtitle.
+    #[serde(default, deserialize_with = "nullable")]
     pub subtitle: String,
     /// What it does.
+    #[serde(default, deserialize_with = "nullable")]
     pub description: String,
     /// Extra search terms.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub keywords: Vec<String>,
     /// `view` or `no-view`.
+    #[serde(default, deserialize_with = "nullable")]
     pub mode: String,
     /// Whether it is off until enabled.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub disabled_by_default: bool,
     /// Whether it is marked beta.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub beta: bool,
     /// Its icons.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub icons: Icons,
 }
 
@@ -142,52 +168,75 @@ pub struct Command {
 #[serde(rename_all = "camelCase")]
 pub struct Extension {
     /// Its id, rewritten by [`post_process`].
+    #[serde(default, deserialize_with = "nullable")]
     pub id: String,
     /// Its name, which the rewritten id is built from.
+    #[serde(default, deserialize_with = "nullable")]
     pub name: String,
     /// Its title.
+    #[serde(default, deserialize_with = "nullable")]
     pub title: String,
     /// What it does.
+    #[serde(default, deserialize_with = "nullable")]
     pub description: String,
     /// Who wrote it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub author: Author,
     /// How many times it has been downloaded.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub download_count: i64,
     /// The API version it was built against.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub api_version: String,
     /// Its checksum.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub checksum: String,
     /// Whether the store marks it trending.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub trending: bool,
     /// Its icons.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub icons: Icons,
     /// Its categories.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub categories: Vec<Category>,
     /// The platforms it runs on; empty means all of them.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub platforms: Vec<String>,
     /// Its commands.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub commands: Vec<Command>,
     /// Where its source is.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub source_url: String,
     /// Where its README is.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub readme_url: String,
     /// Where its bundle is.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub download_url: String,
+    /// When it was first published, as the API's ISO 8601 text.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// When it was last published, as the API's ISO 8601 text.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 impl Extension {
+    /// What identifies the build the store serves now: the checksum, or the
+    /// publication time when the store sent none.
+    ///
+    /// Kept beside an installed copy, it is what update detection compares.
+    #[must_use]
+    pub fn version_key(&self) -> String {
+        if self.checksum.is_empty() {
+            self.updated_at.clone().unwrap_or_default()
+        } else {
+            self.checksum.clone()
+        }
+    }
+
     /// The icon to show, falling back to the built-in plug.
     ///
     /// Unlike a command's, an extension's icon is never absent: a store list
@@ -203,20 +252,22 @@ impl Extension {
 #[serde(rename_all = "camelCase")]
 pub struct Pagination {
     /// The page returned.
+    #[serde(default, deserialize_with = "nullable")]
     pub page: u32,
     /// The page size.
+    #[serde(default, deserialize_with = "nullable")]
     pub limit: u32,
     /// How many extensions there are in all.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub total: u32,
     /// How many pages that is.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub total_pages: u32,
     /// Whether there is a page after this one.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub has_next: bool,
     /// Whether there is one before it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub has_prev: bool,
 }
 
@@ -237,10 +288,10 @@ impl Default for Pagination {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ListResponse {
     /// The extensions on it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub extensions: Vec<Extension>,
     /// Where it sits.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub pagination: Pagination,
 }
 
@@ -301,4 +352,51 @@ pub fn fetch_all_path() -> String {
 #[must_use]
 pub fn search_path(query: &str) -> String {
     format!("/store/search?q={}", encode_query_value(query))
+}
+
+/// The extensions matching `query`, best first; every one, in the store's
+/// order, for an empty query.
+///
+/// The C++ `FuzzySearchable<VicinaeStoreEntry>`: the title at full weight,
+/// the author's name at half and the description at 0.3. The list is
+/// fetched once and filtered locally as the user types, never searched on
+/// the server — the store's own `search` endpoint is used by nothing.
+#[must_use]
+pub fn filter<'a>(extensions: &'a [Extension], query: &str) -> Vec<&'a Extension> {
+    use compass_search::{Query, WeightedField, score_weighted};
+    if query.trim().is_empty() {
+        return extensions.iter().collect();
+    }
+    let parsed = Query::new(query);
+    let mut scored: Vec<(u32, usize, &Extension)> = extensions
+        .iter()
+        .enumerate()
+        .filter_map(|(position, extension)| {
+            let matched = score_weighted(
+                &[
+                    WeightedField::new(&extension.title, 1.0),
+                    WeightedField::new(&extension.author.name, 0.5),
+                    WeightedField::new(&extension.description, 0.3),
+                ],
+                &parsed,
+            );
+            matched
+                .accepted()
+                .then_some((matched.score, position, extension))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored
+        .into_iter()
+        .map(|(_, _, extension)| extension)
+        .collect()
+}
+
+/// The extension `author` published as `name`, as the detail view finds it
+/// in the full list.
+#[must_use]
+pub fn find<'a>(extensions: &'a [Extension], author: &str, name: &str) -> Option<&'a Extension> {
+    extensions
+        .iter()
+        .find(|extension| extension.author.handle == author && extension.name == name)
 }

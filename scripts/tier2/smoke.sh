@@ -9,7 +9,7 @@
 #
 # The sandbox. Tier 1 runs the engine as an ordinary process with the runner's
 # own filesystem; this runs the artifact users install, inside bubblewrap, with
-# only the permissions `com.vicinae.Vicinae.yaml` grants. A desktop entry the
+# only the permissions `org.tunaos.compass.yaml` grants. A desktop entry the
 # engine can read on a developer's machine and not through
 # `--filesystem=xdg-data/applications:ro` is a bug Tier 1 cannot see and users
 # would hit immediately.
@@ -26,7 +26,7 @@
 
 set -euo pipefail
 
-readonly APP_ID="com.vicinae.Vicinae"
+readonly APP_ID="org.tunaos.compass"
 readonly FIXTURE_ID="tier2smoke"
 readonly FIXTURE_NAME="Tier2 Smoke Application"
 readonly READY_TIMEOUT_S="${READY_TIMEOUT_S:-60}"
@@ -43,7 +43,7 @@ fail() { printf 'SMOKE FAILED: %s\n' "$*" >&2; exit 1; }
 readonly APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 
 run_in_flatpak() {
-  flatpak --user run --command=vicinae "$APP_ID" "$@"
+  flatpak --user run --command=compass "$APP_ID" "$@"
 }
 
 log "the fixture the sandbox should be able to see"
@@ -81,7 +81,7 @@ trap cleanup EXIT
 # failure, not something to clean up and continue past.
 flatpak kill "$APP_ID" 2>/dev/null || true
 rm -f "$socket"
-if flatpak --user run --command=vicinae "$APP_ID" --socket "$socket" ping >/dev/null 2>&1; then
+if flatpak --user run --command=compass "$APP_ID" --socket "$socket" ping >/dev/null 2>&1; then
   fail "something is already answering on ${socket}. A previous engine outlived its run, and anything measured now would be its stale index rather than this run's"
 fi
 

@@ -1,0 +1,17 @@
+
+export class RpcTransport {
+	constructor(private readonly transport: ITransport) { }
+
+	emit(method: string, params: Record<string, any>): void {
+		this.sendMessage({ jsonrpc: '2.0', method, params });
+	}
+
+	reply(id: number, result: any) {
+		this.sendMessage({ jsonrpc: '2.0', id, result });
+	}
+
+	private sendMessage(msg: JsonRpcMessage) {
+		this.transport.send(JSON.stringify(msg));
+	}
+};
+

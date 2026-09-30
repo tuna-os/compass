@@ -428,3 +428,69 @@ pub fn menu_from_layout(root: Option<&MenuLayoutNode>) -> Vec<TrayMenuItem> {
     root.map(|node| menu_item_from_layout(node).children)
         .unwrap_or_default()
 }
+
+/// What a tray item's row is titled: its title, else its id
+/// (`trayItemTitle`).
+#[must_use]
+pub fn display_title(item: &TrayItem) -> &str {
+    if item.title.is_empty() {
+        &item.id
+    } else {
+        &item.title
+    }
+}
+
+/// A tray item's second line: its tooltip's heading when that says something
+/// the title does not, else the tooltip's body.
+#[must_use]
+pub fn display_subtitle(item: &TrayItem) -> &str {
+    if !item.tooltip_title.is_empty() && item.tooltip_title != display_title(item) {
+        &item.tooltip_title
+    } else {
+        &item.tooltip_description
+    }
+}
+
+/// One clickable menu entry, labelled with the submenus it sits in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuRow {
+    /// The entry.
+    pub entry: TrayMenuItem,
+    /// Its label without mnemonics, after its submenus' (`File › Open`).
+    pub label: String,
+}
+
+/// The menu as the tray view lists it (`TrayMenuViewHost::flatten`): hidden
+/// entries and separators left out, a submenu's entries in its place under
+/// its label, and disabled or unlabelled entries dropped.
+#[must_use]
+pub fn flatten_menu(entries: &[TrayMenuItem]) -> Vec<MenuRow> {
+    let mut rows = Vec::new();
+    flatten_into(entries, "", &mut rows);
+    rows
+}
+
+fn flatten_into(entries: &[TrayMenuItem], prefix: &str, out: &mut Vec<MenuRow>) {
+    for entry in entries {
+        if !entry.visible || entry.separator {
+            continue;
+        }
+        let plain = entry.plain_label();
+        let label = if prefix.is_empty() {
+            plain
+        } else {
+            format!("{prefix} › {plain}")
+        };
+        if entry.submenu {
+            flatten_into(&entry.children, &label, out);
+            continue;
+        }
+        if !entry.enabled || label.is_empty() {
+            continue;
+        }
+        out.push(MenuRow {
+            entry: entry.clone(),
+            label,
+        });
+    }
+}

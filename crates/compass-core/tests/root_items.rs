@@ -1205,3 +1205,133 @@ fn a_short_query_gets_no_typo_fallback() {
     let items = vec![item("gimp", "GIMP")];
     assert!(ids(&items, "gmip", &SearchOptions::default()).is_empty());
 }
+
+#[test]
+fn favouriting_inserts_first_and_moving_swaps_within_the_list_only() {
+    use compass_core::root_items::{RootConfig, RootEdit, apply_edit};
+    let mut config = RootConfig {
+        favorites: vec!["a:1".into(), "a:2".into()],
+        ..RootConfig::default()
+    };
+    // `setItemAsFavorite` inserts at the beginning.
+    assert!(apply_edit(&mut config, "a:3", &RootEdit::Favorite(true)));
+    assert_eq!(config.favorites, ["a:3", "a:1", "a:2"]);
+    assert!(!apply_edit(&mut config, "a:3", &RootEdit::Favorite(true)));
+    // The first cannot move up, nor the last down.
+    assert!(!apply_edit(
+        &mut config,
+        "a:3",
+        &RootEdit::MoveFavorite { down: false }
+    ));
+    assert!(!apply_edit(
+        &mut config,
+        "a:2",
+        &RootEdit::MoveFavorite { down: true }
+    ));
+    assert!(apply_edit(
+        &mut config,
+        "a:3",
+        &RootEdit::MoveFavorite { down: true }
+    ));
+    assert_eq!(config.favorites, ["a:1", "a:3", "a:2"]);
+    assert!(apply_edit(
+        &mut config,
+        "a:2",
+        &RootEdit::MoveFavorite { down: false }
+    ));
+    assert_eq!(config.favorites, ["a:1", "a:2", "a:3"]);
+    assert!(!apply_edit(
+        &mut config,
+        "b:9",
+        &RootEdit::MoveFavorite { down: true }
+    ));
+    assert!(apply_edit(&mut config, "a:2", &RootEdit::Favorite(false)));
+    assert!(!apply_edit(&mut config, "a:2", &RootEdit::Favorite(false)));
+    assert_eq!(config.favorites, ["a:1", "a:3"]);
+}
+
+#[test]
+fn an_alias_and_the_switch_are_written_under_the_items_provider_and_merged() {
+    use compass_core::root_items::{RootConfig, RootEdit, apply_edit, deeplink};
+    let mut config = RootConfig::default();
+    assert!(apply_edit(
+        &mut config,
+        "applications:org.gnome.Nautilus",
+        &RootEdit::Alias("files".into())
+    ));
+    assert!(apply_edit(&mut config, "scripts:hello", &RootEdit::Disable));
+    assert_eq!(
+        config.providers["applications"].entrypoints["org.gnome.Nautilus"]
+            .alias
+            .as_deref(),
+        Some("files")
+    );
+    assert_eq!(
+        config.providers["scripts"].entrypoints["hello"].enabled,
+        Some(false)
+    );
+
+    let mut nautilus = item("applications:org.gnome.Nautilus", "Files");
+    nautilus.merge_config(&config, false);
+    assert_eq!(nautilus.meta.alias.as_deref(), Some("files"));
+    let mut hello = item("scripts:hello", "Hello");
+    hello.merge_config(&config, false);
+    assert!(!hello.meta.enabled);
+
+    assert!(!apply_edit(&mut config, "no-colon", &RootEdit::Disable));
+    assert_eq!(
+        deeplink("applications:org.gnome.Nautilus").as_deref(),
+        Some("compass://launch/applications/org.gnome.Nautilus")
+    );
+}
+
+// --- the `launch` deeplink ------------------------------------------------
+
+use compass_core::root_items::{INVALID_LAUNCH_LINK, LaunchTarget, parse_launch_link};
+
+#[test]
+fn a_launch_link_names_a_provider_or_an_item_with_its_text() {
+    let providers = ["applications", "@zoë/notes"];
+    let is_provider = |id: &str| providers.contains(&id);
+
+    let link =
+        parse_launch_link("vicinae://launch/applications/?fallbackText=fire+fox&toggle=true")
+            .expect("a launch link");
+    assert_eq!(link.path, "applications");
+    assert_eq!(link.fallback_text.as_deref(), Some("fire fox"));
+    assert!(link.toggle);
+    assert_eq!(
+        link.target(is_provider),
+        Ok(LaunchTarget::Provider("applications".into()))
+    );
+
+    // A provider id with a slash in it is still the provider; one more
+    // segment is its item, split at the last slash.
+    let link = parse_launch_link("compass://launch/@zo%C3%AB/notes").unwrap();
+    assert_eq!(
+        link.target(is_provider),
+        Ok(LaunchTarget::Provider("@zoë/notes".into()))
+    );
+    let link = parse_launch_link("vicinae://launch/@zo%C3%AB/notes/list?fallbackText=").unwrap();
+    assert_eq!(link.fallback_text, None, "an empty text is none");
+    assert!(!link.toggle);
+    assert_eq!(
+        link.target(is_provider),
+        Ok(LaunchTarget::Entrypoint("@zoë/notes:list".into()))
+    );
+
+    let link = parse_launch_link("vicinae://launch/nothing").unwrap();
+    assert_eq!(
+        link.target(is_provider),
+        Err(INVALID_LAUNCH_LINK.to_owned())
+    );
+
+    assert_eq!(parse_launch_link("vicinae://extensions/a/b"), None);
+    assert_eq!(
+        parse_launch_link("compass://launch/applications"),
+        parse_launch_link("vicinae://launch/applications"),
+        "the upstream scheme is still accepted"
+    );
+    assert_eq!(parse_launch_link("https://launch/applications"), None);
+    assert_eq!(parse_launch_link("not a url"), None);
+}

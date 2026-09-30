@@ -69,6 +69,39 @@ pub struct MediaPlayer {
     pub can_go_previous: bool,
 }
 
+/// The fields a player is fuzzy-matched on, weighted as the C++'s
+/// `FuzzySearchable<MediaPlayer>`: title 1.0, artist 0.8, identity 0.6.
+impl compass_search::FuzzySearchable for MediaPlayer {
+    fn fuzzy_fields<'a>(&'a self, out: &mut Vec<compass_search::WeightedField<'a>>) {
+        out.push(compass_search::WeightedField::new(&self.title, 1.0));
+        out.push(compass_search::WeightedField::new(&self.artist, 0.8));
+        out.push(compass_search::WeightedField::new(&self.identity, 0.6));
+    }
+}
+
+/// The players `query` matches, best first, as indices into `players`: what
+/// [`resolve_player`] takes as its `matches`.
+#[must_use]
+pub fn player_matches(query: &str, players: &[MediaPlayer]) -> Vec<usize> {
+    compass_search::rank_indices(query, players)
+        .into_iter()
+        .map(|scored| scored.item)
+        .collect()
+}
+
+/// The optional argument a media command takes, as `(name, placeholder)`:
+/// `player` for the three player commands, `step` for the two volume nudges,
+/// none for the rest.
+#[must_use]
+pub fn command_argument(id: &str) -> Option<(&'static str, &'static str)> {
+    match id {
+        "play-pause" | "next-track" | "previous-track" => Some(("player", "player")),
+        "volume-up" => Some(("step", "+5")),
+        "volume-down" => Some(("step", "-5")),
+        _ => None,
+    }
+}
+
 /// How a player is named in the on-screen display.
 ///
 /// Three cases, narrowing: a player with no track falls back to its own name,
@@ -335,6 +368,32 @@ mod tests {
         assert_eq!(round_half_away_from_zero(0.5), 1);
         assert_eq!(round_half_away_from_zero(-0.5), -1);
         assert_eq!(round_half_away_from_zero(1.5), 2);
+    }
+
+    #[test]
+    fn a_player_is_matched_on_its_track_then_its_name() {
+        let players = [
+            MediaPlayer {
+                id: "org.mpris.MediaPlayer2.firefox".to_owned(),
+                identity: "Firefox".to_owned(),
+                title: "A lecture".to_owned(),
+                ..Default::default()
+            },
+            MediaPlayer {
+                id: "org.mpris.MediaPlayer2.spotify".to_owned(),
+                identity: "Spotify".to_owned(),
+                title: "Blue Monday".to_owned(),
+                artist: "New Order".to_owned(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(player_matches("spot", &players).first(), Some(&1));
+        assert_eq!(player_matches("lecture", &players).first(), Some(&0));
+        assert_eq!(player_matches("new order", &players).first(), Some(&1));
+        assert!(player_matches("vlc", &players).is_empty());
+        assert_eq!(command_argument("play-pause"), Some(("player", "player")));
+        assert_eq!(command_argument("volume-down"), Some(("step", "-5")));
+        assert_eq!(command_argument("volume-50"), None);
     }
 
     #[test]

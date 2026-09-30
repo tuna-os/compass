@@ -293,7 +293,7 @@ impl Matcher {
 /// table leaves alone (`Ł`, `đ`, `ħ`, ...). The fallback only takes a
 /// single-letter answer from the Latin blocks, so one char stays one char and
 /// other scripts keep matching as themselves.
-fn fold(c: char) -> char {
+pub(crate) fn fold(c: char) -> char {
     let normalized = chars::normalize(c);
     if normalized.is_ascii() || !matches!(u32::from(normalized), 0xC0..=0x24F | 0x1E00..=0x1EFF) {
         return normalized;

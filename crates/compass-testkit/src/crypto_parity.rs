@@ -271,9 +271,9 @@ fn run(probe_path: &str) -> Result<Counts> {
     // The real claim decomposes into two checks that each CAN fail:
     //
     //   * the Rust labels equal the C++ SOURCE labels
-    //     -- compass-crypto/tests/cpp_constants.rs, which parses
-    //        database-key.cpp and was shown to fire on a renamed label, a
-    //        renamed keyring entry, and a third derived purpose appearing;
+    //     -- compass-crypto/tests/upstream_constants.rs, which pins them to
+    //        upstream v0.29.0's database-key.cpp (it parsed the in-tree copy
+    //        until the C++ engine was removed, ADR-0021);
     //   * HKDF agrees byte for byte for arbitrary labels
     //     -- the loop above, over three masters and five labels.
     //
@@ -414,9 +414,10 @@ fn main() {
     let Some(probe_path) = probe_path else {
         eprintln!(
             "pass --probe <path to vicinae-crypto-probe>; build it with\n  \
-             c++ -std=c++23 -O2 -Isrc/lib/crypto/include -Isrc/lib/crypto/src \\\n    \
-             -o /tmp/vicinae-crypto-probe src/lib/crypto/probe/main.cpp \\\n    \
-             src/lib/crypto/src/{{aes-gcm,kdf,gcm-openssl}}.cpp -lcrypto"
+             c++ -std=c++23 -O2 -Iscripts/bench/upstream/crypto/include \\\n    \
+             -Iscripts/bench/upstream/crypto/src -o /tmp/vicinae-crypto-probe \\\n    \
+             scripts/bench/probes/crypto-probe.cpp \\\n    \
+             scripts/bench/upstream/crypto/src/{{aes-gcm,kdf,gcm-openssl}}.cpp -lcrypto"
         );
         std::process::exit(2);
     };
@@ -430,8 +431,8 @@ fn main() {
             );
             println!(
                 "  scope: this is the crypto, not the clipboard store. The SQLite schema, key \
-                 management and mime model in src/server/src/services/clipboard are not \
-                 exercised here."
+                 management and mime model of the clipboard service are not exercised \
+                 here."
             );
         }
         Err(err) => {

@@ -40,11 +40,16 @@ pub const LENGTH_PREFIX_LEN: usize = 4;
 
 /// Default maximum body size, in bytes.
 ///
-/// One mebibyte is far beyond anything the Phase 2 message set needs (the
-/// largest realistic frame is a `Query` response with a few hundred hits) while
-/// staying small enough that a malicious peer cannot exhaust memory by opening
-/// connections.
-pub const MAX_FRAME_LEN: usize = 1024 * 1024;
+/// It was one mebibyte, which is far beyond anything the Phase 2 message set
+/// needs (a `Query` response with a few hundred hits). An extension's view is
+/// not bounded that way: `ExtensionView` carries the whole list, and a list of
+/// about a thousand items with their actions is already past a mebibyte —
+/// Suite 1's `dashboard-icons` draws 4,473 and needs more than four. The C++
+/// hands the view to its UI in-process, with no limit at all.
+///
+/// 32 MiB still refuses a hostile prefix before reserving anything, and the
+/// socket is reachable only by its own user.
+pub const MAX_FRAME_LEN: usize = 32 * 1024 * 1024;
 
 /// Frames postcard-encoded values with a little-endian `u32` length prefix.
 ///

@@ -12,8 +12,11 @@ workspace = true
 [dependencies]
 percent-encoding.workspace = true
 roxmltree.workspace = true
+# Writing `recently-used.xbel` back (already in the tree through resvg).
+xmlwriter = "0.1"
 mime_guess.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 dirs = { workspace = true }
 
 [dev-dependencies]

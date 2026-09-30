@@ -568,3 +568,61 @@ mod layout {
         assert_eq!(MENU_PROPERTIES.len(), 9);
     }
 }
+
+#[test]
+fn a_tray_menu_is_flattened_with_its_submenus_labels() {
+    use compass_core::tray_host::{TrayMenuItem, flatten_menu};
+    let entry = |id: i32, label: &str| TrayMenuItem {
+        id,
+        label: label.into(),
+        ..TrayMenuItem::new()
+    };
+    let menu = vec![
+        entry(1, "_Open"),
+        TrayMenuItem {
+            separator: true,
+            ..entry(2, "")
+        },
+        TrayMenuItem {
+            submenu: true,
+            children: vec![
+                entry(4, "Fast"),
+                TrayMenuItem {
+                    enabled: false,
+                    ..entry(5, "Slow")
+                },
+            ],
+            ..entry(3, "_Speed")
+        },
+        TrayMenuItem {
+            visible: false,
+            ..entry(6, "Hidden")
+        },
+        entry(7, ""),
+    ];
+    let rows = flatten_menu(&menu);
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.entry.id, row.label.as_str()))
+            .collect::<Vec<_>>(),
+        [(1, "Open"), (4, "Speed › Fast")]
+    );
+}
+
+#[test]
+fn a_tray_rows_title_falls_back_to_its_id_and_its_subtitle_to_the_tooltip_body() {
+    use compass_core::tray_host::{TrayItem, display_subtitle, display_title};
+    let item = TrayItem {
+        id: "nm-applet".into(),
+        tooltip_title: "nm-applet".into(),
+        tooltip_description: "Wired connection".into(),
+        ..TrayItem::default()
+    };
+    assert_eq!(display_title(&item), "nm-applet");
+    assert_eq!(display_subtitle(&item), "Wired connection");
+    let item = TrayItem {
+        title: "Network".into(),
+        ..item
+    };
+    assert_eq!(display_subtitle(&item), "nm-applet");
+}

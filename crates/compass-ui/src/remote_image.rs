@@ -163,7 +163,7 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
     use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
-        .user_agent("Compass (vicinae)")
+        .user_agent("Compass")
         .tls_config(
             TlsConfig::builder()
                 .provider(TlsProvider::NativeTls)

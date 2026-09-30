@@ -8,14 +8,19 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 
 use super::{
     Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
-    Task, chord_direction, column, container, focus_search, mouse_area, next_selection, row,
-    scrollable, text,
+    Task, chord_direction, column, container, focus_search, mouse_area, row, scrollable, text,
 };
 use crate::action_panel::Action;
-use crate::fonts_page::{self, FontPreviewPage, FontsPage, SpecimenLine, Status};
+use crate::fonts_page::{self, FontPreviewPage, FontsPage, GridMove, SpecimenLine, Status};
+use compass_core::font_browser::COLUMNS;
 
 const PREVIEW: &str = "font.preview";
 const COPY_FAMILY: &str = "font.copy-family";
+const SET_APP_FONT: &str = "font.set-app-font";
+
+/// A tile's height; the C++ grid's cells are square (`ASPECT_RATIO`), and a
+/// sixth of the card's width is about this.
+const TILE_HEIGHT: f32 = 104.0;
 
 impl LauncherApp {
     /// Opens Browse Fonts and asks for the families.
@@ -64,8 +69,7 @@ impl LauncherApp {
         )
     }
 
-    /// The panel over the selected family: `FontBrowserViewHost`'s actions,
-    /// less "Set as vicinae font".
+    /// The panel over the selected family: `FontBrowserViewHost`'s actions.
     pub(super) fn open_font_panel(&mut self) -> Option<Task<Message>> {
         let Page::Fonts(page) = &self.page else {
             return None;
@@ -78,6 +82,7 @@ impl LauncherApp {
                     .with_id(PREVIEW)
                     .with_shortcut("enter"),
                 Action::new(compass_core::font_browser::COPY_FAMILY_TITLE).with_id(COPY_FAMILY),
+                Action::new(compass_core::font_browser::SET_APP_FONT_TITLE).with_id(SET_APP_FONT),
             ],
         }]));
         Some(iced::widget::operation::focus(super::PANEL_INPUT))
@@ -98,6 +103,26 @@ impl LauncherApp {
                     self.conceal(),
                 ]));
             }
+            SET_APP_FONT => {
+                let family = page.selected_family()?.family.clone();
+                self.panel = None;
+                let Some(backend) = self.backend.clone() else {
+                    if let Page::Fonts(page) = &mut self.page {
+                        page.notice = Some("Setting the font needs the Compass engine".to_owned());
+                    }
+                    return Some(Task::none());
+                };
+                return Some(Task::batch([
+                    Task::perform(
+                        {
+                            let family = family.clone();
+                            async move { backend.set_font(family).await }
+                        },
+                        move |result| Message::FontSet(result.map(|()| family.clone())),
+                    ),
+                    focus_search(),
+                ]));
+            }
             _ => return None,
         };
         self.panel = None;
@@ -109,18 +134,26 @@ impl LauncherApp {
         let Page::Fonts(page) = &mut self.page else {
             return Task::none();
         };
-        let direction = match key.as_ref() {
-            Key::Named(Named::ArrowDown) => Some(Direction::Down),
-            Key::Named(Named::ArrowUp) => Some(Direction::Up),
+        let step = match key.as_ref() {
+            Key::Named(Named::ArrowDown) => Some(GridMove::Down),
+            Key::Named(Named::ArrowUp) => Some(GridMove::Up),
+            Key::Named(Named::ArrowLeft) => Some(GridMove::Left),
+            Key::Named(Named::ArrowRight) => Some(GridMove::Right),
             Key::Named(Named::Escape) => return self.update(Message::Back),
             Key::Named(Named::Enter) => return self.preview_selected_font(),
-            _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+            _ => chord_direction(self.keybinding, key.as_ref(), modifiers).map(|direction| {
+                match direction {
+                    Direction::Up => GridMove::Up,
+                    Direction::Down => GridMove::Down,
+                }
+            }),
         };
-        if let Some(direction) = direction {
-            page.selected = next_selection(
+        if let Some(step) = step {
+            page.selected = fonts_page::grid_step(
                 page.shown().1.len(),
                 page.selected,
-                direction,
+                COLUMNS,
+                step,
                 self.wrap_navigation,
             );
             return crate::scroll::reveal_root_selection();
@@ -140,10 +173,37 @@ impl LauncherApp {
     pub(super) fn font_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::FontsLoaded(result) => {
+                let saved = self
+                    .view_memory
+                    .get(crate::view_memory::FONT_CATEGORY)
+                    .map(str::to_owned);
                 if let Page::Fonts(page) = &mut self.page {
                     page.apply(result);
+                    // `restoreCategoryFilter`: a remembered category some
+                    // font still has.
+                    if let Some(index) =
+                        compass_core::font_browser::index_for_saved(&page.options, saved.as_deref())
+                    {
+                        let option = page.options[index].clone();
+                        page.set_category(&option);
+                    }
                 }
                 crate::scroll::reveal_root_selection()
+            }
+            Message::FontSet(result) => {
+                match result {
+                    Ok(family) => {
+                        // The configured family replaces the desktop's.
+                        self.typography_link = None;
+                        self.font_family = Some(family);
+                    }
+                    Err(reason) => {
+                        if let Page::Fonts(page) = &mut self.page {
+                            page.notice = Some(reason);
+                        }
+                    }
+                }
+                Task::none()
             }
             Message::FontsQueryChanged(query) => {
                 if let Page::Fonts(page) = &mut self.page {
@@ -157,6 +217,8 @@ impl LauncherApp {
                 if let Page::Fonts(page) = &mut self.page {
                     page.set_category(&option);
                 }
+                self.view_memory
+                    .set(crate::view_memory::FONT_CATEGORY, &option);
                 Task::batch([focus_search(), crate::scroll::reveal_root_selection()])
             }
             Message::FontSelected(position) => {
@@ -232,35 +294,16 @@ impl LauncherApp {
         if families.is_empty() {
             return column![list, self.notice("No fonts match")].into();
         }
-        for (position, family) in families.iter().enumerate() {
-            let selected = position == page.selected;
-            let font = iced::Font::with_name(fonts_page::static_family(&family.family));
-            let preview = compass_core::font_browser::preview(family);
-            let glyph = text(preview.glyph)
-                .font(if preview.family.is_empty() {
-                    self.font()
-                } else {
-                    font
-                })
-                .size(18)
-                .width(Length::Fixed(f32::from(self.geometry.icon_size)));
-            let item = self.list_row(
-                glyph.into(),
-                family.name.clone(),
-                self.subtitles
-                    .then(|| page.primaries.get(&family.name).cloned())
-                    .flatten(),
-                selected,
-            );
-            let item: Element<Message> = mouse_area(item)
-                .on_press(Message::FontSelected(position))
-                .into();
-            let item: Element<Message> = if selected {
-                container(item).id(crate::scroll::ROOT_SELECTION).into()
-            } else {
-                item
-            };
-            list = list.push(item);
+        for (row_index, chunk) in families.chunks(COLUMNS).enumerate() {
+            let mut line = row![].spacing(6);
+            for (column, family) in chunk.iter().enumerate() {
+                let position = row_index * COLUMNS + column;
+                line = line.push(self.font_tile(family, position == page.selected, position));
+            }
+            for _ in chunk.len()..COLUMNS {
+                line = line.push(iced::widget::Space::new().width(Length::Fill));
+            }
+            list = list.push(line);
         }
         let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
             .id(crate::scroll::ROOT_RESULTS)
@@ -268,6 +311,84 @@ impl LauncherApp {
         match &page.notice {
             Some(notice) => column![rows, self.notice(notice)].into(),
             None => rows.into(),
+        }
+    }
+
+    /// One tile of the grid: the family's glyph drawn in it, its name under.
+    fn font_tile<'a>(
+        &'a self,
+        family: &'a compass_core::font_browser::FontFamily,
+        selected: bool,
+        position: usize,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let preview = compass_core::font_browser::preview(family);
+        let glyph_font = if preview.family.is_empty() {
+            self.font()
+        } else {
+            iced::Font::with_name(fonts_page::static_family(&family.family))
+        };
+        let colour = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        };
+        let tile = column![
+            container(text(preview.glyph).font(glyph_font).size(34).color(
+                if preview.fill_foreground {
+                    colour.to_iced()
+                } else {
+                    palette.text.to_iced()
+                }
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center),
+            text(family.name.clone())
+                .font(self.font())
+                .size(11)
+                .color(if selected {
+                    palette.selection_text.to_iced()
+                } else {
+                    palette.muted.to_iced()
+                })
+                .wrapping(iced::widget::text::Wrapping::None)
+                .width(Length::Fill)
+                .align_x(iced::Alignment::Center),
+        ]
+        .spacing(4);
+        let tile = container(tile)
+            .width(Length::Fill)
+            .height(Length::Fixed(TILE_HEIGHT))
+            .padding(6)
+            .clip(true)
+            .style(move |_: &iced::Theme| container::Style {
+                background: Some(
+                    if selected {
+                        palette.selection
+                    } else {
+                        palette.field
+                    }
+                    .to_iced()
+                    .into(),
+                ),
+                border: iced::Border {
+                    radius: 8.0.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            });
+        let tile: Element<'a, Message> = mouse_area(tile)
+            .on_press(Message::FontSelected(position))
+            .into();
+        if selected {
+            container(tile)
+                .id(crate::scroll::ROOT_SELECTION)
+                .width(Length::Fill)
+                .into()
+        } else {
+            tile
         }
     }
 

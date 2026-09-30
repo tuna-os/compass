@@ -25,12 +25,12 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration {
         id: "001_init.sql",
         version: 1,
-        sql: include_str!("../../../src/server/database/clipboard/migrations/001_init.sql"),
+        sql: include_str!("../migrations/001_init.sql"),
     },
     Migration {
         id: "002_trigram_fts.sql",
         version: 2,
-        sql: include_str!("../../../src/server/database/clipboard/migrations/002_trigram_fts.sql"),
+        sql: include_str!("../migrations/002_trigram_fts.sql"),
     },
 ];
 
@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn the_embedded_content_hashes_to_what_the_cpp_engine_recorded() {
         // These are `md5sum` over the files in
-        // src/server/database/clipboard/migrations/. Pinning them here is what
+        // crates/compass-clipboard/migrations/. Pinning them here is what
         // turns the runtime checksum check from a tautology into a check: the
         // runtime comparison is embedded-content against database-content, and
         // both sides would move together if a file were edited. This one does

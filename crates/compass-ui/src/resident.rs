@@ -10,7 +10,7 @@
 //!
 //! The engine talks postcard over a Unix socket; none of that appears here.
 //! What this crate takes is a pair of channels carrying [`UiCommand`] in and
-//! [`UiOutcome`] out, and `vicinae` is the only place that knows those channels
+//! [`UiOutcome`] out, and `compass` is the only place that knows those channels
 //! are fed by `compass-ipc`. Same reason the launcher is injected rather than
 //! reached for (ADR-0013): a UI crate that imports a transport can only be
 //! tested with that transport running.
@@ -37,9 +37,9 @@ use tokio::sync::mpsc;
 /// What an engine asks the resident window to do.
 ///
 /// Mirrors `compass_ipc::WindowCommand` without depending on it, for the reason
-/// in the module docs. `vicinae` converts between them in one place, and a test
+/// in the module docs. `compass` converts between them in one place, and a test
 /// there fails if the two ever disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiCommand {
     /// Become visible and take focus.
     Show,
@@ -47,8 +47,23 @@ pub enum UiCommand {
     Hide,
     /// Hide if visible, show if not.
     Toggle,
-    /// Show a `vicinae dmenu` list, fetched from the engine by this token.
+    /// Show a `compass dmenu` list, fetched from the engine by this token.
     Dmenu(u64),
+    /// Show, and take the launch an extension asked for under this token.
+    Launch(u64),
+    /// Show, at what a deeplink names: a store extension's detail page.
+    Deeplink(String),
+    /// Change nothing; answer whether the window is on screen.
+    Describe,
+    /// Show the HUD with this text and icon (a builtin icon name or an
+    /// emoji), leaving the launcher as it is. Answered with the launcher's
+    /// state when shown, `Failed` where the presentation has no HUD.
+    Hud {
+        /// The line of text.
+        text: String,
+        /// A builtin icon name or an emoji.
+        icon: Option<String>,
+    },
 }
 
 /// What the window reports back, as the state it ended in.

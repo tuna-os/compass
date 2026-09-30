@@ -1,0 +1,383 @@
+{
+  "$defs": {
+    "AppearanceConfig": {
+      "additionalProperties": true,
+      "description": "The `launcher.appearance` section: colour mode and row presentation, not behavior.",
+      "properties": {
+        "color_scheme": {
+          "default": "system",
+          "description": "Light or dark: `system` follows the desktop, `light` and `dark` force one.",
+          "examples": [
+            "system",
+            "light",
+            "dark"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "icons": {
+          "default": true,
+          "description": "Whether result rows show the application's icon. The preset supplies the default.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "preset": {
+          "default": "gnome",
+          "description": "The named layout preset supplying the defaults for this section.",
+          "examples": [
+            "gnome",
+            "raycast",
+            "flow",
+            "rofi"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "theme": {
+          "default": "system",
+          "description": "The palette: `system` follows the desktop, anything else names a curated theme.",
+          "examples": [
+            "system",
+            "catppuccin",
+            "dracula",
+            "nord",
+            "gruvbox",
+            "tokyo-night",
+            "solarized"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tint": {
+          "default": false,
+          "description": "Whether the launcher background is translucent. Translucency, not blur.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ClockConfig": {
+      "description": "The `launcher.clock` section (the C++ `launcher_window.clock`).",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether the clock is shown.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "A Qt date-time format, e.g. `hh:mm:ss`; `hh:mm` when unset.",
+          "examples": [
+            "hh:mm:ss",
+            "ddd hh:mm"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "interval": {
+          "default": 60,
+          "description": "How often the clock is redrawn, in seconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ExtensionsConfig": {
+      "additionalProperties": true,
+      "description": "The `extensions` section.",
+      "properties": {
+        "auto_update": {
+          "default": true,
+          "description": "Whether installed extensions update themselves.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "installed": {
+          "description": "The ids of the installed extensions.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "GlobalShortcutsConfig": {
+      "additionalProperties": true,
+      "description": "The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose\n`toggle` is [`LauncherConfig::hotkey`] here).",
+      "properties": {
+        "inhibit_apps": {
+          "default": [],
+          "description": "While one of these applications is focused, every global shortcut is\nreleased so its keys reach the application: a virtual machine or a\nremote desktop. Desktop file ids, e.g. `org.gnome.Boxes.desktop`.",
+          "examples": [
+            [
+              "org.gnome.Boxes.desktop"
+            ]
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "InputServerConfig": {
+      "additionalProperties": true,
+      "description": "The `input_server` section: the keyboard helper behind snippet keyword\nexpansion (`compass-input-server`).",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether the helper runs. Off, snippet keywords do not expand; on, it\nis started and restarted after a crash (five times, backing off).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "LauncherConfig": {
+      "additionalProperties": true,
+      "description": "The `launcher` section.",
+      "properties": {
+        "appearance": {
+          "$ref": "#/$defs/AppearanceConfig",
+          "description": "Colour mode and row presentation."
+        },
+        "check_for_updates": {
+          "default": true,
+          "description": "Whether Compass checks its GitHub releases for a newer version.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "clock": {
+          "$ref": "#/$defs/ClockConfig",
+          "description": "The clock the root search shows in its status bar."
+        },
+        "close_on_focus_loss": {
+          "default": false,
+          "description": "Whether the launcher hides when it loses keyboard focus.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "hotkey": {
+          "default": "super+space",
+          "description": "The global chord that toggles the launcher, as `modifier+key`.",
+          "examples": [
+            "super+space",
+            "alt+space"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keybinding": {
+          "default": "default",
+          "description": "The navigation chord scheme: `default` (the platform's, vim on Linux), `vim` or `emacs`.",
+          "examples": [
+            "default",
+            "vim",
+            "emacs"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_results": {
+          "default": 50,
+          "description": "How many results the launcher shows. `0` shows none.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "quick_launch": {
+          "default": true,
+          "description": "Whether Ctrl+1..9 launches the first through ninth result.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "wrap_navigation": {
+          "default": false,
+          "description": "Whether moving past the last result selects the first, and the reverse.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RootEntrypointSettings": {
+      "additionalProperties": true,
+      "description": "Per-entrypoint root search settings, keyed by entrypoint id under its provider.",
+      "properties": {
+        "alias": {
+          "description": "An extra search term the entrypoint answers to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "description": "Whether the entrypoint appears in root search.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "shortcut": {
+          "description": "A hotkey that runs the entrypoint directly, e.g. `ctrl+shift+c`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RootProviderSettings": {
+      "additionalProperties": true,
+      "description": "Per-provider root search settings, keyed by provider id (e.g. `applications`).",
+      "properties": {
+        "enabled": {
+          "description": "Whether the provider contributes to root search at all.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "entrypoints": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RootEntrypointSettings"
+          },
+          "description": "Settings for individual entrypoints of this provider.",
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "TrayConfig": {
+      "additionalProperties": true,
+      "description": "The `tray` section: Compass's own icon in the desktop's tray\n(`config::Tray`).",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether Compass shows its icon, with its menu (toggle the launcher,\nsettings, quit), in the tray. Applied at once when changed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/tuna-os/compass/main/packaging/schema/compass.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "A parsed `compass.json`.\n\n[`Config::default`] is the fully-defaulted configuration and is what an empty file produces.",
+  "properties": {
+    "$schema": {
+      "description": "The JSON Schema this file follows, for editors. Ignored by the launcher.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "extensions": {
+      "$ref": "#/$defs/ExtensionsConfig",
+      "description": "Extension management."
+    },
+    "fallbacks": {
+      "description": "Root items offered when a search has no match, as `provider:entrypoint` ids.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "favorites": {
+      "description": "Root items pinned to the top of the empty search, as `provider:entrypoint` ids.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "global_shortcuts": {
+      "$ref": "#/$defs/GlobalShortcutsConfig",
+      "description": "The global shortcuts, beyond the launcher hotkey."
+    },
+    "input_server": {
+      "$ref": "#/$defs/InputServerConfig",
+      "description": "The snippet keyword expander's keyboard helper."
+    },
+    "launcher": {
+      "$ref": "#/$defs/LauncherConfig",
+      "description": "Launcher window behaviour and appearance."
+    },
+    "providers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/RootProviderSettings"
+      },
+      "description": "Root search settings per provider, keyed by provider id.",
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "tray": {
+      "$ref": "#/$defs/TrayConfig",
+      "description": "Compass's own tray icon."
+    }
+  },
+  "title": "compass.json",
+  "type": "object"
+}

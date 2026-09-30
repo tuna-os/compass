@@ -1,15 +1,15 @@
-//! Migrating the C++ engine's `settings.json` to `vicinae.json`.
+//! Migrating the C++ engine's `settings.json` to `compass.json`.
 //!
 //! The C++ engine keeps its user configuration in `$XDG_CONFIG_HOME/vicinae/settings.json`: JSONC
 //! (it writes a comment header), `snake_case` keys, and an `imports` array of further files merged
-//! underneath it. The Rust engine reads `vicinae.json` beside it, whose shape is [`Config`]. This
+//! underneath it. The Rust engine reads `compass.json` beside it, whose shape is [`Config`]. This
 //! module reads the former the way the C++ `config::Manager` does — imports resolved relative to
 //! the importing file, a leading `~` expanded, cycles ignored, a missing import skipped, the
 //! importing file winning over what it imports — and translates every key that has a
 //! counterpart.
 //!
 //! Keys with no counterpart are not carried over as unknown fields: they belong to a different
-//! program, and preserving them would make `vicinae.json` look as though it honoured them. They
+//! program, and preserving them would make `compass.json` look as though it honoured them. They
 //! are listed in [`Migration::skipped`] instead, so the user can see exactly what did not move.
 //!
 //! The C++ file is never written to.
@@ -23,9 +23,13 @@ use serde_json::{Map, Value};
 use crate::config::{Config, ConfigError, SCHEMA_URL};
 
 /// Path of the C++ engine's settings relative to `$XDG_CONFIG_HOME`.
-pub const LEGACY_RELATIVE_PATH: &str = "vicinae/settings.json";
+///
+/// The C++ writes `vicinae/settings.json`; the startup migration moves that
+/// directory to `compass` and leaves `vicinae` as a symlink to it, so this is
+/// the same file either way.
+pub const LEGACY_RELATIVE_PATH: &str = "compass/settings.json";
 
-/// `$XDG_CONFIG_HOME/vicinae/settings.json`, falling back to `~/.config`.
+/// `$XDG_CONFIG_HOME/compass/settings.json`, falling back to `~/.config`.
 ///
 /// # Errors
 ///
@@ -70,7 +74,7 @@ pub enum MigrationError {
 pub struct Mapped {
     /// The dotted key in `settings.json`.
     pub from: String,
-    /// The dotted key in `vicinae.json`.
+    /// The dotted key in `compass.json`.
     pub to: String,
 }
 
@@ -164,7 +168,7 @@ pub fn migrate_value(mut settings: Map<String, Value>) -> Migration {
     flatten_leaves(&Value::Object(settings), String::new(), &mut leftover);
     skipped.extend(leftover.into_iter().map(|key| Skipped {
         key,
-        reason: "no vicinae.json equivalent".to_owned(),
+        reason: "no compass.json equivalent".to_owned(),
     }));
 
     out.insert("$schema".to_owned(), Value::String(SCHEMA_URL.to_owned()));
@@ -199,6 +203,8 @@ enum Kind {
     String,
     Strings,
     Object,
+    /// A non-negative whole number.
+    Count,
 }
 
 impl Kind {
@@ -206,6 +212,7 @@ impl Kind {
         match self {
             Kind::Bool => value.is_boolean(),
             Kind::String => value.is_string(),
+            Kind::Count => value.is_u64(),
             Kind::Strings => value
                 .as_array()
                 .is_some_and(|items| items.iter().all(Value::is_string)),
@@ -219,6 +226,7 @@ impl Kind {
             Kind::String => "a string",
             Kind::Strings => "an array of strings",
             Kind::Object => "an object",
+            Kind::Count => "a whole number",
         }
     }
 }
@@ -228,7 +236,22 @@ impl Kind {
 /// `providers` is copied whole: the C++ and Rust shapes agree on `enabled` and on `entrypoints`
 /// with `enabled`, `alias` and `shortcut`, and the per-provider `preferences` the Rust root
 /// manager does not read yet survive as unknown fields rather than being lost.
-const DIRECT: [(&str, &str, Kind); 7] = [
+const DIRECT: [(&str, &str, Kind); 13] = [
+    (
+        "launcher_window.clock.enabled",
+        "launcher.clock.enabled",
+        Kind::Bool,
+    ),
+    (
+        "launcher_window.clock.format",
+        "launcher.clock.format",
+        Kind::String,
+    ),
+    (
+        "launcher_window.clock.interval",
+        "launcher.clock.interval",
+        Kind::Count,
+    ),
     (
         "close_on_focus_loss",
         "launcher.close_on_focus_loss",
@@ -237,9 +260,16 @@ const DIRECT: [(&str, &str, Kind); 7] = [
     ("wrap_navigation", "launcher.wrap_navigation", Kind::Bool),
     ("keybinding", "launcher.keybinding", Kind::String),
     ("global_shortcuts.toggle", "launcher.hotkey", Kind::String),
+    (
+        "global_shortcuts.inhibit_apps",
+        "global_shortcuts.inhibit_apps",
+        Kind::Strings,
+    ),
     ("favorites", "favorites", Kind::Strings),
     ("fallbacks", "fallbacks", Kind::Strings),
     ("providers", "providers", Kind::Object),
+    ("input_server.enabled", "input_server.enabled", Kind::Bool),
+    ("tray.enabled", "tray.enabled", Kind::Bool),
 ];
 
 /// C++ theme ids and the Rust theme family each belongs to.

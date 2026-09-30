@@ -51,7 +51,7 @@ impl Preset {
     /// The preset a configuration names, if it names one this build knows.
     ///
     /// Case-insensitive, because a config file is written by hand. An
-    /// unrecognised name yields `None` rather than an error: `vicinae.json`'s
+    /// unrecognised name yields `None` rather than an error: `compass.json`'s
     /// contract is that a value this build does not understand is survivable,
     /// and refusing to start the launcher over a misspelt theme name would be
     /// the wrong trade. [`resolve`] falls back to the default and the caller
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn an_unrecognised_name_draws_the_default_and_says_so() {
-        // Survivable, per `vicinae.json`'s contract -- refusing to start over
+        // Survivable, per `compass.json`'s contract -- refusing to start over
         // a misspelt theme name would be the wrong trade. But not silent:
         // drawing the default without a word leaves someone adjusting a
         // setting nothing is reading.

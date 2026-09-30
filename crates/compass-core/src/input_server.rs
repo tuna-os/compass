@@ -173,3 +173,23 @@ impl RestartPolicy {
 pub fn restart_delay_ms(attempt: u32) -> u64 {
     BASE_RESTART_DELAY_MS * (1u64 << attempt.saturating_sub(1).min(31))
 }
+
+/// The largest message the server accepts: `MAX_MESSAGE_SIZE` in
+/// `src/snippet/src/server.cpp`. A longer announced length closes the stream.
+pub const MAX_MESSAGE_SIZE: usize = 64 * 1024;
+
+impl MessageBuffer {
+    /// The length the held partial message announces, once its prefix is in.
+    ///
+    /// The server compares this against [`MAX_MESSAGE_SIZE`] before waiting
+    /// for the rest: a peer announcing four gigabytes is not waited for.
+    #[must_use]
+    pub fn announced(&self) -> Option<usize> {
+        let prefix: [u8; LENGTH_PREFIX_BYTES] =
+            self.data.get(..LENGTH_PREFIX_BYTES)?.try_into().ok()?;
+        Some(u32::from_le_bytes(prefix) as usize)
+    }
+}
+
+pub mod expansion;
+pub mod wire;

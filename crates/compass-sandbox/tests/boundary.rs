@@ -586,3 +586,73 @@ fn an_allocation_past_the_data_limit_fails_and_the_process_carries_on() {
         "512 MiB was reserved under a 256 MiB data limit"
     );
 }
+
+/// A home with the allowlisted paths, a key beside `~/.ssh/config`, other
+/// files, and a compositor configuration linked out of the list.
+fn a_home() -> tempfile::TempDir {
+    let home = tempfile::tempdir().expect("a home");
+    let root = home.path();
+    std::fs::create_dir_all(root.join(".ssh")).unwrap();
+    std::fs::write(root.join(".ssh/config"), "Host box\n").unwrap();
+    std::fs::write(root.join(".ssh/id_ed25519"), "PRIVATE\n").unwrap();
+    std::fs::create_dir_all(root.join(".password-store")).unwrap();
+    std::fs::write(root.join(".password-store/web.gpg"), "sealed\n").unwrap();
+    std::fs::create_dir_all(root.join(".config/hypr")).unwrap();
+    std::fs::write(root.join(".config/hypr/hyprland.conf"), "bind = x\n").unwrap();
+    std::fs::write(root.join("notes.txt"), "mine\n").unwrap();
+    std::fs::create_dir_all(root.join("secrets")).unwrap();
+    std::fs::write(root.join("secrets/token"), "TOKEN\n").unwrap();
+    std::os::unix::fs::symlink(root.join("secrets"), root.join(".config/sway")).unwrap();
+    home
+}
+
+#[test]
+fn an_extension_reads_the_home_allowlist_and_nothing_else_of_home() {
+    if !landlock_enforces() {
+        return assert_fails_closed();
+    }
+    let home = a_home();
+    let root = home.path();
+    let mut policy = runnable();
+    for path in compass_sandbox::home::home_reads(root).granted {
+        policy = policy.read(path);
+    }
+    let read = |path: &Path| run(&policy, &cat(), &[path.to_string_lossy().into_owned()]);
+
+    for allowed in [
+        root.join(".ssh/config"),
+        root.join(".password-store/web.gpg"),
+        root.join(".config/hypr/hyprland.conf"),
+    ] {
+        let (ok, stderr) = read(&allowed);
+        assert!(ok, "{} is on the allowlist: {stderr}", allowed.display());
+    }
+    for denied in [
+        root.join(".ssh/id_ed25519"),
+        root.join("notes.txt"),
+        root.join("secrets/token"),
+        // Through the link: its target is not on the list.
+        root.join(".config/sway/token"),
+    ] {
+        // Control: readable without the policy, so a denial is the policy's.
+        assert!(std::fs::read(&denied).is_ok(), "{}", denied.display());
+        let (ok, _) = read(&denied);
+        assert!(!ok, "{} was read through the sandbox", denied.display());
+    }
+
+    let sh = ["/usr/bin/sh", "/bin/sh"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())
+        .expect("sh");
+    let target = root.join(".password-store/new.gpg");
+    let (ok, _) = run(
+        &policy,
+        &sh,
+        &[
+            "-c".to_owned(),
+            format!("echo x > {}", target.to_string_lossy()),
+        ],
+    );
+    assert!(!ok && !target.exists(), "the password store is read-only");
+}
