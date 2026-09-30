@@ -1,21 +1,10 @@
 // Codegen for icons
-// Generates cpp source and header to access builtin icons through an enum/string identifier and the typescript enum consumed by extensions.
+// Generates the typescript enum consumed by extensions from the builtin icon set.
+// compass-core's build.rs reads the same enum, so this is the one list of names.
 
 const path = require('path');
 const fs = require('fs');
-const OMNI_ICON_DIR = path.join(__dirname, "..", "src", "server", "icons");
-
-const generateQrc = (files) => {
-	const serializedFiles = files.map(file => `<file>${file}</file>`);
-
-	return `<!DOCTYPE RCC>
-<RCC version="1.0">
-	<qresource prefix="/icons">
-		${serializedFiles.join('\n\t\t')}
-	</qresource>
-</RCC>
-`;
-}
+const ICON_DIR = path.join(__dirname, "..", "extra", "builtin-icons");
 
 const toEnumType = (str) => {
 	return str
@@ -27,58 +16,6 @@ const toEnumType = (str) => {
 const generateSources = (files) => {
 	const serializedFileNames = files.map(file => `"${file.split('.')[0]}"`);
 	const enumNames = files.map(file => toEnumType(`${file.split('.')[0]}`));
-	const header = `#pragma once
-#include <QObject>
-#include <QtQml/qqmlregistration.h>
-#include <string>
-#include <format>
-#include <unordered_map>
-
-namespace BuiltinIcons {
-Q_NAMESPACE
-QML_NAMED_ELEMENT(BuiltinIcon)
-
-enum class BuiltinIcon : quint16 {
-	${enumNames.join(',\n\t')}
-};
-Q_ENUM_NS(BuiltinIcon)
-} // namespace BuiltinIcons
-
-using BuiltinIcons::BuiltinIcon;
-
-class BuiltinIconService {
-public:
-  using Mapping = std::unordered_map<BuiltinIcon, const char*>;
-
-  static BuiltinIcon unknownIcon() { return BuiltinIcon::QuestionMarkCircle; }
-  static std::string pathForName(std::string_view name) { return std::format(":icons/{}", name); }
-  static const char* nameForIcon(BuiltinIcon icon);
-  static const Mapping& mapping();
-};
-`;
-
-	const src = `#include "services/builtin-icon/builtin-icon.hpp"
-
-
-
-const BuiltinIconService::Mapping& BuiltinIconService::mapping() {
-	static const std::unordered_map<BuiltinIcon, const char*> iconMap = {
-		${enumNames.map((name, i) => `{BuiltinIcon::${name}, ${serializedFileNames[i]}}`)
-			.join(',\n\t')}
-	};
-	return iconMap;
-}
-
-const char* BuiltinIconService::nameForIcon(BuiltinIcon icon) {
-	const auto& iconMap = mapping();
-
-	if (auto it = iconMap.find(icon); it != iconMap.end()) {
-		return it->second;
-	}
-	return nullptr;
-}
-`;
-
 
 	const tsEnum = `
 export enum Icon {
@@ -87,7 +24,7 @@ ${enumNames.map((name, i) => `${name} = ${serializedFileNames[i]}`)
 }
 `;
 
-	return { cpp: { src, header }, ts: { iconEnum: tsEnum } };
+	return { ts: { iconEnum: tsEnum } };
 };
 
 
@@ -96,13 +33,8 @@ const writeFile = (path, data) => {
 	console.log(`Wrote file at ${path}`);
 }
 
-const icons = fs.readdirSync(OMNI_ICON_DIR).filter((file) => file.endsWith('.svg'));
-const qrc = generateQrc(icons);
-const { cpp, ts } = generateSources(icons);
-const cppSrcDir = path.join(__dirname, "..", "src", "server", "src", "services", "builtin-icon");
+const icons = fs.readdirSync(ICON_DIR).filter((file) => file.endsWith('.svg'));
+const { ts } = generateSources(icons);
 const apiIconSource = path.join(__dirname, "..", "src", "typescript", "api", "src", "api", "icon.ts");
 
-writeFile(path.join(__dirname, "..", "src", "server", "icons", "icons.qrc"), qrc);
-writeFile(path.join(cppSrcDir, "builtin-icon.cpp"), cpp.src);
-writeFile(path.join(cppSrcDir, "builtin-icon.hpp"), cpp.header);
 writeFile(apiIconSource, ts.iconEnum);

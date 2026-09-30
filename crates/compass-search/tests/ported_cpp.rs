@@ -12,9 +12,6 @@
 //!
 //! Still deferred:
 //!
-//! * `REQUIRE(m.score_query("Łódź Express", Query{"lodz"}).weighted)` — nucleo
-//!   does not fold Latin Extended-A. See
-//!   `diverges_latin_extended_a_is_not_folded`.
 //! * `expectRankedOrder({"Spotify", "Reload Script Directories", "Sysprog"},
 //!   "Spo")` — nucleo's bonus structure orders the last two the other way. See
 //!   `diverges_ordering_issue_946_spo`.
@@ -120,26 +117,21 @@ fn match_diacritic_insensitive() {
     });
 }
 
-/// DIVERGENCE: `REQUIRE(m.score_query("Łódź Express", Query{"lodz"}).weighted)`.
+/// `REQUIRE(m.score_query("Łódź Express", Query{"lodz"}).weighted)`.
 ///
-/// The C++ side folds with fzf's full `normalize.hpp` table, which covers
-/// Latin Extended-A (Ł U+0141 -> L, ź U+017A -> z). `nucleo_matcher::chars::normalize`
-/// only strips combining diacritics from precomposed characters and leaves
-/// Ł/ź alone, so "lodz" does not match "Łódź Express" at all.
-///
-/// PORT-DEFERRED: the C++ assertion cannot be made to pass without shipping our
-/// own fold table in front of nucleo. Pinning the current (divergent) behaviour
-/// instead, so a future fold table flips this test loudly.
+/// `nucleo_matcher::chars::normalize` leaves Latin Extended-A (Ł, ź, đ) alone;
+/// the matcher's `deunicode` fallback folds the Latin letters it misses, one
+/// char for one char, so indices still line up.
 #[test]
-fn diverges_latin_extended_a_is_not_folded() {
+fn latin_extended_a_is_folded() {
     Matcher::with_thread_local(|m| {
-        assert!(
-            m.match_("Łódź Express", "lodz").is_none(),
-            "nucleo unexpectedly folded Latin Extended-A; the C++ assertion \
-             (this should match) can now be restored"
-        );
-        // The precomposed-diacritic half of the same table does work.
+        let found = m.match_("Łódź Express", "lodz").expect("Ł folds to l");
+        assert_eq!(found.indices, vec![0, 1, 2, 3]);
         assert!(m.match_("Zürich", "zurich").is_some());
+        assert!(m.match_("Đakovo", "dak").is_some());
+        // Other scripts still match as themselves, not as their romanisation.
+        assert!(m.match_("αβγ", "a").is_none());
+        assert!(m.match_("日本", "ri").is_none());
     });
 }
 

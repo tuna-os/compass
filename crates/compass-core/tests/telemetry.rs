@@ -63,7 +63,7 @@ fn the_endpoints_and_the_default_host_are_unchanged() {
     assert_eq!(DEFAULT_API_BASE_URL, "https://api.vicinae.com/v1");
     assert_eq!(SYSTEM_INFO_PATH, "/telemetry/system-info");
     assert_eq!(FORGET_PATH, "/telemetry/forget");
-    assert_eq!(API_URL_ENV, "VICINAE_API_URL");
+    assert_eq!(API_URL_ENV, "COMPASS_VICINAE_API_URL");
     assert_eq!(STATE_FILE, "telemetry.json");
 }
 

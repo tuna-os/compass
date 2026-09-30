@@ -10,7 +10,7 @@ use compass_core::extension_install::{
 };
 
 fn dir() -> PathBuf {
-    PathBuf::from("/home/me/.local/share/vicinae/extensions")
+    PathBuf::from("/home/me/.local/share/compass/extensions")
 }
 
 fn steps() -> Vec<Step> {

@@ -1,6 +1,6 @@
 //! Per-extension durable state directory.
 //!
-//! `base` is `~/.local/state/vicinae` (Flatpak-mapped `~/.var/app/.../state`).
+//! `base` is `~/.local/state/compass` (Flatpak-mapped `~/.var/app/.../state`).
 //! `extension_id` is the registered id. Directory is created with default
 //! permissions when absent; existing permissions are left untouched.
 

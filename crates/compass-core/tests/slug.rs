@@ -2,7 +2,7 @@
 //!
 //! Read off `slugify` (`src/server/src/utils/utils.cpp`).
 
-use compass_core::slug::{slugify, slugify_with};
+use compass_core::slug::slugify;
 
 #[test]
 fn an_empty_input_slugs_to_nothing() {
@@ -63,13 +63,8 @@ fn a_title_that_is_entirely_punctuation_slugs_to_nothing() {
 }
 
 #[test]
-fn the_separator_is_configurable() {
-    assert_eq!(slugify_with("Simple List", "_"), "simple_list");
-}
-
-#[test]
-fn a_configured_separator_is_also_what_gets_trimmed_and_collapsed() {
-    // The trim and collapse patterns are built from the separator, so they
-    // must follow it rather than staying on "-".
-    assert_eq!(slugify_with("__a  -  b__", "_"), "a_b");
+fn a_non_latin_title_is_transliterated_rather_than_emptied() {
+    // A divergence from the C++, which strips these and leaves "" -- an
+    // extension directory with no name. See PARITY.md.
+    assert_eq!(slugify("日本語 ツール"), "ri-ben-yu-turu");
 }

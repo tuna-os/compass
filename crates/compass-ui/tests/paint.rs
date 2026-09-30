@@ -318,3 +318,107 @@ fn each_appearance_paints_its_own_palette() {
         );
     }
 }
+
+/// `LauncherApp::view()` painted the way the runtime paints a window: the
+/// surface cleared to `background`, then the view drawn over it, at the
+/// window's own size. Raw RGBA, alpha included, which the PNG route above
+/// does not keep apart from the clear colour `Simulator::snapshot` picks
+/// (the theme's base, never the app's `style`).
+fn paint_surface(app: &LauncherApp, size: iced::Size, background: iced::Color) -> (u32, Vec<u8>) {
+    use iced_test::core::renderer::Headless;
+    use iced_test::core::{clipboard, mouse, renderer, time, window};
+    use iced_test::runtime::user_interface::{Cache, UserInterface};
+
+    let backend = std::env::var("ICED_TEST_BACKEND").ok();
+    let mut painter = iced::futures::executor::block_on(iced_test::renderer::Renderer::new(
+        iced::Font::with_name("Fira Sans"),
+        iced::Pixels(16.0),
+        backend.as_deref(),
+    ))
+    .expect("a headless renderer");
+    let theme = app.theme();
+    let style = app.style(&theme);
+    let mut ui = UserInterface::build(app.view(), size, Cache::default(), &mut painter);
+    let mut messages = Vec::new();
+    let _ = ui.update(
+        &[iced::Event::Window(window::Event::RedrawRequested(
+            time::Instant::now(),
+        ))],
+        mouse::Cursor::Unavailable,
+        &mut painter,
+        &mut clipboard::Null,
+        &mut messages,
+    );
+    ui.draw(
+        &mut painter,
+        &theme,
+        &renderer::Style {
+            text_color: style.text_color,
+        },
+        mouse::Cursor::Unavailable,
+    );
+    let width = (size.width * SCALE).round() as u32;
+    let height = (size.height * SCALE).round() as u32;
+    let rgba = painter.screenshot(iced::Size::new(width, height), SCALE, background);
+    (width, rgba)
+}
+
+/// THE WINDOW AROUND THE CARD IS TRANSPARENT.
+///
+/// The window is the card plus room for its shadow, and the card shrinks to
+/// its rows, so most of a short list's window is neither. Left to the theme,
+/// the runtime cleared it to the palette's background and a light rectangle
+/// the size of the window stood behind the card on the desktop. Every pixel
+/// below the card's shadow must have alpha 0, in both appearances, while the
+/// card itself stays opaque. The control paints the same view over the
+/// theme's base colour, which is what the window got before, and must fail
+/// the same check.
+#[test]
+fn the_surface_around_the_card_is_transparent() {
+    let size = compass_ui::AppFlags::default().window_config.size;
+    for appearance in [Appearance::Light, Appearance::Dark] {
+        let (_dir, app) = launcher(appearance);
+        let theme = app.theme();
+        let clear = app.style(&theme).background_color;
+        assert!(clear.a.abs() < f32::EPSILON, "{appearance:?}: {clear:?}");
+
+        let (width, rgba) = paint_surface(&app, size, clear);
+        let height = rgba.len() as u32 / 4 / width;
+        let alpha = |rgba: &[u8], x: u32, y: u32| rgba[((y * width + x) * 4 + 3) as usize];
+        let row_max =
+            |rgba: &[u8], y: u32| (0..width).map(|x| alpha(rgba, x, y)).max().unwrap_or(0);
+
+        // The card is the opaque part; its last opaque line is its bottom.
+        let card_bottom = (0..height)
+            .rev()
+            .find(|&y| row_max(&rgba, y) == 255)
+            .expect("the card is painted opaque");
+        // Past the shadow's 16 px offset and twice its blur, nothing of the
+        // card reaches.
+        let shadow_end =
+            card_bottom + ((16.0 + 2.0 * compass_ui::design::SHADOW_BLUR) * SCALE) as u32;
+        assert!(
+            shadow_end + (40.0 * SCALE) as u32 <= height,
+            "{appearance:?}: the card fills the window; no band left to check"
+        );
+        let below = |rgba: &[u8]| {
+            (shadow_end..height)
+                .map(|y| row_max(rgba, y))
+                .max()
+                .unwrap_or(0)
+        };
+        assert_eq!(
+            below(&rgba),
+            0,
+            "{appearance:?}: the window below the card's shadow is not transparent"
+        );
+
+        let base = iced::theme::Base::base(&theme).background_color;
+        let (_, control) = paint_surface(&app, size, base);
+        assert_eq!(
+            below(&control),
+            255,
+            "{appearance:?}: the control (the theme's background) must be opaque there"
+        );
+    }
+}

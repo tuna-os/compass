@@ -25,6 +25,7 @@
 pub mod history_view;
 pub mod ingest;
 pub mod kind;
+pub mod retention;
 pub mod schema;
 pub mod search;
 pub mod store;

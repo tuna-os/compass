@@ -99,7 +99,7 @@ pub enum Decision {
 pub enum Error {
     /// SQLite refused, including inside the write helpers.
     #[error(transparent)]
-    Database(#[from] compass_sqlcipher_sys::Error),
+    Database(#[from] compass_sqlcipher_sys::rusqlite::Error),
 
     /// A write helper refused.
     #[error(transparent)]
@@ -329,7 +329,7 @@ pub fn preview(kind: OfferKind, data: &[u8]) -> String {
 /// be written (in which case the row is already committed; see the module
 /// docs).
 pub fn ingest(
-    db: &compass_sqlcipher_sys::Database,
+    db: &compass_sqlcipher_sys::rusqlite::Connection,
     data_dir: &Path,
     copy: &Incoming<'_>,
     clipboard_key: Option<&[u8; compass_crypto::KEY_SIZE]>,
@@ -373,9 +373,9 @@ pub fn ingest(
         crate::kind::EncryptionType::None
     };
 
-    let tx = db.transaction()?;
+    let tx = db.unchecked_transaction()?;
     write::insert_selection(
-        db,
+        &tx,
         &NewSelection {
             id: &selection_id,
             offer_count: 1,
@@ -388,10 +388,10 @@ pub fn ingest(
     // "Index all offers, including empty ones" — empties cannot reach here,
     // but the shape is the same: every text-like offer is indexed.
     if matches!(kind, OfferKind::Text | OfferKind::Link) {
-        write::index_content(db, &selection_id, &text)?;
+        write::index_content(&tx, &selection_id, &text)?;
     }
     write::insert_offer(
-        db,
+        &tx,
         &NewOffer {
             id: &offer_id,
             selection_id: &selection_id,

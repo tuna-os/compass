@@ -1,6 +1,0 @@
-add_library(zip STATIC zip.c)
-target_include_directories(zip PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_compile_definitions(zip PRIVATE ZIP_ENABLE_INFLATE)
-if(UNIX)
-    target_compile_definitions(zip PRIVATE _FILE_OFFSET_BITS=64 ZIP_HAVE_SYMLINK)
-endif()

@@ -10,14 +10,30 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-compass-extension-api = { path = "../compass-extension-api" }
-rhai = { version = "1.20", features = ["sync"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
+compass-extension-api.workspace = true
+compass-xdg.workspace = true
+# `sync` so an engine, an AST and a stored closure can cross to the blocking
+# pool; `serde` for JSON and storage values. Nothing in the default features
+# reaches the filesystem or the environment; which packages a script sees is
+# decided in `engine.rs`, not here.
+rhai = { version = "1.26", features = ["sync", "serde"] }
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
-anyhow.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "sync"] }
+# The 1.x line shares its parser with what the workspace already locks;
+# the workspace `toml = "0.9"` would pull a second winnow.
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
+notify.workspace = true
+getrandom.workspace = true
+percent-encoding.workspace = true
+uuid = { version = "1", default-features = false, features = ["std"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 
 [dev-dependencies]
+# The shared-seam test renders one fixture through the TypeScript tier's
+# `view_model::to_view` and through a script, and asserts the same view.
+compass-worker-host.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }

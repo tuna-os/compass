@@ -10,7 +10,7 @@
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
     widget::{
-        Space, column, container, image, mouse_area, row, scrollable, stack, svg, text, text_input,
+        Space, column, container, image, mouse_area, row, sensor, stack, svg, text, text_input,
     },
     window,
 };
@@ -24,6 +24,38 @@ use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
 use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
+use crate::scroll::scrollable;
+
+mod apps;
+mod calculator;
+mod clipboard;
+mod compass_commands;
+mod developer;
+mod dmenu;
+mod emoji;
+mod file_actions;
+mod fonts;
+mod global_shortcuts;
+mod grants;
+mod hud;
+mod launch;
+mod media;
+mod onboarding;
+mod open_with;
+mod preview;
+mod programs;
+mod release_check;
+mod rhai;
+mod root;
+mod runtime;
+mod scripts;
+mod settings_view;
+mod shortcuts;
+mod snippets;
+mod stores;
+mod themes;
+mod tray;
+mod workspaces;
 
 /// The search field's widget id.
 ///
@@ -79,6 +111,8 @@ fn keyboard_events(
 ) -> Option<Message> {
     match event {
         iced::Event::Keyboard(event) => Some(Message::Keyboard(event)),
+        iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocusChanged(true)),
+        iced::Event::Window(window::Event::Unfocused) => Some(Message::WindowFocusChanged(false)),
         _ => None,
     }
 }
@@ -175,17 +209,49 @@ impl Default for IconLookup {
     }
 }
 
+/// A shortcut's stored icon as its root row draws it (`RootShortcutItem::iconUrl`):
+/// the `ImageURL` it names, a builtin on a purple tile.
+fn shortcut_url(icon: &str) -> compass_core::image_url::ImageUrl {
+    let url = compass_core::image_url::ImageUrl::parse(icon);
+    if url.is_builtin() {
+        url.with_background_tint(compass_core::image_url::ColorLike::Semantic(
+            "Purple".into(),
+        ))
+    } else {
+        url
+    }
+}
+
+/// A clipboard link row's favicon, with the link builtin as its fallback
+/// (`ClipboardHistoryModel`'s icon for a link).
+fn clipboard_url(
+    entry: &crate::backend::ClipboardRow,
+) -> Option<compass_core::image_url::ImageUrl> {
+    use compass_core::image_url::{ImageUrl, ImageUrlType};
+    let host = entry.url_host.as_deref().filter(|host| !host.is_empty())?;
+    (entry.kind == crate::backend::ClipboardRowKind::Link).then(|| {
+        ImageUrl::new(ImageUrlType::Favicon, host).with_fallback(&ImageUrl::builtin("link"))
+    })
+}
+
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
     /// Curated color theme (#153), or System for Adwaita.
     pub theme: crate::theme::Theme,
+    /// Where Set Theme looks for theme files; none in tests.
+    pub theme_dirs: Vec<std::path::PathBuf>,
+    /// The file views' remembered filters are kept in; `None` keeps them in
+    /// memory, as tests do.
+    pub view_state_path: Option<std::path::PathBuf>,
+    /// The `fallbacks` entries a non-empty query offers, as ids.
+    pub fallbacks: Vec<String>,
     /// Window configuration.
     pub window_config: window::Settings,
     /// How to launch the selected application.
     ///
     /// Injected rather than reached for: this crate must not know whether it
-    /// is on Linux. `vicinae` supplies `compass-platform-linux`'s launcher;
+    /// is on Linux. `compass` supplies `compass-platform-linux`'s launcher;
     /// tests supply their own. See ADR-0013.
     pub launcher: Arc<dyn AppLauncher>,
     /// Shared ranking/history service when attached to an engine.
@@ -202,6 +268,48 @@ pub struct AppFlags {
     pub wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result, from `launcher.quick_launch`.
     pub quick_launch: bool,
+    /// Whether the window hides when it loses focus, from
+    /// `launcher.close_on_focus_loss`.
+    pub close_on_focus_loss: bool,
+    /// The launcher hotkey as stored (`launcher.hotkey`), for the shortcut
+    /// recorder's conflict check.
+    pub launcher_hotkey: String,
+    /// Whether each power command asks first, by id, as its `confirm`
+    /// preference resolves (`compass_core::power_commands::should_confirm`).
+    /// A command missing here asks by its own default.
+    pub power_asks: std::collections::BTreeMap<String, bool>,
+    /// Browse Apps' `showHidden` and `sortAlphabetically` preferences.
+    pub browse_apps: compass_core::browse_apps::Options,
+    /// The configuration file commands read their preferences from when
+    /// they open (Browse Apps); `None` keeps the ones given at start.
+    pub config_path: Option<std::path::PathBuf>,
+    /// Where the emoji picker's visits, pins, tones and keywords are kept
+    /// (`compass_core::glyph_service::default_path`); `None` keeps them in
+    /// memory, as tests do.
+    pub glyph_path: Option<std::path::PathBuf>,
+    /// Where the builtin icon set is installed
+    /// ([`compass_core::builtin_icon::directory`]); `None` draws initials
+    /// where a builtin icon would go.
+    pub builtin_icons: Option<std::path::PathBuf>,
+    /// The emoji picker's `skinTone` preference, as a tone id.
+    pub emoji_skin_tone: Option<String>,
+    /// The picker's `defaultAction` preference, `paste` unless set: what
+    /// Enter does over a glyph.
+    pub emoji_default_action: String,
+    /// Where the root search's history is kept
+    /// (`compass_core::root_view::default_history_path`); `None` keeps it in
+    /// memory, as tests do.
+    pub search_history_path: Option<std::path::PathBuf>,
+    /// The root search's clock (`launcher.clock`); `None` shows none.
+    pub clock: Option<ClockSettings>,
+    /// Where favicons come from (`favicon_service`).
+    pub favicon_service: compass_core::favicon::Service,
+    /// Whether root rows fetch their remote icons (an `https` script icon,
+    /// a shortcut's or a clipboard link's favicon) into
+    /// [`crate::remote_image`]'s cache. Off by default, so a test never
+    /// reaches the network or the cache under the real home; `compass` turns
+    /// it on.
+    pub remote_icons: bool,
     /// When the process started, for the cold-start figure (#13).
     ///
     /// `None` in a test or anywhere nobody is timing, which simply means no
@@ -238,7 +346,7 @@ pub struct AppFlags {
     pub appearance_link: Option<crate::appearance::AppearanceLink>,
     /// The engine driving this window, when there is one.
     ///
-    /// `None` is the standalone case -- `vicinae ui` run by hand with no daemon
+    /// `None` is the standalone case -- `compass ui` run by hand with no daemon
     /// -- and it changes what dismissing means: with nothing able to summon the
     /// window back, hiding it would strand the process invisible, so it exits.
     pub link: Option<EngineLink>,
@@ -246,6 +354,11 @@ pub struct AppFlags {
     pub exit_on_engine_disconnect: bool,
     /// Start without a window when an engine link can summon it later.
     pub start_hidden: bool,
+    /// Where the first-run flow records that it was finished, when it is
+    /// due (`compass_core::onboarding::should_show`): the window then opens
+    /// on it, even when started hidden, as the C++ shows its onboarding
+    /// window at server start. `None` when it is not due.
+    pub onboarding: Option<std::path::PathBuf>,
     /// The desktop's interface font family, as `org.gnome.desktop.interface font-name`.
     ///
     /// `None` is the historic hard-coded `Cantarell` path; `Some` means the
@@ -271,6 +384,9 @@ impl Default for AppFlags {
         let platform_specific = window::settings::PlatformSpecific::default();
         Self {
             theme: crate::theme::Theme::System,
+            theme_dirs: Vec::new(),
+            view_state_path: None,
+            fallbacks: Vec::new(),
             window_config: window::Settings {
                 size: iced::Size::new(
                     f32::from(GEOMETRY.card_width + 2 * design::SHADOW_PADDING),
@@ -286,6 +402,19 @@ impl Default for AppFlags {
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
+            close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+            launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
+            power_asks: std::collections::BTreeMap::new(),
+            browse_apps: compass_core::browse_apps::Options::default(),
+            config_path: None,
+            glyph_path: None,
+            builtin_icons: None,
+            emoji_skin_tone: None,
+            emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
+            search_history_path: None,
+            clock: None,
+            favicon_service: compass_core::favicon::Service::default(),
+            remote_icons: false,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             appearance_preset: crate::preset::resolve(None, None, None),
@@ -293,7 +422,7 @@ impl Default for AppFlags {
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
-            // exists to end. `vicinae` sets this explicitly.
+            // exists to end. `compass` sets this explicitly.
             launcher: Arc::new(NullLauncher),
             backend: None,
             clipboard: None,
@@ -302,8 +431,9 @@ impl Default for AppFlags {
             link: None,
             exit_on_engine_disconnect: false,
             start_hidden: false,
+            onboarding: None,
             // Light, until a desktop says otherwise. This is Adwaita's
-            // documented no-preference fallback; `vicinae` replaces it with
+            // documented no-preference fallback; `compass` replaces it with
             // the portal's native choice before the first frame when possible.
             appearance: Appearance::Light,
             appearance_link: None,
@@ -328,6 +458,8 @@ pub struct PanelState {
     pub rows: Vec<Row>,
     /// The selected row, or -1.
     pub selected: isize,
+    /// The shortcut recorder, when it has taken the panel's place.
+    pub recorder: Option<crate::shortcut_recorder::ShortcutRecorder>,
 }
 
 impl PanelState {
@@ -341,6 +473,7 @@ impl PanelState {
             filter: String::new(),
             rows,
             selected,
+            recorder: None,
         }
     }
 
@@ -356,6 +489,16 @@ impl PanelState {
     pub fn selected_action(&self) -> Option<&Action> {
         let row = self.rows.get(usize::try_from(self.selected).ok()?)?;
         self.sections.get(row.section)?.actions.get(row.action?)
+    }
+
+    /// The row of the action called `title`, for a test to click.
+    #[cfg(test)]
+    fn row_titled(&self, title: &str) -> Option<usize> {
+        self.rows.iter().position(|row| {
+            row.action
+                .and_then(|action| self.sections.get(row.section)?.actions.get(action))
+                .is_some_and(|action| action.title == title)
+        })
     }
 }
 
@@ -432,6 +575,40 @@ enum ClipboardChange {
     Remove,
 }
 
+/// A question asked before an action that cannot be undone, as the C++
+/// `CallbackAlertWidget`s ask it: Enter confirms, Escape cancels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Confirm {
+    title: String,
+    message: String,
+    confirm_text: String,
+    action: ConfirmAction,
+}
+
+/// What a [`Confirm`] runs when it is confirmed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConfirmAction {
+    /// Remove every clipboard history entry.
+    ClipboardRemoveAll,
+    /// Change a root item in a way that asks first: reset its ranking or
+    /// disable it.
+    RootEdit(String, compass_core::root_items::RootEdit),
+    /// Uninstall an extension, from Show Installed Extensions.
+    UninstallExtension(String),
+    /// Remove an extension's token set for a provider, from Manage OAuth
+    /// Token Sets.
+    RemoveTokenSet(String, Option<String>),
+}
+
+/// The root search's clock (`launcher.clock`), when it is shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockSettings {
+    /// The Qt date-time format it is drawn in.
+    pub format: String,
+    /// Seconds between redraws.
+    pub interval: u64,
+}
+
 /// One row of the root list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootRow {
@@ -442,6 +619,44 @@ pub enum RootRow {
     /// An installed extension's command, as its index in
     /// `AppIndex::extensions`.
     Extension(usize),
+    /// The calculator's answer to the query, held in `LauncherApp::calculator`.
+    Calculator,
+    /// A shortcut (quicklink), as its index in `AppIndex::shortcuts`.
+    Shortcut(usize),
+    /// A script command, as its index in `AppIndex::scripts`.
+    Script(usize),
+    /// A Rhai script, as its index in `AppIndex::rhai_scripts`.
+    RhaiScript(usize),
+    /// A fallback offered for the query, under "Use "…" with...".
+    Fallback(Fallback),
+    /// A newer Compass release, held in `LauncherApp::update`.
+    Update,
+}
+
+/// A root item offered as a fallback for the query (`RootFallbackSection`):
+/// an entry of `fallbacks` that `isSuitableForFallback`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fallback {
+    /// A builtin command that can take the query: Search Files.
+    Command(&'static compass_core::commands::BuiltinCommand),
+    /// An extension's command, opened with the query as its fallback text,
+    /// as its index in `AppIndex::extensions`.
+    Extension(usize),
+    /// A quicklink with exactly one argument, opened with the query as it,
+    /// as its index in `AppIndex::shortcuts`.
+    Shortcut(usize),
+}
+
+/// The provider search view (`ProviderSearchViewHost`): root search over one
+/// provider's items, opened by a `compass://launch/<provider>` deeplink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderScope {
+    /// The provider's id.
+    pub id: String,
+    /// Its display name, the view's title.
+    pub title: String,
+    /// `Search <title>`.
+    pub placeholder: String,
 }
 
 /// Which view the card shows.
@@ -453,10 +668,66 @@ enum Page {
     Clipboard(crate::clipboard_page::ClipboardPage),
     /// The window switcher.
     Windows(crate::windows_page::WindowsPage),
+    /// Switch Workspaces.
+    Workspaces(crate::workspaces_page::WorkspacesPage),
+    /// "Open with…": the applications that open a target.
+    OpenWith(crate::open_with_page::OpenWithPage),
+    /// The emoji and symbol picker.
+    Emoji(crate::emoji_page::EmojiPage),
+    /// Search Files.
+    Files(crate::files_page::FilesPage),
+    /// Manage Shortcuts.
+    Shortcuts(crate::shortcuts_page::ShortcutsPage),
+    /// Manage Snippets.
+    Snippets(crate::snippets_page::SnippetsPage),
+    /// A script command's full output.
+    ScriptOutput(crate::script_page::ScriptOutputPage),
+    /// Run Terminal Program.
+    Programs(crate::programs_page::ProgramsPage),
+    /// A `compass dmenu` list.
+    Dmenu(crate::dmenu_page::DmenuPage),
+    /// Set Theme.
+    Themes(crate::themes_page::ThemesPage),
+    /// The page after Create Extension.
+    Created(crate::developer_page::CreatedPage),
+    /// Browse Fonts.
+    Fonts(crate::fonts_page::FontsPage),
+    /// One font's specimen.
+    FontPreview(crate::fonts_page::FontPreviewPage),
+    /// An extension store's list.
+    Store(crate::store_page::StorePage),
+    /// One store extension's detail page.
+    StoreDetail(Box<crate::store_page::StoreDetailPage>),
+    /// Now Playing.
+    NowPlaying(crate::media_page::NowPlayingPage),
+    /// Script Permissions.
+    Grants(crate::grants_page::GrantsPage),
+    /// Search Tray.
+    Tray(crate::tray_page::TrayPage),
+    /// Browse Apps, Set Default Browser or Set Default Terminal.
+    Apps(crate::apps_page::AppsPage),
+    /// Calculator History.
+    Calculator(crate::calculator_page::CalculatorPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
     Preferences(Box<crate::preferences_page::PreferencesPage>),
+    /// The settings: the C++ settings window's pages.
+    Settings(Box<crate::settings_page::SettingsPage>),
+    /// The first-run flow.
+    Onboarding(Box<crate::onboarding_page::OnboardingPage>),
+    /// Configure Fallback Commands.
+    Fallbacks(crate::fallbacks_page::FallbacksPage),
+    /// Show Installed Extensions.
+    Extensions(crate::compass_pages::ExtensionsPage),
+    /// Search Builtin Icons.
+    Icons(crate::compass_pages::IconsPage),
+    /// Inspect Local Storage.
+    Storage(crate::compass_pages::StoragePage),
+    /// Manage OAuth Token Sets.
+    Tokens(crate::compass_pages::TokensPage),
+    /// A store's intro, before its list.
+    StoreIntro(crate::compass_pages::StoreIntroPage),
 }
 
 /// A key press as an extension shortcut: its modifiers and the key's name
@@ -581,6 +852,9 @@ fn extension_panel_sections(page: &crate::extension_page::ExtensionPage) -> Vec<
 pub struct LauncherApp {
     /// The application index.
     app_index: AppIndex,
+    /// The engine's catalog generation this index was last brought up to;
+    /// see [`crate::backend::ApplicationBackend::catalog_generation`].
+    catalog_generation: u64,
     /// Current query text.
     query: String,
     /// Ranked results: applications as indices into `app_index.items()`,
@@ -590,6 +864,18 @@ pub struct LauncherApp {
     /// space, an `AppItem` carries its whole parsed desktop entry, and a
     /// launcher re-ranks on every keystroke.
     results: Vec<RootRow>,
+    /// The calculator's answer to the query, shown first when there is one.
+    calculator: Option<compass_core::calculator::Answer>,
+    /// A power command waiting on the person's yes.
+    power_confirm: Option<&'static compass_core::power_commands::PowerCommand>,
+    /// A question waiting on Enter or Escape before an action runs.
+    confirm: Option<Confirm>,
+    /// Clipboard History while its keyword form is open.
+    parked_clipboard: Option<crate::clipboard_page::ClipboardPage>,
+    /// The view "Open with…" was opened over, to go back to.
+    open_with_return: Option<Box<Page>>,
+    /// The MIME type of the file the open panel is over, for Copy mime type.
+    file_mime: Option<String>,
     /// Which view is showing. See [`Page`].
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
@@ -620,6 +906,39 @@ pub struct LauncherApp {
     window_config: window::Settings,
     /// Curated theme (#153).
     theme_choice: crate::theme::Theme,
+    /// Where Set Theme looks for theme files.
+    theme_dirs: Vec<std::path::PathBuf>,
+    /// What views remember between openings.
+    view_memory: crate::view_memory::ViewMemory,
+    /// The `fallbacks` entries a non-empty query offers, as ids.
+    fallbacks: Vec<String>,
+    /// The provider search view, when root search is showing one provider.
+    provider_scope: Option<ProviderScope>,
+    /// Each Rhai script's manifest icon, resolved, by script id.
+    rhai_icons: std::collections::HashMap<String, crate::extension_page::RowIcon>,
+    /// Each script command's icon, as the engine resolved it, by script id.
+    script_icons: std::collections::HashMap<String, compass_core::image_url::ImageUrl>,
+    /// Root rows' `ImageURL`s resolved to what is drawn, by URL, warmed
+    /// from `update`; `None` is a miss (or a remote image not yet here).
+    url_glyphs: std::collections::HashMap<String, Option<crate::icons::Glyph>>,
+    /// Remote icons fetched into the cache, by URL.
+    remote_files: std::collections::HashMap<String, std::path::PathBuf>,
+    /// Remote icons asked for, so each is fetched once.
+    remote_requested: std::collections::BTreeSet<String>,
+    /// Remote icons to fetch after this update.
+    remote_pending: Vec<String>,
+    /// Whether the compositor's shortcuts were last asked to go to the
+    /// launcher, because a shortcut recorder records
+    /// ([`crate::shortcut_inhibit`]).
+    shortcuts_inhibited: bool,
+    /// See [`AppFlags::remote_icons`].
+    remote_icons: bool,
+    /// See [`AppFlags::favicon_service`].
+    favicon_service: compass_core::favicon::Service,
+    /// Masked images, drawn once.
+    masked: crate::icons::MaskedCache,
+    /// Extension icon files seen to exist, so a draw does not stat them.
+    known_files: std::collections::HashSet<std::path::PathBuf>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -639,6 +958,53 @@ pub struct LauncherApp {
     wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result. See [`AppFlags::quick_launch`].
     quick_launch: bool,
+    /// See [`AppFlags::close_on_focus_loss`].
+    close_on_focus_loss: bool,
+    /// Whether the window has had the focus since it was last shown: losing
+    /// it hides the window only after it had it (`setWindowActivated`).
+    window_focused: bool,
+    /// See [`AppFlags::launcher_hotkey`].
+    launcher_hotkey: String,
+    /// Whether the engine was last told the recorder is capturing.
+    capture_reported: bool,
+    /// Whether an extension's file chooser is open, which takes the focus
+    /// without the user leaving the launcher.
+    choosing_files: bool,
+    /// See [`AppFlags::power_asks`].
+    power_asks: std::collections::BTreeMap<String, bool>,
+    /// See [`AppFlags::browse_apps`].
+    browse_apps: compass_core::browse_apps::Options,
+    /// See [`AppFlags::config_path`].
+    config_path: Option<std::path::PathBuf>,
+    /// See [`AppFlags::glyph_path`].
+    glyph_path: Option<std::path::PathBuf>,
+    /// See [`AppFlags::emoji_skin_tone`].
+    emoji_skin_tone: Option<String>,
+    /// See [`AppFlags::emoji_default_action`].
+    emoji_default_action: String,
+    /// The emoji picker while its keyword form is open.
+    parked_emoji: Option<crate::emoji_page::EmojiPage>,
+    /// The settings while an extension command's preferences form is open
+    /// over them.
+    parked_settings: Option<Box<crate::settings_page::SettingsPage>>,
+    /// See [`AppFlags::search_history_path`].
+    search_history_path: Option<std::path::PathBuf>,
+    /// The root search's history, newest first.
+    search_history: compass_core::root_view::SearchHistory,
+    /// Where the up arrow has reached in the history; `None` until it is
+    /// pressed, and again once something is typed.
+    history_offset: Option<usize>,
+    /// See [`AppFlags::clock`].
+    clock: Option<ClockSettings>,
+    /// The time the root search's status bar shows, once the clock ticked.
+    clock_text: Option<String>,
+    /// When, in seconds since the epoch, the clock is next redrawn.
+    clock_next_at: i64,
+    /// The root settings this window applies locally: the startup
+    /// configuration, and what its own panel has changed since.
+    root_config: compass_core::root_items::RootConfig,
+    /// How many of `results`' first rows are the favourites (empty query).
+    favorites_len: usize,
     /// Sizes and spacing, from the resolved appearance preset (#84).
     ///
     /// Held rather than read from [`design::GEOMETRY`] at each draw: a preset
@@ -677,6 +1043,10 @@ pub struct LauncherApp {
     /// Warmed from `update`, never from `view`: resolving a name walks the
     /// theme directories, which is disk work that does not belong in a draw.
     icon_cache: crate::icons::IconCache,
+    /// Where the builtin icon set is installed, read once at startup.
+    builtin_icons: Option<std::path::PathBuf>,
+    /// File-type icons for file rows, by path, warmed as `icon_cache` is.
+    file_glyphs: crate::icons::FileGlyphCache,
     /// Which navigation chords are in force. See [`compass_core::keybinding`].
     ///
     /// Held rather than read per keystroke because it comes from the user's
@@ -705,6 +1075,31 @@ pub struct LauncherApp {
     /// window -- the precise lie this whole design exists to prevent, arriving
     /// through the mechanism built to prevent it.
     awaiting: bool,
+    /// Manage Shortcuts as it was when a form was opened over it, so going
+    /// back returns to the same filter and selection.
+    parked_shortcuts: Option<crate::shortcuts_page::ShortcutsPage>,
+    /// Manage Snippets as it was when a form was opened over it.
+    parked_snippets: Option<crate::snippets_page::SnippetsPage>,
+    /// Browse Fonts as it was when a specimen was opened over it.
+    parked_fonts: Option<crate::fonts_page::FontsPage>,
+    /// A store's list as it was when a detail page was opened over it.
+    parked_store: Option<crate::store_page::StorePage>,
+    /// The card size a dmenu list resized the open window to, while it is.
+    resized_to: Option<(u32, u32)>,
+    /// The blur region last asked for behind the open window's card, so a
+    /// layout that changes nothing asks nothing. `None` is none asked for.
+    material_asked: Option<compass_platform::MaterialRegion>,
+    /// A compact or inline script run the root list is waiting on.
+    following_script: Option<scripts::FollowedScript>,
+    /// Subtitles extensions set for their commands (`updateCommandMetadata`),
+    /// by command id, shown in place of the extension's title.
+    extension_subtitles: std::collections::HashMap<String, String>,
+    /// A newer Compass release, as the engine last said.
+    update: Option<crate::backend::UpdateOffer>,
+    /// Whether the application under the root panel runs, by its key.
+    app_runtime: Option<(String, crate::backend::AppRuntimeInfo)>,
+    /// The HUD shown after an action hides the launcher (`crate::hud`).
+    hud: crate::hud::HudState,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -836,11 +1231,31 @@ impl LauncherApp {
         app.clipboard = flags.clipboard;
         app.windows = flags.windows;
         app.app_index.apply_root_config(&flags.root_config);
+        app.root_config = flags.root_config;
+        app.search_history = flags
+            .search_history_path
+            .as_deref()
+            .map(compass_core::root_view::SearchHistory::load_file)
+            .unwrap_or_default();
+        app.search_history_path = flags.search_history_path;
+        app.clock = flags.clock;
+        app.fallbacks = flags.fallbacks;
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
         app.quick_launch = flags.quick_launch;
+        app.close_on_focus_loss = flags.close_on_focus_loss;
+        app.launcher_hotkey = flags.launcher_hotkey;
+        app.power_asks = flags.power_asks;
+        app.browse_apps = flags.browse_apps;
+        app.config_path = flags.config_path;
+        app.glyph_path = flags.glyph_path;
+        app.builtin_icons = flags.builtin_icons;
+        app.emoji_skin_tone = flags.emoji_skin_tone;
+        app.emoji_default_action = flags.emoji_default_action;
         app.icons = flags.icons;
+        app.remote_icons = flags.remote_icons;
+        app.favicon_service = flags.favicon_service;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
         app.tint = flags.appearance_preset.tint;
@@ -850,6 +1265,8 @@ impl LauncherApp {
         app.link = flags.link;
         app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
         app.theme_choice = flags.theme;
+        app.theme_dirs = flags.theme_dirs;
+        app.view_memory = crate::view_memory::ViewMemory::load(flags.view_state_path);
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
         app.font_family = flags.font_family;
@@ -859,11 +1276,15 @@ impl LauncherApp {
     /// Builds the state and opens the first window, for [`crate::run_resident`].
     ///
     /// Distinct from [`LauncherApp::new`] because `iced::daemon` starts with no
-    /// windows at all: without this, `vicinae ui` with no engine attached would
+    /// windows at all: without this, `compass ui` with no engine attached would
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
-        let hidden = flags.start_hidden && flags.link.is_some();
+        let onboarding = flags.onboarding.clone();
+        let hidden = flags.start_hidden && flags.link.is_some() && onboarding.is_none();
         let (mut app, task) = Self::new(flags);
+        if let Some(path) = onboarding {
+            app.open_onboarding(path);
+        }
         if hidden {
             return (app, task);
         }
@@ -879,8 +1300,15 @@ impl LauncherApp {
     pub fn with_index(app_index: AppIndex) -> Self {
         Self {
             app_index,
+            catalog_generation: 0,
             query: String::new(),
             results: Vec::new(),
+            calculator: None,
+            power_confirm: None,
+            confirm: None,
+            parked_clipboard: None,
+            open_with_return: None,
+            file_mime: None,
             page: Page::Root,
             clipboard: None,
             windows: None,
@@ -900,6 +1328,21 @@ impl LauncherApp {
             reopen_after_close: false,
             window_config: AppFlags::default().window_config,
             theme_choice: crate::theme::Theme::System,
+            theme_dirs: Vec::new(),
+            view_memory: crate::view_memory::ViewMemory::default(),
+            fallbacks: Vec::new(),
+            provider_scope: None,
+            rhai_icons: std::collections::HashMap::new(),
+            script_icons: std::collections::HashMap::new(),
+            url_glyphs: std::collections::HashMap::new(),
+            remote_files: std::collections::HashMap::new(),
+            remote_requested: std::collections::BTreeSet::new(),
+            remote_pending: Vec::new(),
+            shortcuts_inhibited: false,
+            remote_icons: false,
+            favicon_service: compass_core::favicon::Service::default(),
+            masked: crate::icons::MaskedCache::default(),
+            known_files: std::collections::HashSet::new(),
             theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
@@ -908,9 +1351,32 @@ impl LauncherApp {
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
+            close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+            window_focused: false,
+            launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
+            capture_reported: false,
+            choosing_files: false,
+            power_asks: std::collections::BTreeMap::new(),
+            config_path: None,
+            browse_apps: compass_core::browse_apps::Options::default(),
+            glyph_path: None,
+            emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
+            emoji_skin_tone: None,
+            search_history_path: None,
+            search_history: compass_core::root_view::SearchHistory::default(),
+            history_offset: None,
+            clock: None,
+            clock_text: None,
+            clock_next_at: 0,
+            root_config: compass_core::root_items::RootConfig::default(),
+            favorites_len: 0,
+            parked_emoji: None,
+            parked_settings: None,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
+            builtin_icons: None,
+            file_glyphs: crate::icons::FileGlyphCache::default(),
             geometry: design::GEOMETRY,
             field_rule: false,
             tint: false,
@@ -920,6 +1386,19 @@ impl LauncherApp {
             last_summon_draw: None,
             started_at: None,
             awaiting: false,
+            parked_shortcuts: None,
+            parked_snippets: None,
+            parked_fonts: None,
+            parked_store: None,
+            resized_to: None,
+            material_asked: None,
+            following_script: None,
+            extension_subtitles: std::collections::HashMap::new(),
+            update: None,
+            app_runtime: None,
+            hud: crate::hud::HudState::new(
+                crate::surface::presentation() == crate::surface::Presentation::LayerShell,
+            ),
         }
     }
 
@@ -986,7 +1465,17 @@ impl LauncherApp {
     fn conceal(&mut self) -> Task<Message> {
         self.cancel_search();
         self.panel = None;
-        let closing = self.close_extension_view();
+        // Leaving Set Theme without choosing puts the theme back, as
+        // `beforePop` does.
+        if matches!(self.page, Page::Themes(_)) {
+            let _ = self.update(Message::ThemeCancel);
+        }
+        self.parked_fonts = None;
+        self.parked_store = None;
+        self.provider_scope = None;
+        self.open_with_return = None;
+        let dismissed = self.cancel_dmenu();
+        let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
         self.page = Page::Root;
         let hidden = self.hide_window();
@@ -996,6 +1485,7 @@ impl LauncherApp {
     /// Hides or exits after [`Self::conceal`] has reset the view.
     fn hide_window(&mut self) -> Task<Message> {
         self.reopen_after_close = false;
+        self.window_focused = false;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
         }
@@ -1017,7 +1507,7 @@ impl LauncherApp {
             // REPORTING HERE WOULD BE OPTIMISTIC, AND IT WAS. `window::close`
             // returns a Task; answering before it runs tells the engine
             // "hidden" while the window is still on screen. A VM run caught it:
-            // `vicinae toggle` reported success and the screenshot taken
+            // `compass toggle` reported success and the screenshot taken
             // straight afterwards still had the launcher in it.
             //
             // `self.window` is deliberately NOT cleared yet. Until the close
@@ -1048,7 +1538,14 @@ impl LauncherApp {
     pub fn selected_item(&self) -> Option<&AppItem> {
         match *self.results.get(self.selected)? {
             RootRow::App(index) => self.app_index.items().get(index),
-            RootRow::Command(_) | RootRow::Extension(_) => None,
+            RootRow::Command(_)
+            | RootRow::Extension(_)
+            | RootRow::Shortcut(_)
+            | RootRow::Script(_)
+            | RootRow::RhaiScript(_)
+            | RootRow::Fallback(_)
+            | RootRow::Calculator
+            | RootRow::Update => None,
         }
     }
 
@@ -1121,7 +1618,95 @@ impl LauncherApp {
                     .map_or("", |command| command.title.as_str());
                 line.push_str(&format!(" selected_title={title:?}"));
             }
+            Some(RootRow::Calculator) => {
+                let answer = self.calculator.as_ref().map_or("", |a| a.answer.as_str());
+                line.push_str(&format!(" selected_title={answer:?}"));
+            }
+            Some(RootRow::Update) => {
+                let title = self
+                    .update
+                    .as_ref()
+                    .map(release_check::title)
+                    .unwrap_or_default();
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::Shortcut(index)) => {
+                let title = self
+                    .app_index
+                    .shortcuts()
+                    .get(index)
+                    .map_or("", crate::shortcuts_page::display_name);
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::Script(index)) => {
+                let title = self
+                    .app_index
+                    .scripts()
+                    .get(index)
+                    .map_or("", |script| script.title.as_str());
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::RhaiScript(index)) => {
+                let title = self
+                    .app_index
+                    .rhai_scripts()
+                    .get(index)
+                    .map_or("", |script| script.title.as_str());
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::Fallback(fallback)) => {
+                let title = self.fallback_title(fallback).unwrap_or_default();
+                line.push_str(&format!(" selected_title={title:?} fallback"));
+            }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::Themes(page) = &self.page {
+            line.push_str(&format!(
+                " page=themes themes_query={:?} themes_rows={} themes_selected={} theme={}",
+                page.query,
+                page.rows.len(),
+                page.selected,
+                self.theme_choice.name()
+            ));
+        }
+        if let Page::Dmenu(page) = &self.page {
+            line.push_str(&format!(
+                " page=dmenu dmenu_token={} dmenu_query={:?} dmenu_shown={} dmenu_selected={}",
+                page.token,
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
+        }
+        if let Page::Programs(page) = &self.page {
+            line.push_str(&format!(
+                " page=programs programs_query={:?} programs_rows={} programs_selected={}",
+                page.query,
+                page.rows.len(),
+                page.selected
+            ));
+        }
+        if let Page::ScriptOutput(page) = &self.page {
+            line.push_str(&format!(
+                " page=script_output script_session={} script_finished={} script_exit={:?}",
+                page.session, page.state.finished, page.state.exit_code
+            ));
+        }
+        if let Page::Snippets(page) = &self.page {
+            line.push_str(&format!(
+                " page=snippets snippets_query={:?} snippets_shown={} snippets_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
+        }
+        if let Page::Shortcuts(page) = &self.page {
+            line.push_str(&format!(
+                " page=shortcuts shortcuts_query={:?} shortcuts_shown={} shortcuts_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
         }
         if let Page::Windows(page) = &self.page {
             line.push_str(&format!(
@@ -1131,10 +1716,27 @@ impl LauncherApp {
                 page.selected
             ));
         }
+        if let Page::Workspaces(page) = &self.page {
+            line.push_str(&format!(
+                " page=workspaces workspaces_query={:?} workspaces_shown={} workspaces_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
+        }
         if let Page::Clipboard(page) = &self.page {
             line.push_str(&format!(
                 " page=clipboard clipboard_query={:?} clipboard_rows={} clipboard_selected={}",
                 page.query,
+                page.rows.len(),
+                page.selected
+            ));
+        }
+        if let Page::Files(page) = &self.page {
+            line.push_str(&format!(
+                " page=files files_query={:?} files_heading={:?} files_rows={} files_selected={}",
+                page.query,
+                page.heading,
                 page.rows.len(),
                 page.selected
             ));
@@ -1182,7 +1784,7 @@ impl LauncherApp {
 
     /// The application title.
     pub fn title(&self) -> String {
-        "Vicinae".to_owned()
+        compass_core::tray::APP_NAME.to_owned()
     }
 
     /// The application theme.
@@ -1212,6 +1814,22 @@ impl LauncherApp {
         }
     }
 
+    /// How every Markdown view is drawn: 14 px, in the launcher's own
+    /// [`font`](Self::font).
+    ///
+    /// Iced's `Style::from(&Theme)` leaves `style.font` at `Font::default()`,
+    /// the generic sans-serif, which cosmic-text maps to a hard-coded
+    /// "Open Sans" rather than to the desktop's interface font. Where that
+    /// family is missing — a stock GNOME install — every Markdown span went
+    /// through cosmic-text's fallback chain instead, and its bold spans
+    /// landed on whichever family happened to have a static bold face. Code
+    /// keeps iced's monospace.
+    fn markdown_settings(&self) -> iced::widget::markdown::Settings {
+        let mut style = iced::widget::markdown::Style::from(&self.theme());
+        style.font = self.font();
+        iced::widget::markdown::Settings::with_text_size(14, style)
+    }
+
     /// The application theme.
     pub fn theme(&self) -> Theme {
         let p = self.palette();
@@ -1233,6 +1851,19 @@ impl LauncherApp {
                 danger: iced::Color::from_rgb8(0xe0, 0x1b, 0x24),
             },
         )
+    }
+
+    /// The surface's own style: what the runtime clears the window to before
+    /// the view is drawn. Transparent, so only the card and its shadow are on
+    /// screen. Left to the theme it is the palette's background (the card's
+    /// surface colour), and the whole window, shadow padding included,
+    /// paints as an opaque rectangle behind the card.
+    #[must_use]
+    pub fn style(&self, theme: &Theme) -> iced::theme::Style {
+        iced::theme::Style {
+            background_color: Color::TRANSPARENT,
+            text_color: theme.palette().text,
+        }
     }
 
     /// Every keyboard event, consumed by a widget or not.
@@ -1264,6 +1895,7 @@ impl LauncherApp {
         let mut streams = vec![
             iced::event::listen_with(keyboard_events),
             window::close_events().map(Message::Closed),
+            crate::surface::opened_events(),
         ];
         // Only while the first frame is still owed. Once it has been reported
         // this stream is dropped, so the per-frame message stops entirely
@@ -1283,6 +1915,14 @@ impl LauncherApp {
         if let Some(link) = &self.typography_link {
             streams.push(link.subscription().map(Message::TypographyChanged));
         }
+        // Each second while the clock shows; `clock_tick` redraws it only
+        // when its interval comes round.
+        if self.clock.is_some() && matches!(self.page, Page::Root) {
+            streams.push(
+                iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::ClockTick),
+            );
+        }
+        streams.extend(self.hud_subscription());
         iced::Subscription::batch(streams)
     }
 
@@ -1296,9 +1936,56 @@ impl LauncherApp {
         // one reply. Set before any branch so every path answers exactly once.
         self.awaiting = true;
 
+        if command == UiCommand::Describe {
+            let open = (self.is_visible() && !self.closing)
+                || (self.pending_window.is_some() && !self.pending_hide);
+            self.answer(if open {
+                UiOutcome::Shown
+            } else {
+                UiOutcome::Hidden
+            });
+            return Task::none();
+        }
+
+        if let UiCommand::Hud { text, icon } = &command {
+            let hud = crate::hud::Hud {
+                text: text.clone(),
+                icon: icon.clone(),
+            };
+            let (shown, task) = self.put_up_hud_for_engine(hud);
+            // The outcome names the launcher's state, which a HUD leaves alone.
+            let open = self.is_visible() && !self.closing;
+            self.answer(if shown && open {
+                UiOutcome::Shown
+            } else if shown {
+                UiOutcome::Hidden
+            } else {
+                UiOutcome::Failed("this session has no HUD".to_owned())
+            });
+            return task;
+        }
+
+        let opened = match &command {
+            UiCommand::Dmenu(token) => self.start_dmenu(*token),
+            UiCommand::Launch(token) => self.start_launch(*token),
+            UiCommand::Deeplink(url) => self.open_deeplink(url),
+            _ => Task::none(),
+        };
+        let shown = self.obey_visibility(&command);
+        Task::batch([opened, shown])
+    }
+
+    /// The visibility half of [`Self::obey`]: every command but `Hide`
+    /// shows the window, `Toggle` depending on where it is.
+    fn obey_visibility(&mut self, command: &UiCommand) -> Task<Message> {
         let show = match command {
-            UiCommand::Show => true,
+            UiCommand::Show
+            | UiCommand::Dmenu(_)
+            | UiCommand::Launch(_)
+            | UiCommand::Deeplink(_) => true,
             UiCommand::Hide => false,
+            // Answered in `obey` without touching the window.
+            UiCommand::Describe | UiCommand::Hud { .. } => return Task::none(),
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
                     || (self.pending_window.is_some() && !self.pending_hide)
@@ -1339,10 +2026,10 @@ impl LauncherApp {
     }
 
     fn open_window(&mut self) -> Task<Message> {
-        let (id, opened) = window::open(self.window_config.clone());
+        let (id, opened) = crate::surface::open(self.window_config.clone());
         self.pending_window = Some(id);
         self.pending_hide = false;
-        opened.map(Message::Opened)
+        opened
     }
 
     /// Update the application state.
@@ -1352,9 +2039,36 @@ impl LauncherApp {
     /// a line per keystroke is what makes a failure readable afterwards and is
     /// not what someone running the launcher wants in their terminal.
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if matches!(message, Message::ExtensionFilesChosen { .. }) {
+            self.choosing_files = false;
+        }
         let task = self.update_inner(message);
+        let recording = self.recording_shortcut();
+        if recording != self.shortcuts_inhibited {
+            self.shortcuts_inhibited = recording;
+            crate::shortcut_inhibit::set_recording(recording);
+        } else {
+            // Every update, not only while recording: the inhibitor's keyboard
+            // is sent each key the launcher is, and they would pile up unread.
+            crate::shortcut_inhibit::follow_focus();
+        }
+        let task = match self.report_shortcut_capture() {
+            Some(report) => Task::batch([task, report]),
+            None => task,
+        };
         tracing::debug!(target: "compass_ui::state", "{}", self.state_line());
-        task
+        if self.remote_pending.is_empty() {
+            return task;
+        }
+        let wanted = std::mem::take(&mut self.remote_pending);
+        Task::batch([task, crate::remote_image::fetch_tasks(wanted)])
+    }
+
+    /// Whether the compositor's shortcuts were last asked to go to the
+    /// launcher.
+    #[must_use]
+    pub fn shortcuts_inhibited(&self) -> bool {
+        self.shortcuts_inhibited
     }
 
     fn update_inner(&mut self, message: Message) -> Task<Message> {
@@ -1373,7 +2087,7 @@ impl LauncherApp {
             // It is logged as `first_draw_ms` rather than `first_frame_ms` so
             // nobody reads it as the thing the SLA names.
             //
-            // The elapsed time is from `AppFlags::started_at`, which `vicinae`
+            // The elapsed time is from `AppFlags::started_at`, which `compass`
             // takes on entry -- so it excludes dynamic linking, and a wgpu
             // binary's is not free either. The VM tier measures from spawn to
             // this line and catches both.
@@ -1434,7 +2148,7 @@ impl LauncherApp {
                 Task::none()
             }
             Message::ThemeCommit => {
-                // Persist is handled by vicinae theme set; in-ui commit clears preview backup.
+                // Persist is handled by compass theme set; in-ui commit clears preview backup.
                 self.theme_preview = None;
                 Task::none()
             }
@@ -1445,10 +2159,20 @@ impl LauncherApp {
                 Task::none()
             }
             Message::QueryChanged(query) => {
+                if let Some(task) = self.alias_space(&query) {
+                    return task;
+                }
                 self.panel = None;
                 self.query = query;
                 self.error = None;
+                // Typing starts history over from the newest search.
+                self.history_offset = None;
                 self.search_task()
+            }
+            Message::RootItemEdited(result) => self.root_item_edited(result),
+            Message::ClockTick => {
+                self.clock_tick();
+                Task::none()
             }
             Message::SearchCompleted { generation, result } => {
                 if generation != self.search_generation {
@@ -1457,11 +2181,51 @@ impl LauncherApp {
                 self.search_task = None;
                 match result {
                     Ok(keys) => {
+                        let shortcuts = self.app_index.shortcuts();
                         let positions: Option<Vec<_>> = keys
                             .iter()
+                            // A shortcut the engine knows and this window has
+                            // not heard of yet (or one just removed) is left
+                            // out rather than failing the list: the next
+                            // refresh brings the two back into step.
+                            .filter(|key| {
+                                (!key.starts_with("shortcuts:")
+                                    || self.app_index.shortcut_by_entrypoint(key).is_some())
+                                    && (!key.starts_with("scripts:")
+                                        || self.app_index.script_by_entrypoint(key).is_some())
+                                    && (!key.starts_with("rhai:")
+                                        || self.app_index.rhai_script_by_entrypoint(key).is_some())
+                                    // An extension installed since this
+                                    // window last scanned, likewise.
+                                    && (!key.starts_with('@')
+                                        || self.app_index.extension(key).is_some())
+                            })
                             .map(|key| {
                                 if let Some(command) = compass_core::commands::by_id(key) {
                                     return Some(RootRow::Command(command));
+                                }
+                                if let Some(script) = self.app_index.rhai_script_by_entrypoint(key)
+                                {
+                                    return self
+                                        .app_index
+                                        .rhai_scripts()
+                                        .iter()
+                                        .position(|known| known.id == script.id)
+                                        .map(RootRow::RhaiScript);
+                                }
+                                if let Some(script) = self.app_index.script_by_entrypoint(key) {
+                                    return self
+                                        .app_index
+                                        .scripts()
+                                        .iter()
+                                        .position(|known| known.id == script.id)
+                                        .map(RootRow::Script);
+                                }
+                                if let Some(shortcut) = self.app_index.shortcut_by_entrypoint(key) {
+                                    return shortcuts
+                                        .iter()
+                                        .position(|known| known.id == shortcut.id)
+                                        .map(RootRow::Shortcut);
                                 }
                                 if let Some(index) = self
                                     .app_index
@@ -1485,6 +2249,10 @@ impl LauncherApp {
                         if let Some(positions) = positions {
                             self.results = positions;
                             self.selected = 0;
+                            self.apply_calculator();
+                            self.apply_fallbacks();
+                            self.apply_favorites();
+                            self.apply_update();
                             self.warm_icons();
                         } else {
                             self.error = Some(
@@ -1502,6 +2270,19 @@ impl LauncherApp {
                 }
                 crate::scroll::reveal_root_selection()
             }
+            // A click activates, as `activate_on_single_click` (the Rust
+            // port's only mode, `settings_catalog`). The press took focus
+            // from the search field, so it is handed back for whatever the
+            // row opens, or for the next query if it opened nothing.
+            Message::ResultClicked(position) => {
+                if position >= self.results.len() {
+                    return Task::none();
+                }
+                self.panel = None;
+                self.selected = position;
+                let activated = self.update(Message::LaunchSelected);
+                Task::batch([activated, focus_search()])
+            }
             Message::MoveSelection(direction) => {
                 self.selected = next_selection(
                     self.results.len(),
@@ -1512,11 +2293,42 @@ impl LauncherApp {
                 crate::scroll::reveal_root_selection()
             }
             Message::LaunchSelected => {
+                if matches!(self.page, Page::Root) {
+                    self.record_search();
+                }
+                if let Some(RootRow::Update) = self.selected_row() {
+                    return self.open_release_notes();
+                }
+                if let Some(RootRow::Calculator) = self.selected_row()
+                    && let Some(answer) = &self.calculator
+                {
+                    // The C++ primary action: copy the answer, remembering it
+                    // in the history, then get out of the way so it can be
+                    // pasted.
+                    let copy = self.copy_calculation(
+                        answer.question.clone(),
+                        answer.answer.clone(),
+                        answer.answer.clone(),
+                    );
+                    return Task::batch([copy, self.show_hud(calculator::answer_copied())]);
+                }
                 if let Some(RootRow::Command(command)) = self.selected_row() {
                     return self.open_command(command);
                 }
                 if let Some(RootRow::Extension(index)) = self.selected_row() {
                     return self.run_extension_command(index);
+                }
+                if let Some(RootRow::Shortcut(index)) = self.selected_row() {
+                    return self.open_shortcut_at(index);
+                }
+                if let Some(RootRow::Script(index)) = self.selected_row() {
+                    return self.run_script_at(index);
+                }
+                if let Some(RootRow::RhaiScript(index)) = self.selected_row() {
+                    return self.open_rhai_script_at(index);
+                }
+                if let Some(RootRow::Fallback(fallback)) = self.selected_row() {
+                    return self.open_fallback(fallback);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -1575,6 +2387,37 @@ impl LauncherApp {
                     Task::none()
                 }
             }
+            // Taken by `iced_layershell` before `update`; see `crate::surface`.
+            Message::Layer(_) => Task::none(),
+            Message::Opened(id) if self.hud.owns(id) => Task::none(),
+            Message::Closed(id) if self.hud.closed(id) => Task::none(),
+            Message::HudTick(now) => self.hud_tick(now),
+            Message::CardMeasured(card) => self.card_measured(card),
+            Message::FallbacksQueryChanged(_) | Message::FallbackSelected(_) => {
+                self.fallbacks_message(message)
+            }
+            Message::ExtensionsQueryChanged(_)
+            | Message::IconsQueryChanged(_)
+            | Message::CompassRowSelected(_)
+            | Message::ExtensionUninstalled { .. }
+            | Message::StorageQueryChanged(_)
+            | Message::TokensQueryChanged(_)
+            | Message::StorageNamespacesLoaded(_)
+            | Message::StorageItemsLoaded { .. }
+            | Message::TokenSetsLoaded(_)
+            | Message::TokenSetRemoved(_) => self.compass_view_message(message),
+            Message::OnboardingContinue
+            | Message::OnboardingBack
+            | Message::OnboardingJump(_)
+            | Message::OnboardingTheme(_)
+            | Message::OnboardingOpen(_)
+            | Message::OnboardingLinkOpened(_) => self.onboarding_message(message),
+            Message::ActionDone(Some(hud), Ok(())) => self.show_hud(hud),
+            Message::ActionDone(None, Ok(())) => self.conceal(),
+            Message::ActionDone(_, Err(reason)) => {
+                self.say(reason);
+                Task::none()
+            }
             Message::Opened(id) => {
                 if self.window.is_some_and(|current| current != id)
                     || self.pending_window.is_some_and(|pending| pending != id)
@@ -1591,7 +2434,19 @@ impl LauncherApp {
                 self.answer(UiOutcome::Shown);
                 // Covers boot and every summon: `conceal` closes the window, so
                 // a summon opens a new one whose field starts unfocused.
-                Task::batch([focus_search(), self.search_task()])
+                Task::batch([
+                    focus_search(),
+                    self.search_task(),
+                    self.refresh_shortcuts_task(),
+                    self.refresh_scripts_task(),
+                    self.refresh_rhai_scripts_task(),
+                    self.refresh_subtitles_task(),
+                    self.refresh_update_task(),
+                    self.catalog_task(),
+                    self.exchange_rates_task(),
+                    self.window_capabilities_task(),
+                    self.apply_dmenu_size(),
+                ])
             }
             Message::Closed(id) => {
                 // Only clear the state if *this* window is the one that went;
@@ -1600,6 +2455,9 @@ impl LauncherApp {
                 if self.window == Some(id) {
                     self.cancel_search();
                     self.window = None;
+                    self.resized_to = None;
+                    // The next window is a new surface, with no blur yet.
+                    self.material_asked = None;
                     self.closing = false;
                     if std::mem::take(&mut self.reopen_after_close) {
                         return self.open_window();
@@ -1615,6 +2473,48 @@ impl LauncherApp {
                 if self.panel.is_some() {
                     self.panel = None;
                     return focus_search();
+                } else if let Some(task) = self.open_shortcut_panel() {
+                    return task;
+                } else if let Some(task) = self.open_snippet_panel() {
+                    return task;
+                } else if let Some(task) = self.open_script_panel() {
+                    return task;
+                } else if let Some(task) = self.open_program_panel() {
+                    return task;
+                } else if let Some(task) = self.open_dmenu_panel() {
+                    return task;
+                } else if let Some(task) = self.open_font_panel() {
+                    return task;
+                } else if let Some(task) = self.open_store_panel() {
+                    return task;
+                } else if let Some(task) = self.open_media_panel() {
+                    return task;
+                } else if let Some(task) = self.open_theme_panel() {
+                    return task;
+                } else if let Some(task) = self.open_grants_panel() {
+                    return task;
+                } else if let Some(task) = self.open_tray_panel() {
+                    return task;
+                } else if let Some(task) = self.open_apps_panel() {
+                    return task;
+                } else if let Some(task) = self.open_emoji_panel() {
+                    return task;
+                } else if let Some(task) = self.open_clipboard_panel() {
+                    return task;
+                } else if let Some(task) = self.open_windows_panel() {
+                    return task;
+                } else if let Some(task) = self.open_calculator_panel() {
+                    return task;
+                } else if let Some(task) = self.open_fallbacks_panel() {
+                    return task;
+                } else if let Some(task) = self.open_compass_view_panel() {
+                    return task;
+                } else if let Some(task) = self.open_fallback_row_panel() {
+                    return task;
+                } else if let Some(task) = self.open_workspaces_panel() {
+                    return task;
+                } else if let Some(task) = self.open_files_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1622,11 +2522,22 @@ impl LauncherApp {
                         return iced::widget::operation::focus(PANEL_INPUT);
                     }
                     return Task::none();
+                } else if let Some(task) = self.open_update_panel() {
+                    return task;
+                } else if let Some(task) = self.open_root_panel() {
+                    return task;
                 } else if let Some(item) = self.selected_item() {
                     // Only over a selected row. A panel of actions for nothing
                     // would be a panel whose every action fails.
-                    self.panel = Some(PanelState::new(actions_for_app(item)));
-                    return iced::widget::operation::focus(PANEL_INPUT);
+                    let (sections, key, desktop_id) = (
+                        actions_for_app(item),
+                        item.key().to_owned(),
+                        item.desktop_id().to_owned(),
+                    );
+                    self.panel = Some(PanelState::new(sections));
+                    self.app_runtime = None;
+                    let running = self.app_runtime_task(key, desktop_id);
+                    return Task::batch([iced::widget::operation::focus(PANEL_INPUT), running]);
                 }
                 Task::none()
             }
@@ -1665,6 +2576,37 @@ impl LauncherApp {
                 self.update(Message::PanelActivate)
             }
             Message::PanelActivate => {
+                if let Some(id) = self
+                    .panel
+                    .as_ref()
+                    .and_then(PanelState::selected_action)
+                    .and_then(|action| action.id.clone())
+                    && let Some(task) = self
+                        .shortcut_panel_action(&id)
+                        .or_else(|| self.snippet_panel_action(&id))
+                        .or_else(|| self.script_panel_action(&id))
+                        .or_else(|| self.program_panel_action(&id))
+                        .or_else(|| self.dmenu_panel_action(&id))
+                        .or_else(|| self.font_panel_action(&id))
+                        .or_else(|| self.store_panel_action(&id))
+                        .or_else(|| self.media_panel_action(&id))
+                        .or_else(|| self.theme_panel_action(&id))
+                        .or_else(|| self.grants_panel_action(&id))
+                        .or_else(|| self.tray_panel_action(&id))
+                        .or_else(|| self.apps_panel_action(&id))
+                        .or_else(|| self.emoji_panel_action(&id))
+                        .or_else(|| self.clipboard_panel_action(&id))
+                        .or_else(|| self.update_panel_action(&id))
+                        .or_else(|| self.root_panel_action(&id))
+                        .or_else(|| self.windows_panel_action(&id))
+                        .or_else(|| self.calculator_panel_action(&id))
+                        .or_else(|| self.workspaces_panel_action(&id))
+                        .or_else(|| self.file_panel_action(&id))
+                        .or_else(|| self.app_runtime_action(&id))
+                        .or_else(|| self.compass_panel_action(&id))
+                {
+                    return task;
+                }
                 let Some(panel) = self.panel.as_ref() else {
                     return Task::none();
                 };
@@ -1683,6 +2625,7 @@ impl LauncherApp {
                     self.panel = None;
                     return Task::batch([task, focus_search()]);
                 }
+
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
@@ -1736,8 +2679,17 @@ impl LauncherApp {
                 if let Page::Clipboard(page) = &mut self.page {
                     page.apply(generation, result);
                 }
-                crate::scroll::reveal_root_selection()
+                self.warm_clipboard_icons();
+                Task::batch([
+                    crate::scroll::reveal_root_selection(),
+                    self.clipboard_detail_task(),
+                ])
             }
+            Message::ClipboardKindChanged(_)
+            | Message::ClipboardDetailLoaded { .. }
+            | Message::ClipboardDetailContent { .. }
+            | Message::ClipboardKeywordsLoaded(_)
+            | Message::ClipboardMonitoringLoaded(_) => self.clipboard_message(message),
             Message::ClipboardSelected(index) => {
                 if let Page::Clipboard(page) = &mut self.page
                     && index < page.rows.len()
@@ -1755,7 +2707,37 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::PreferenceTextEdited(index, action) => {
+                if let Page::Preferences(page) = &mut self.page {
+                    page.edit_text_area(index, action);
+                }
+                Task::none()
+            }
             Message::PreferencesSubmit => {
+                if let Some(task) = self.submit_emoji_keywords() {
+                    return task;
+                }
+                if let Some(task) = self.submit_clipboard_keywords() {
+                    return task;
+                }
+                if let Some(task) = self.submit_alias_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_shortcut_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_snippet_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_script_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_create_extension() {
+                    return task;
+                }
+                if let Some(task) = self.submit_media_form() {
+                    return task;
+                }
                 let Page::Preferences(page) = &mut self.page else {
                     return Task::none();
                 };
@@ -1792,7 +2774,15 @@ impl LauncherApp {
                     return Task::none();
                 }
                 let id = page.command_id.clone();
+                let only_saved =
+                    page.purpose == crate::preferences_page::Purpose::CommandPreferences;
                 self.page = Page::Root;
+                if only_saved {
+                    if let Some(settings) = self.parked_settings.take() {
+                        self.page = Page::Settings(settings);
+                    }
+                    return focus_search();
+                }
                 match self.app_index.extensions().iter().position(|c| c.id == id) {
                     Some(index) => self.run_extension_command(index),
                     None => Task::none(),
@@ -1826,6 +2816,8 @@ impl LauncherApp {
                         .app_index
                         .extension(&id)
                         .map(|command| command.extension_dir.join("assets"));
+                    page.leaves_on_end = compass_core::rhai_scripts::script_id(&id).is_some();
+                    page.icon_lookup = Some(self.icon_lookup.clone());
                     let surface = self.palette().surface.to_iced();
                     page.prefers_dark =
                         0.299 * surface.r + 0.587 * surface.g + 0.114 * surface.b < 0.5;
@@ -1847,14 +2839,23 @@ impl LauncherApp {
                 match result {
                     Ok(state) => {
                         let ended = state.ended;
+                        // A script that popped itself: back to the root
+                        // search, as leaving any view does.
+                        if ended && state.problem.is_none() && page.leaves_on_end {
+                            let close = self.close_extension_view();
+                            self.page = Page::Root;
+                            return Task::batch([close, focus_search(), self.search_task()]);
+                        }
                         page.apply(state);
                         let after = page.version;
+                        let images = crate::remote_image::fetch_tasks(page.wanted_images());
                         if ended {
-                            Task::none()
+                            images
                         } else {
                             Task::batch([
                                 self.extension_poll(session, after),
                                 crate::scroll::reveal_root_selection(),
+                                images,
                             ])
                         }
                     }
@@ -1909,10 +2910,77 @@ impl LauncherApp {
                     None => Task::none(),
                 }
             }
-            Message::ExtensionLinkClicked(url) => {
-                // No URL opener in the launcher yet; the link is said, not lost.
-                tracing::info!(%url, "a link in an extension's view was clicked");
+            Message::ExtensionTextAreaEdited(name, action) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let session = page.session;
+                match page.edit_text_area(&name, action) {
+                    Some((handler, args)) => self.extension_event(session, handler.0, args),
+                    None => Task::none(),
+                }
+            }
+            Message::ExtensionImageFetched { url, result } => {
+                if self.remote_requested.contains(&url) {
+                    self.root_icon_arrived(&url, &result);
+                }
+                if self.store_image_arrived(&url, &result) {
+                    return Task::none();
+                }
+                if let Page::Extension(page) = &mut self.page {
+                    page.image_arrived(url, result);
+                }
                 Task::none()
+            }
+            Message::ExtensionDateEdited(name, typed) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let session = page.session;
+                match page.edit_date(&name, typed) {
+                    Some((handler, args)) => self.extension_event(session, handler.0, args),
+                    None => Task::none(),
+                }
+            }
+            Message::ExtensionChooseFiles { name, choice } => {
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                self.choosing_files = true;
+                Task::perform(
+                    async move {
+                        let result = backend.choose_files(choice).await;
+                        (name, result)
+                    },
+                    |(name, result)| Message::ExtensionFilesChosen { name, result },
+                )
+            }
+            Message::ExtensionFilesChosen { name, result } => match result {
+                Ok(paths) if paths.is_empty() => Task::none(),
+                Ok(paths) => self.update(Message::ExtensionFieldEdited(
+                    name,
+                    serde_json::Value::from(paths),
+                )),
+                Err(reason) => {
+                    if let Page::Extension(page) = &mut self.page {
+                        page.notice = Some(reason);
+                    }
+                    Task::none()
+                }
+            },
+            Message::ExtensionLinkClicked(url) => {
+                // Web links open in the browser, through the engine; anything
+                // else is said, not lost.
+                match self.backend.clone() {
+                    Some(backend) if crate::remote_image::is_remote(&url) => Task::perform(
+                        async move { backend.open_url(url).await },
+                        Message::StoreUrlOpened,
+                    ),
+                    _ => {
+                        tracing::info!(%url, "a link in a view was clicked");
+                        Task::none()
+                    }
+                }
             }
             Message::ExtensionEventSent(result) => {
                 if let (Err(reason), Page::Extension(page)) = (result, &mut self.page) {
@@ -1921,6 +2989,7 @@ impl LauncherApp {
                 Task::none()
             }
             Message::ClipboardPasted(Ok(())) => self.conceal(),
+            Message::EmojiPasted { text, result } => self.emoji_pasted(text, result),
             Message::ClipboardEntryChanged(Ok(())) => self.clipboard_search_task(),
             Message::ClipboardEntryChanged(Err(reason)) => {
                 if let Page::Clipboard(page) = &mut self.page {
@@ -1941,7 +3010,8 @@ impl LauncherApp {
                         // Copy, then get out of the way: the user copied it
                         // to paste it somewhere else.
                         let copy = iced::clipboard::write(text);
-                        Task::batch([copy, self.conceal()])
+                        let hud = crate::hud::Hud::new("Selection copied to clipboard");
+                        Task::batch([copy, self.show_hud(hud)])
                     }
                     Err(reason) => {
                         page.notice = Some(reason);
@@ -1949,10 +3019,203 @@ impl LauncherApp {
                     }
                 }
             }
+            Message::ShortcutsLoaded(_)
+            | Message::ShortcutSaved(_)
+            | Message::ShortcutRemoved(_)
+            | Message::ShortcutOpened(_)
+            | Message::ShortcutExpanded(_)
+            | Message::ShortcutsQueryChanged(_)
+            | Message::ShortcutSelected(_)
+            | Message::ShortcutDetailLoaded(_) => self.shortcut_message(message),
+            Message::SnippetsLoaded(_)
+            | Message::SnippetSaved(_)
+            | Message::SnippetExpanded(_)
+            | Message::SnippetPasted(_)
+            | Message::SnippetsQueryChanged(_)
+            | Message::SnippetSelected(_)
+            | Message::SnippetDetailLoaded(_) => self.snippet_message(message),
+            Message::ScriptsLoaded(_)
+            | Message::ScriptIconsLoaded(_)
+            | Message::ScriptStarted { .. }
+            | Message::ScriptPolled { .. } => self.script_message(message),
+            Message::RhaiScriptsLoaded(_) => self.rhai_message(message),
+            Message::UpdateStatusLoaded(_) | Message::UpdateSkipped(..) => {
+                self.release_check_message(message)
+            }
+            Message::LaunchFetched(_)
+            | Message::ExtensionSubtitlesLoaded(_)
+            | Message::PreferencesOpened { .. } => self.launch_message(message),
+            Message::AppsQueryChanged(_)
+            | Message::AppsSelected(_)
+            | Message::DefaultAppsLoaded(_)
+            | Message::DefaultAppSet(_)
+            | Message::BrowseAppRuntime { .. } => self.apps_message(message),
+            Message::CatalogGeneration(Ok(generation)) => self.catalog_moved(generation),
+            Message::CatalogGeneration(Err(error)) => {
+                tracing::debug!(%error, "no catalog generation");
+                Task::none()
+            }
+            Message::AppRuntimeLoaded { .. } | Message::AppQuit(_) => self.runtime_message(message),
+            Message::WindowFocusChanged(focused) => self.window_focus_changed(focused),
+            Message::ShortcutCaptureSet(result) => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "the engine did not suspend the global shortcuts");
+                }
+                Task::none()
+            }
+            Message::ShortcutProbed(trigger, result) => self.shortcut_probed(&trigger, result),
+            Message::WindowCapabilities(_)
+            | Message::WorkspacesQueryChanged(_)
+            | Message::WorkspacesLoaded(_)
+            | Message::WorkspaceSelected(_)
+            | Message::WorkspaceFocused(_)
+            | Message::WindowToggled(_) => self.workspaces_message(message),
+            Message::FileActionsLoaded { .. } | Message::FileActionDone(_) => {
+                self.file_actions_message(message)
+            }
+            Message::OpenWithTarget(_)
+            | Message::OpenersLoaded(_)
+            | Message::OpenWithQueryChanged(_)
+            | Message::OpenWithSelected(_)
+            | Message::OpenedWith(_) => self.open_with_message(message),
+            Message::CalculatorQueryChanged(_)
+            | Message::CalculatorLoaded { .. }
+            | Message::CalculatorSelected(_)
+            | Message::CalculatorEdited(_)
+            | Message::ExchangeRatesLoaded(_)
+            | Message::ExchangeRatesRefreshed(_) => self.calculator_message(message),
+            Message::GrantsLoaded(_)
+            | Message::GrantsQueryChanged(_)
+            | Message::GrantSelected(_)
+            | Message::GrantRevoked(_) => self.grants_message(message),
+            Message::TrayItemsLoaded(_)
+            | Message::TrayMenuLoaded { .. }
+            | Message::TrayQueryChanged(_)
+            | Message::TraySelected(_)
+            | Message::TrayActed(_) => self.tray_message(message),
+            Message::NowPlayingLoaded(_)
+            | Message::NowPlayingQueryChanged(_)
+            | Message::NowPlayingSelected(_)
+            | Message::NowPlayingActed(_) => self.media_message(message),
+            Message::ProgramsLoaded(_)
+            | Message::ProgramsQueryChanged(_)
+            | Message::ProgramSelected(_)
+            | Message::ProgramRan(_) => self.program_message(message),
+            Message::DmenuLoaded { .. }
+            | Message::DmenuQueryChanged(_)
+            | Message::DmenuSelected(_)
+            | Message::DmenuChosen(_) => self.dmenu_message(message),
+            Message::ThemesQueryChanged(_) | Message::ThemeSelected(_) | Message::ThemeSaved(_) => {
+                self.theme_message(message)
+            }
+            Message::ExtensionCreated { .. } | Message::CreatedFolderOpened(_) => {
+                self.developer_message(message)
+            }
+            Message::FontsLoaded(_)
+            | Message::FontsQueryChanged(_)
+            | Message::FontsCategoryChanged(_)
+            | Message::FontSet(_)
+            | Message::FontSelected(_)
+            | Message::FontSpecimenLoaded { .. } => self.font_message(message),
+            Message::StoreLoaded { .. }
+            | Message::StoreQueryChanged(_)
+            | Message::StoreSearchDue(_)
+            | Message::StoreSelected(_)
+            | Message::StoreDetailLoaded(_)
+            | Message::StoreInstalled(_)
+            | Message::StoreUninstalled { .. }
+            | Message::StoreUrlOpened(_)
+            | Message::StoreConfirmAnswered(_) => self.store_message(message),
             Message::Back => {
+                // Escape on a dmenu list dismisses it and the launcher, as the
+                // C++'s instant dismiss does.
+                if matches!(self.page, Page::Dmenu(_)) {
+                    return self.conceal();
+                }
+                if let Some(task) = self.back_from_emoji_keywords() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_clipboard_keywords() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_open_with() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_alias_form() {
+                    return task;
+                }
+                if let Some(task) = self.back_to_settings() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_shortcut_form() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_snippet_form() {
+                    return task;
+                }
                 let closing = self.close_extension_view();
                 self.page = Page::Root;
                 Task::batch([closing, focus_search()])
+            }
+            Message::BuiltinCommandDone(result) => {
+                if let Err(reason) = result {
+                    self.error = Some(reason);
+                }
+                Task::none()
+            }
+            Message::FilesQueryChanged(query) => {
+                if let Page::Files(page) = &mut self.page {
+                    page.set_query(query);
+                }
+                self.files_query_task()
+            }
+            Message::FilesDebounced(generation) => self.files_search_task(generation),
+            Message::FilesCategoryChanged(key) => {
+                let Page::Files(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let generation = page.set_category(&key);
+                self.view_memory
+                    .set(crate::view_memory::FILE_CATEGORY, &key);
+                Task::batch([self.files_search_task(generation), focus_search()])
+            }
+            Message::FilesLoaded { generation, result } => {
+                if let Page::Files(page) = &mut self.page {
+                    page.apply(generation, result);
+                }
+                self.warm_file_icons();
+                crate::scroll::reveal_root_selection()
+            }
+            Message::FilesSelected(position) => {
+                if let Page::Files(page) = &mut self.page
+                    && position < page.rows.len()
+                {
+                    page.selected = position;
+                    page.refresh_preview();
+                }
+                self.open_selected_file(false)
+            }
+            Message::FileOpened(Ok(())) => self.conceal(),
+            Message::FileOpened(Err(reason)) => {
+                if let Page::Files(page) = &mut self.page {
+                    page.notice = Some(reason);
+                }
+                Task::none()
+            }
+            Message::EmojiQueryChanged(query) => {
+                if let Page::Emoji(page) = &mut self.page {
+                    page.query = query;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::EmojiSelected(position) => {
+                if let Page::Emoji(page) = &mut self.page
+                    && position < page.shown.len()
+                {
+                    page.selected = position;
+                }
+                self.copy_selected_emoji()
             }
             Message::WindowsQueryChanged(query) => {
                 if let Page::Windows(page) = &mut self.page {
@@ -1966,6 +3229,7 @@ impl LauncherApp {
                 if let Page::Windows(page) = &mut self.page {
                     page.apply(result, std::process::id());
                 }
+                self.warm_window_icons();
                 crate::scroll::reveal_root_selection()
             }
             Message::WindowSelected(position) => {
@@ -1992,6 +3256,20 @@ impl LauncherApp {
                 }
                 self.list_windows_task()
             }
+            Message::Settings(message) => self.settings_message(message),
+            // The settings' shortcut recorder takes every key too.
+            Message::Keyboard(event) if matches!(&self.page, Page::Settings(page) if page.recorder.is_some()) => {
+                self.settings_recorder_event(&event)
+            }
+            // The shortcut recorder takes every key, releases included.
+            Message::Keyboard(event)
+                if self
+                    .panel
+                    .as_ref()
+                    .is_some_and(|panel| panel.recorder.is_some()) =>
+            {
+                self.recorder_event(&event)
+            }
             Message::Keyboard(iced::keyboard::Event::KeyPressed {
                 ref key, modifiers, ..
             }) => {
@@ -2002,8 +3280,45 @@ impl LauncherApp {
                 // one key undoes opening the wrong command.
                 let panel_key = self.panel.is_some()
                     || (modifiers.control() && key.as_ref() == Key::Character("b"));
-                if let Page::Preferences(_) = &self.page {
+                if self.confirm.is_some() {
                     return match key.as_ref() {
+                        Key::Named(Named::Enter) => self.run_confirmed(),
+                        Key::Named(Named::Escape) => {
+                            self.confirm = None;
+                            focus_search()
+                        }
+                        _ => Task::none(),
+                    };
+                }
+                if let Some(power) = self.power_confirm {
+                    return match key.as_ref() {
+                        Key::Named(Named::Enter) => self.run_power_command(power),
+                        Key::Named(Named::Escape) => {
+                            self.power_confirm = None;
+                            Task::none()
+                        }
+                        _ => Task::none(),
+                    };
+                }
+                if matches!(self.page, Page::Onboarding(_)) {
+                    return self.onboarding_key(key);
+                }
+                if !panel_key && matches!(self.page, Page::StoreIntro(_)) {
+                    return match key.as_ref() {
+                        Key::Named(Named::Enter) => self.continue_to_store(),
+                        Key::Named(Named::Escape) => self.update(Message::Back),
+                        _ => Task::none(),
+                    };
+                }
+                if let Page::Preferences(page) = &self.page {
+                    return match key.as_ref() {
+                        // A text area's Enter is a newline; the form submits
+                        // with Ctrl+Enter.
+                        Key::Named(Named::Enter)
+                            if page.has_text_area() && !modifiers.control() =>
+                        {
+                            Task::none()
+                        }
                         Key::Named(Named::Enter) => self.update(Message::PreferencesSubmit),
                         Key::Named(Named::Escape) => self.update(Message::Back),
                         Key::Named(Named::Tab) if modifiers.shift() => {
@@ -2018,9 +3333,14 @@ impl LauncherApp {
                 if let Page::Extension(page) = &mut self.page
                     && page.alert.is_some()
                 {
-                    let confirmed = match key.as_ref() {
-                        Key::Named(Named::Enter) => true,
-                        Key::Named(Named::Escape) => false,
+                    let remembers = page
+                        .alert
+                        .as_ref()
+                        .is_some_and(|alert| alert.remember_text.is_some());
+                    let answer = match key.as_ref() {
+                        Key::Named(Named::Enter) if remembers && modifiers.control() => None,
+                        Key::Named(Named::Enter) => Some(true),
+                        Key::Named(Named::Escape) => Some(false),
                         _ => return Task::none(),
                     };
                     page.alert = None;
@@ -2029,7 +3349,14 @@ impl LauncherApp {
                         return Task::none();
                     };
                     return Task::perform(
-                        async move { backend.extension_alert_answer(session, confirmed).await },
+                        async move {
+                            match answer {
+                                Some(confirmed) => {
+                                    backend.extension_alert_answer(session, confirmed).await
+                                }
+                                None => backend.extension_alert_remember(session).await,
+                            }
+                        },
                         Message::ExtensionEventSent,
                     );
                 }
@@ -2057,9 +3384,32 @@ impl LauncherApp {
                             return self.extension_pop(session);
                         }
                         Key::Named(Named::Escape) => return self.update(Message::Back),
+                        // A text area's Enter is a newline; its form submits
+                        // with Ctrl+Enter.
+                        Key::Named(Named::Enter)
+                            if page.has_text_area() && !modifiers.control() =>
+                        {
+                            return Task::none();
+                        }
                         Key::Named(Named::Enter) => return self.activate_extension_action(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                     };
+                    // A grid moves by cell and by row, as `SectionGridModel`.
+                    if page.grid_columns.is_some() {
+                        use crate::fonts_page::GridMove;
+                        let step = match (key.as_ref(), direction) {
+                            (Key::Named(Named::ArrowLeft), _) => Some(GridMove::Left),
+                            (Key::Named(Named::ArrowRight), _) => Some(GridMove::Right),
+                            (_, Some(Direction::Up)) => Some(GridMove::Up),
+                            (_, Some(Direction::Down)) => Some(GridMove::Down),
+                            _ => None,
+                        };
+                        if let Some(step) = step {
+                            page.selected = page.grid_step(step, self.wrap_navigation);
+                            return crate::scroll::reveal_root_selection();
+                        }
+                        return Task::none();
+                    }
                     if let Some(direction) = direction {
                         page.selected = next_selection(
                             page.shown.len(),
@@ -2067,6 +3417,104 @@ impl LauncherApp {
                             direction,
                             self.wrap_navigation,
                         );
+                        return crate::scroll::reveal_root_selection();
+                    }
+                    return Task::none();
+                }
+                if !panel_key && matches!(self.page, Page::Emoji(_)) {
+                    return self.emoji_page_key(key, modifiers);
+                }
+                if !panel_key && let Some(task) = self.shortcut_chord(key, modifiers) {
+                    return task;
+                }
+                if !panel_key && matches!(self.page, Page::Shortcuts(_)) {
+                    return self.shortcuts_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Snippets(_)) {
+                    return self.snippets_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::ScriptOutput(_)) {
+                    return self.script_output_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Programs(_)) {
+                    return self.programs_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Dmenu(_)) {
+                    return self.dmenu_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Grants(_)) {
+                    return self.grants_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Tray(_)) {
+                    return self.tray_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Apps(_)) {
+                    return self.apps_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Calculator(_)) {
+                    return self.calculator_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Fallbacks(_)) {
+                    return self.fallbacks_page_key(key, modifiers);
+                }
+                if !panel_key
+                    && matches!(
+                        self.page,
+                        Page::Extensions(_) | Page::Icons(_) | Page::Storage(_) | Page::Tokens(_)
+                    )
+                {
+                    return self.compass_view_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Workspaces(_)) {
+                    return self.workspaces_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::OpenWith(_)) {
+                    return self.open_with_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::NowPlaying(_)) {
+                    return self.now_playing_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Themes(_)) {
+                    return self.themes_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Settings(_)) {
+                    return self.settings_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Created(_)) {
+                    return self.created_page_key(key);
+                }
+                if !panel_key && matches!(self.page, Page::Fonts(_)) {
+                    return self.fonts_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::FontPreview(_)) {
+                    return self.font_preview_key(key);
+                }
+                if !panel_key && matches!(self.page, Page::Store(_)) {
+                    return self.store_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::StoreDetail(_)) {
+                    return self.store_detail_key(key);
+                }
+                if let Page::Files(page) = &mut self.page {
+                    let direction = match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) => return self.update(Message::Back),
+                        // Ctrl+Enter is `Keyboard::Shortcut::submit()`, which
+                        // the C++ binds to "Show in file browser".
+                        Key::Named(Named::Enter) => {
+                            return self.open_selected_file(modifiers.control());
+                        }
+                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                    };
+                    if let Some(direction) = direction {
+                        page.selected = next_selection(
+                            page.rows.len(),
+                            page.selected,
+                            direction,
+                            self.wrap_navigation,
+                        );
+                        page.refresh_preview();
                         return crate::scroll::reveal_root_selection();
                     }
                     return Task::none();
@@ -2093,7 +3541,7 @@ impl LauncherApp {
                     }
                     return Task::none();
                 }
-                if let Page::Clipboard(page) = &mut self.page {
+                if !panel_key && matches!(self.page, Page::Clipboard(_)) {
                     // The C++ defaults: `action.pin` is Ctrl+Shift+P and
                     // `action.remove` is Ctrl+X.
                     if let Key::Character(c) = key.as_ref()
@@ -2109,6 +3557,12 @@ impl LauncherApp {
                             return self.change_selected_clipboard_entry(ClipboardChange::Remove);
                         }
                     }
+                    if let Some(task) = self.clipboard_chord(key, modifiers) {
+                        return task;
+                    }
+                    let Page::Clipboard(page) = &mut self.page else {
+                        return Task::none();
+                    };
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
@@ -2123,7 +3577,10 @@ impl LauncherApp {
                             direction,
                             self.wrap_navigation,
                         );
-                        return crate::scroll::reveal_root_selection();
+                        return Task::batch([
+                            crate::scroll::reveal_root_selection(),
+                            self.clipboard_detail_task(),
+                        ]);
                     }
                     return Task::none();
                 }
@@ -2137,6 +3594,15 @@ impl LauncherApp {
                 // `#ifdef`, for the same reason.
                 if modifiers.control() && key.as_ref() == Key::Character("b") {
                     return self.update(Message::TogglePanel);
+                }
+
+                // Ctrl+, opens the settings (`Keybind::OpenSettings`).
+                if modifiers.control()
+                    && self.panel.is_none()
+                    && matches!(self.page, Page::Root)
+                    && key.as_ref() == Key::Character(",")
+                {
+                    return self.open_settings(None);
                 }
 
                 // While the panel is open it takes the keys the list would
@@ -2201,6 +3667,15 @@ impl LauncherApp {
                     return self.update(Message::CloseWindow(window_id));
                 }
 
+                // Up at the top of the list reaches back through past searches.
+                let up = match key.as_ref() {
+                    Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                    _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                };
+                if let Some(task) = self.history_up(up) {
+                    return task;
+                }
+
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
                         return self.update(Message::MoveSelection(Direction::Down));
@@ -2225,6 +3700,191 @@ impl LauncherApp {
         }
     }
 
+    /// The search field as the page on screen has it: its placeholder, its
+    /// text, and the message typing sends (none where it is read-only).
+    fn search_field(&self) -> (&str, &str, Option<OnInput>) {
+        match &self.page {
+            Page::Root => (
+                self.provider_scope
+                    .as_ref()
+                    .map_or("Search…", |scope| scope.placeholder.as_str()),
+                &self.query,
+                self.panel
+                    .is_none()
+                    .then_some(Message::QueryChanged as OnInput),
+            ),
+            Page::Clipboard(page) => (
+                "Search clipboard history…",
+                &page.query,
+                Some(Message::ClipboardQueryChanged as OnInput),
+            ),
+            Page::Emoji(page) => (
+                "Search emojis and symbols…",
+                &page.query,
+                Some(Message::EmojiQueryChanged as OnInput),
+            ),
+            Page::Windows(page) => (
+                "Search windows…",
+                &page.query,
+                Some(Message::WindowsQueryChanged as OnInput),
+            ),
+            Page::Workspaces(page) => (
+                crate::workspaces_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::WorkspacesQueryChanged as OnInput),
+            ),
+            Page::OpenWith(page) => (
+                crate::open_with_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::OpenWithQueryChanged as OnInput),
+            ),
+            Page::Files(page) => (
+                "Search for files…",
+                &page.query,
+                Some(Message::FilesQueryChanged as OnInput),
+            ),
+            Page::Shortcuts(page) => (
+                "Search shortcuts...",
+                &page.query,
+                Some(Message::ShortcutsQueryChanged as OnInput),
+            ),
+            Page::Snippets(page) => (
+                "Search for snippets...",
+                &page.query,
+                Some(Message::SnippetsQueryChanged as OnInput),
+            ),
+            Page::ScriptOutput(page) => ("", &page.title, None),
+            Page::Onboarding(_) | Page::StoreIntro(_) => ("", "", None),
+            Page::Fallbacks(page) => (
+                crate::fallbacks_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::FallbacksQueryChanged as OnInput),
+            ),
+            Page::Extensions(page) => (
+                crate::compass_pages::EXTENSIONS_PLACEHOLDER,
+                &page.query,
+                Some(Message::ExtensionsQueryChanged as OnInput),
+            ),
+            Page::Icons(page) => (
+                crate::compass_pages::ICONS_PLACEHOLDER,
+                &page.query,
+                Some(Message::IconsQueryChanged as OnInput),
+            ),
+            Page::Storage(page) => (
+                if page.browsing.is_some() {
+                    crate::compass_pages::ITEMS_PLACEHOLDER
+                } else {
+                    crate::compass_pages::NAMESPACES_PLACEHOLDER
+                },
+                &page.query,
+                Some(Message::StorageQueryChanged as OnInput),
+            ),
+            Page::Tokens(page) => (
+                crate::compass_pages::TOKENS_PLACEHOLDER,
+                &page.query,
+                Some(Message::TokensQueryChanged as OnInput),
+            ),
+            Page::Programs(page) => (
+                "Search for a program to execute...",
+                &page.query,
+                Some(Message::ProgramsQueryChanged as OnInput),
+            ),
+            Page::Dmenu(page) => (
+                page.placeholder(),
+                &page.query,
+                Some(Message::DmenuQueryChanged as OnInput),
+            ),
+            Page::Calculator(page) => (
+                crate::calculator_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::CalculatorQueryChanged as OnInput),
+            ),
+            Page::Grants(page) => (
+                crate::grants_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::GrantsQueryChanged as OnInput),
+            ),
+            Page::Tray(page) => (
+                if page.menu_key().is_some() {
+                    crate::tray_page::MENU_PLACEHOLDER
+                } else {
+                    crate::tray_page::PLACEHOLDER
+                },
+                &page.query,
+                Some(Message::TrayQueryChanged as OnInput),
+            ),
+            Page::Apps(page) => (
+                page.placeholder(),
+                &page.query,
+                Some(Message::AppsQueryChanged as OnInput),
+            ),
+            Page::NowPlaying(page) => (
+                crate::media_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::NowPlayingQueryChanged as OnInput),
+            ),
+            Page::Themes(page) => (
+                compass_core::theme_picker::PLACEHOLDER,
+                &page.query,
+                Some(Message::ThemesQueryChanged as OnInput),
+            ),
+            Page::Created(page) => ("", &page.path, None),
+            Page::Fonts(page) => (
+                "Search fonts...",
+                &page.query,
+                Some(Message::FontsQueryChanged as OnInput),
+            ),
+            Page::FontPreview(page) => ("", &page.name, None),
+            Page::Store(page) => (
+                page.store.placeholder(),
+                &page.query,
+                Some(Message::StoreQueryChanged as OnInput),
+            ),
+            Page::StoreDetail(page) => ("", &page.title, None),
+            Page::Preferences(page) => ("Configure", &page.title, None),
+            Page::Settings(page) => (
+                crate::settings_page::PLACEHOLDER,
+                &page.query,
+                Some(
+                    (|query| {
+                        Message::Settings(crate::settings_page::SettingsMessage::QueryChanged(
+                            query,
+                        ))
+                    }) as OnInput,
+                ),
+            ),
+            Page::Extension(page) => (
+                page.list()
+                    .and_then(|list| list.search.placeholder.as_deref())
+                    .unwrap_or("Search…"),
+                &page.query,
+                Some(Message::ExtensionQueryChanged as OnInput),
+            ),
+        }
+    }
+
+    /// Asks for blur behind the card as it was just laid out, or for none
+    /// when the card is opaque; nothing when that is what was last asked.
+    fn card_measured(&mut self, card: iced::Size) -> Task<Message> {
+        let Some(id) = self.window else {
+            return Task::none();
+        };
+        if crate::surface::presentation() != crate::surface::Presentation::Toplevel {
+            return Task::none();
+        }
+        let wanted = crate::material::region(
+            self.tint,
+            card,
+            design::SHADOW_PADDING,
+            self.geometry.card_radius,
+        );
+        if wanted == self.material_asked {
+            return Task::none();
+        }
+        self.material_asked = wanted;
+        crate::material::apply(id, wanted)
+    }
+
     /// View the application.
     ///
     /// A card: a search field over a list of rows, each row an icon, a title
@@ -2245,33 +3905,7 @@ impl LauncherApp {
         // One field, whose meaning follows the view: the root query, or a
         // command's own filter. Same id either way, so focus survives the
         // switch and `focus_search` needs no second target.
-        let (placeholder, value, on_input): (&str, &str, Option<OnInput>) = match &self.page {
-            Page::Root => (
-                "Search…",
-                &self.query,
-                self.panel
-                    .is_none()
-                    .then_some(Message::QueryChanged as OnInput),
-            ),
-            Page::Clipboard(page) => (
-                "Search clipboard history…",
-                &page.query,
-                Some(Message::ClipboardQueryChanged as OnInput),
-            ),
-            Page::Windows(page) => (
-                "Search windows…",
-                &page.query,
-                Some(Message::WindowsQueryChanged as OnInput),
-            ),
-            Page::Preferences(page) => ("Configure", &page.title, None),
-            Page::Extension(page) => (
-                page.list()
-                    .and_then(|list| list.search.placeholder.as_deref())
-                    .unwrap_or("Search…"),
-                &page.query,
-                Some(Message::ExtensionQueryChanged as OnInput),
-            ),
-        };
+        let (placeholder, value, on_input) = self.search_field();
         let input = text_input(placeholder, value)
             .id(SEARCH_INPUT)
             .font(self.font())
@@ -2294,12 +3928,92 @@ impl LauncherApp {
                 ..container::Style::default()
             });
 
-        let body: Element<Message> = if let Page::Preferences(page) = &self.page {
+        let body: Element<Message> = if let Some(confirm) = &self.confirm {
+            column![
+                text(confirm.title.as_str())
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..self.font()
+                    })
+                    .size(16),
+                text(confirm.message.as_str()).font(self.font()),
+                text(format!("Enter: {}    Esc: cancel", confirm.confirm_text))
+                    .font(self.font())
+                    .size(12),
+            ]
+            .spacing(8)
+            .padding(Padding::new(18.0))
+            .into()
+        } else if let Some(power) = self.power_confirm {
+            column![
+                text(compass_core::power_commands::CONFIRM_TITLE)
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..self.font()
+                    })
+                    .size(16),
+                text(compass_core::power_commands::CONFIRM_BODY).font(self.font()),
+                text(format!("Enter: {}    Esc: cancel", power.name))
+                    .font(self.font())
+                    .size(12),
+            ]
+            .spacing(8)
+            .padding(Padding::new(18.0))
+            .into()
+        } else if let Page::Preferences(page) = &self.page {
             self.preferences_body(page)
         } else if let Page::Extension(page) = &self.page {
             self.extension_body(page)
+        } else if let Page::Emoji(page) = &self.page {
+            self.emoji_body(page)
         } else if let Page::Windows(page) = &self.page {
             self.windows_body(page)
+        } else if let Page::Workspaces(page) = &self.page {
+            self.workspaces_body(page)
+        } else if let Page::OpenWith(page) = &self.page {
+            self.open_with_body(page)
+        } else if let Page::Files(page) = &self.page {
+            self.files_body(page)
+        } else if let Page::Shortcuts(page) = &self.page {
+            self.shortcuts_body(page)
+        } else if let Page::Snippets(page) = &self.page {
+            self.snippets_body(page)
+        } else if let Page::ScriptOutput(page) = &self.page {
+            self.script_output_body(page)
+        } else if let Page::Programs(page) = &self.page {
+            self.programs_body(page)
+        } else if let Page::Dmenu(page) = &self.page {
+            self.dmenu_body(page)
+        } else if let Page::Grants(page) = &self.page {
+            self.grants_body(page)
+        } else if let Page::Tray(page) = &self.page {
+            self.tray_body(page)
+        } else if let Page::Apps(page) = &self.page {
+            self.apps_body(page)
+        } else if let Page::Calculator(page) = &self.page {
+            self.calculator_body(page)
+        } else if let Page::Fallbacks(page) = &self.page {
+            self.fallbacks_body(page)
+        } else if let Some(body) = self.compass_view_body() {
+            body
+        } else if let Page::StoreIntro(page) = &self.page {
+            self.store_intro_body(page)
+        } else if let Page::NowPlaying(page) = &self.page {
+            self.now_playing_body(page)
+        } else if let Page::Themes(page) = &self.page {
+            self.themes_body(page)
+        } else if let Page::Settings(page) = &self.page {
+            self.settings_body(page)
+        } else if let Page::Created(page) = &self.page {
+            self.created_body(page)
+        } else if let Page::Fonts(page) = &self.page {
+            self.fonts_body(page)
+        } else if let Page::FontPreview(page) = &self.page {
+            self.font_preview_body(page)
+        } else if let Page::Store(page) = &self.page {
+            self.store_body(page)
+        } else if let Page::StoreDetail(page) = &self.page {
+            self.store_detail_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -2311,6 +4025,9 @@ impl LauncherApp {
         } else {
             let mut list = column![].spacing(f32::from(geometry.row_spacing));
             for (position, root_row) in self.results.iter().enumerate() {
+                if let Some(heading) = self.root_heading_at(position) {
+                    list = list.push(self.section_heading(heading.to_owned()));
+                }
                 let selected = position == self.selected;
                 let row = match root_row {
                     RootRow::App(index) => {
@@ -2320,23 +4037,126 @@ impl LauncherApp {
                         self.result_row(item, selected)
                     }
                     RootRow::Command(command) => self.list_row(
-                        self.initial_badge(command.title, selected),
+                        self.command_icon(command, selected),
                         command.title.to_owned(),
                         self.subtitles.then(|| command.subtitle.to_owned()),
                         selected,
                     ),
+                    RootRow::Update => {
+                        let Some(row) = self.update_row(selected) else {
+                            continue;
+                        };
+                        row
+                    }
+                    RootRow::Calculator => {
+                        let Some(answer) = &self.calculator else {
+                            continue;
+                        };
+                        self.list_row(
+                            self.initial_badge("=", selected),
+                            answer.answer.clone(),
+                            Some(answer.question.clone()),
+                            selected,
+                        )
+                    }
                     RootRow::Extension(index) => {
                         let Some(command) = self.app_index.extensions().get(*index) else {
                             continue;
                         };
                         self.list_row(
-                            self.initial_badge(&command.title, selected),
+                            self.url_icon(
+                                self.extension_url(command).as_ref(),
+                                &command.title,
+                                selected,
+                            ),
                             command.title.clone(),
-                            self.subtitles.then(|| command.extension_title.clone()),
+                            self.subtitles.then(|| {
+                                self.extension_subtitles
+                                    .get(&command.id)
+                                    .unwrap_or(&command.extension_title)
+                                    .clone()
+                            }),
+                            selected,
+                        )
+                    }
+                    RootRow::Script(index) => {
+                        let Some(script) = self.app_index.scripts().get(*index) else {
+                            continue;
+                        };
+                        self.list_row(
+                            self.url_icon(
+                                self.script_icons.get(&script.id),
+                                &script.title,
+                                selected,
+                            ),
+                            script.title.clone(),
+                            self.subtitles.then(|| script.subtitle.clone()),
+                            selected,
+                        )
+                    }
+                    RootRow::RhaiScript(index) => {
+                        let Some(script) = self.app_index.rhai_scripts().get(*index) else {
+                            continue;
+                        };
+                        let icon = match self.rhai_icons.get(&script.id) {
+                            Some(icon) => self.extension_icon(icon, selected),
+                            None => self.initial_badge(&script.title, selected),
+                        };
+                        self.list_row(
+                            icon,
+                            script.title.clone(),
+                            self.subtitles.then(|| script.subtitle().to_owned()),
+                            selected,
+                        )
+                    }
+                    RootRow::Fallback(fallback) => {
+                        let Some(title) = self.fallback_title(*fallback) else {
+                            continue;
+                        };
+                        if position == 0
+                            || !matches!(self.results.get(position - 1), Some(RootRow::Fallback(_)))
+                        {
+                            list = list.push(
+                                container(
+                                    text(compass_core::root_items::fallback_heading(&self.query))
+                                        .font(self.font())
+                                        .size(12)
+                                        .color(palette.muted.to_iced()),
+                                )
+                                .padding(Padding::new(4.0).left(10)),
+                            );
+                        }
+                        let subtitle = match fallback {
+                            Fallback::Command(command) => command.subtitle.to_owned(),
+                            Fallback::Extension(_) => "Command".to_owned(),
+                            Fallback::Shortcut(_) => "Shortcut".to_owned(),
+                        };
+                        self.list_row(
+                            match fallback {
+                                Fallback::Command(command) => self.command_icon(command, selected),
+                                _ => self.initial_badge(&title, selected),
+                            },
+                            title,
+                            self.subtitles.then_some(subtitle),
+                            selected,
+                        )
+                    }
+                    RootRow::Shortcut(index) => {
+                        let Some(shortcut) = self.app_index.shortcuts().get(*index) else {
+                            continue;
+                        };
+                        let title = crate::shortcuts_page::display_name(shortcut);
+                        self.list_row(
+                            self.url_icon(Some(&shortcut_url(&shortcut.icon)), title, selected),
+                            title.to_owned(),
+                            self.subtitles.then(|| "Shortcut".to_owned()),
                             selected,
                         )
                     }
                 };
+                let row: Element<Message> = mouse_area(row)
+                    .on_press(Message::ResultClicked(position))
+                    .into();
                 let row: Element<Message> = if selected {
                     container(row).id(crate::scroll::ROOT_SELECTION).into()
                 } else {
@@ -2354,7 +4174,9 @@ impl LauncherApp {
         // container rather than a border on the field, because the field has
         // its own rounded border in the other presets and a rule has to span
         // the card's full width regardless of the field's radius.
-        let card_content = if self.field_rule {
+        let card_content = if let Page::Onboarding(page) = &self.page {
+            column![self.onboarding_body(page)].width(Length::Fill)
+        } else if self.field_rule {
             column![
                 field,
                 container(Space::new())
@@ -2369,6 +4191,21 @@ impl LauncherApp {
             .width(Length::Fill)
         } else {
             column![field, body].width(Length::Fill)
+        };
+        // The root search's status bar carries the clock as its title, as
+        // `scheduleNextClockTick` sets the navigation title.
+        let card_content = match (&self.page, &self.clock_text) {
+            (Page::Root, Some(clock)) if self.confirm.is_none() => card_content.push(
+                container(
+                    text(clock.as_str())
+                        .font(self.font())
+                        .size(12)
+                        .color(palette.muted.to_iced()),
+                )
+                .width(Length::Fill)
+                .padding(Padding::new(6.0).left(14)),
+            ),
+            _ => card_content,
         };
 
         // The panel floats over the list rather than replacing it. The old
@@ -2391,34 +4228,128 @@ impl LauncherApp {
 
         let card_background = card_background(palette.surface, self.tint);
 
-        container(
-            container(card_body)
-                .width(Length::Fixed(f32::from(geometry.card_width)))
-                .padding(geometry.card_padding)
-                .style(move |_: &Theme| container::Style {
-                    background: Some(card_background.into()),
-                    border: Border {
-                        color: palette.border.to_iced(),
-                        width: 1.0,
-                        radius: f32::from(geometry.card_radius).into(),
-                    },
-                    shadow: iced::Shadow {
-                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                        offset: iced::Vector::new(0.0, 16.0),
-                        blur_radius: design::SHADOW_BLUR,
-                    },
-                    ..container::Style::default()
-                }),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(design::SHADOW_PADDING)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Start)
-        .into()
+        let (card_width, card_height) = match self.dmenu_card_size() {
+            Some((width, height)) => (width as f32, Length::Fixed(height as f32)),
+            None => (f32::from(geometry.card_width), Length::Shrink),
+        };
+        let card = container(card_body)
+            .width(Length::Fixed(card_width))
+            .height(card_height)
+            .padding(geometry.card_padding)
+            .style(move |_: &Theme| container::Style {
+                background: Some(card_background.into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: f32::from(geometry.card_radius).into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: iced::Vector::new(0.0, 16.0),
+                    blur_radius: design::SHADOW_BLUR,
+                },
+                ..container::Style::default()
+            });
+        // Reports the card's size when it is shown, when it resizes, and
+        // again when the look the blur depends on changes (the key), so the
+        // blur behind it follows the card (`crate::material`).
+        let card = sensor(card)
+            .key((self.tint, geometry.card_radius))
+            .on_show(Message::CardMeasured)
+            .on_resize(Message::CardMeasured);
+        container(card)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(design::SHADOW_PADDING)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Start)
+            .into()
     }
 
     /// The window switcher's body: its state, or its rows.
+    /// A section's heading in a list: small, muted, indented to the rows'
+    /// text.
+    fn section_heading<'a>(&self, label: String) -> Element<'a, Message> {
+        container(
+            text(label)
+                .font(self.font())
+                .size(12)
+                .color(self.palette().muted.to_iced()),
+        )
+        .padding(Padding::new(4.0).left(10))
+        .into()
+    }
+
+    /// The emoji picker's rows: the character in the icon slot, its name.
+    fn emoji_body<'a>(&'a self, page: &'a crate::emoji_page::EmojiPage) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        if page.shown.is_empty() {
+            return self.notice("No matching emojis or symbols");
+        }
+        let glyphs = compass_core::glyph::glyphs();
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        if let Some(notice) = &page.notice {
+            list = list.push(self.section_heading(notice.clone()));
+        }
+        for (position, &index) in page.shown.iter().enumerate() {
+            let Some(glyph) = glyphs.get(index) else {
+                continue;
+            };
+            if let Some(heading) = page.heading_at(position) {
+                list = list.push(self.section_heading(heading.to_owned()));
+            }
+            let selected = position == page.selected;
+            let icon =
+                container(text(page.display(glyph)).size(f32::from(geometry.icon_size) * 0.75))
+                    .width(Length::Fixed(f32::from(geometry.icon_size)))
+                    .height(Length::Fixed(f32::from(geometry.icon_size)))
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into();
+            let row = self.list_row(
+                icon,
+                glyph.name.to_owned(),
+                self.subtitles.then(|| glyph.category.label().to_owned()),
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::EmojiSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink)
+            .into()
+    }
+
+    /// Hides the launcher, then runs `power` in the engine, as the C++ plan
+    /// does (the window closes first). A refusal is shown when it comes back.
+    fn run_power_command(
+        &mut self,
+        power: &'static compass_core::power_commands::PowerCommand,
+    ) -> Task<Message> {
+        self.power_confirm = None;
+        let Some(backend) = self.backend.clone() else {
+            self.error = Some(format!(
+                "{} needs the Compass engine, and this window is running without one",
+                power.name
+            ));
+            return Task::none();
+        };
+        let id = power.id.to_owned();
+        let run = Task::perform(
+            async move { backend.run_power_command(id).await },
+            Message::BuiltinCommandDone,
+        );
+        Task::batch([self.conceal(), run])
+    }
+
     fn windows_body<'a>(
         &'a self,
         page: &'a crate::windows_page::WindowsPage,
@@ -2446,7 +4377,7 @@ impl LauncherApp {
                 window.title.clone()
             };
             let row = self.list_row(
-                self.initial_badge(&window.app, selected),
+                self.window_icon(window, selected),
                 title,
                 self.subtitles.then(|| window.app.clone()),
                 selected,
@@ -2470,6 +4401,98 @@ impl LauncherApp {
         }
     }
 
+    /// Search Files' body: its state, or its heading and rows.
+    fn files_body<'a>(&'a self, page: &'a crate::files_page::FilesPage) -> Element<'a, Message> {
+        use crate::files_page::Status;
+        let geometry = self.geometry;
+        let key = page
+            .category
+            .clone()
+            .unwrap_or_else(|| compass_core::file_search::CATEGORY_FILTER_KEYS[0].to_owned());
+        let filter = container(
+            iced::widget::pick_list(
+                compass_core::file_search::CATEGORY_FILTER_KEYS
+                    .iter()
+                    .map(|key| (*key).to_owned())
+                    .collect::<Vec<_>>(),
+                Some(key),
+                Message::FilesCategoryChanged,
+            )
+            .text_size(12),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .padding(Padding::new(4.0).right(10));
+        // The loading indicator (`setLoading`): a query is out.
+        let indicator = container(
+            text(if page.searching { "Searching…" } else { "" })
+                .font(self.font())
+                .size(12)
+                .color(self.palette().muted.to_iced()),
+        )
+        .padding(Padding::new(8.0).left(12));
+        let filter = row![indicator, filter];
+        let empty = match &page.status {
+            Status::Loading => Some("Searching files…"),
+            Status::Failed(reason) => Some(reason.as_str()),
+            Status::Ready if page.rows.is_empty() => Some("No files found"),
+            Status::Ready => None,
+        };
+        if let Some(empty) = empty {
+            return column![filter, self.notice(empty)].into();
+        }
+        let home =
+            compass_core::xdg_dirs::home_dir().map(|home| home.to_string_lossy().into_owned());
+        let heading = text(page.heading.clone())
+            .font(self.font())
+            .size(12)
+            .color(self.palette().muted.to_iced());
+        let mut list = column![container(heading).padding(Padding::new(4.0).left(10))]
+            .spacing(f32::from(geometry.row_spacing));
+        for (position, file) in page.rows.iter().enumerate() {
+            let selected = position == page.selected;
+            let subtitle = self
+                .subtitles
+                .then(|| crate::files_page::subtitle(file, home.as_deref()));
+            let row = self.list_row(
+                self.glyph_or_initial(
+                    self.icons
+                        .then(|| self.file_glyphs.cached(&file.path))
+                        .flatten(),
+                    &file.name,
+                    selected,
+                ),
+                file.name.clone(),
+                subtitle,
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::FilesSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        let rows: Element<Message> = match &page.preview {
+            Some(preview) => row![
+                container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
+                self.file_preview_pane(preview, true),
+            ]
+            .into(),
+            None => rows.into(),
+        };
+        match &page.notice {
+            Some(notice) => column![filter, rows, self.notice(notice)].into(),
+            None => column![filter, rows].into(),
+        }
+    }
+
     /// Clipboard history's body: its state, or its rows.
     fn clipboard_body<'a>(
         &'a self,
@@ -2477,14 +4500,24 @@ impl LauncherApp {
     ) -> Element<'a, Message> {
         use crate::clipboard_page::Status;
         let geometry = self.geometry;
-        match &page.status {
-            Status::Loading => return self.notice("Loading clipboard history…"),
-            Status::Failed(reason) => return self.notice(reason),
-            Status::Ready if page.rows.is_empty() && page.query.is_empty() => {
-                return self.notice("Nothing copied yet");
+        let filter = self.clipboard_filter(page);
+        let status = page
+            .monitoring
+            .and_then(crate::clipboard_page::monitoring_notice)
+            .map(|line| self.section_heading(line.to_owned()));
+        let empty = match &page.status {
+            Status::Loading => Some("Loading clipboard history…"),
+            Status::Failed(reason) => Some(reason.as_str()),
+            Status::Ready
+                if page.rows.is_empty() && page.query.is_empty() && page.kind.is_none() =>
+            {
+                Some("Nothing copied yet")
             }
-            Status::Ready if page.rows.is_empty() => return self.notice("No matching entries"),
-            Status::Ready => {}
+            Status::Ready if page.rows.is_empty() => Some("No matching entries"),
+            Status::Ready => None,
+        };
+        if let Some(empty) = empty {
+            return column![filter].push(status).push(self.notice(empty)).into();
         }
         let mut list = column![].spacing(f32::from(geometry.row_spacing));
         for (position, entry) in page.rows.iter().enumerate() {
@@ -2492,8 +4525,18 @@ impl LauncherApp {
             let subtitle = self
                 .subtitles
                 .then(|| crate::clipboard_page::subtitle(entry));
+            let favicon =
+                clipboard_url(entry).and_then(|url| self.url_glyphs.get(&url.to_url())?.clone());
             let row = self.list_row(
-                self.initial_badge(crate::clipboard_page::subtitle(entry).as_str(), selected),
+                self.glyph_or_initial(
+                    self.icons
+                        .then(|| {
+                            favicon.unwrap_or_else(|| crate::icons::clipboard_glyph(entry.kind))
+                        })
+                        .as_ref(),
+                    crate::clipboard_page::subtitle(entry).as_str(),
+                    selected,
+                ),
                 entry.preview.clone(),
                 subtitle,
                 selected,
@@ -2511,9 +4554,18 @@ impl LauncherApp {
         let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
-        match &page.notice {
-            Some(notice) => column![rows, self.notice(notice)].into(),
+        let rows: Element<Message> = match &page.detail {
+            Some(detail) => row![
+                container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
+                self.clipboard_detail_pane(detail, &page.query),
+            ]
+            .into(),
             None => rows.into(),
+        };
+        let body = column![filter].push(status).push(rows);
+        match &page.notice {
+            Some(notice) => body.push(self.notice(notice)).into(),
+            None => body.into(),
         }
     }
 
@@ -2545,8 +4597,21 @@ impl LauncherApp {
     /// proportions and the title's position exactly where the others are, and
     /// the VM tier's window box does not move when the option is turned on.
     fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
+        let icon = self.app_icon(item, selected);
+        // `subtitles` gates this, not just the presence of a comment: the dense
+        // preset's row is one line tall and a second would overflow it.
+        let subtitle = self
+            .subtitles
+            .then(|| item.comment().map(str::to_owned))
+            .flatten();
+        self.list_row(icon, item.name().to_owned(), subtitle, selected)
+    }
+
+    /// An application's icon slot: its themed icon when icons are on and it
+    /// resolved, its initial otherwise. See [`Self::result_row`].
+    fn app_icon(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let icon: Element<Message> = match self.row_art(item) {
+        match self.row_art(item) {
             Some(crate::icons::IconArt::Raster(path)) => {
                 container(image(path).width(Length::Fill).height(Length::Fill))
                     .width(Length::Fixed(f32::from(geometry.icon_size)))
@@ -2560,14 +4625,7 @@ impl LauncherApp {
                     .into()
             }
             None => self.initial_badge(item.name(), selected),
-        };
-        // `subtitles` gates this, not just the presence of a comment: the dense
-        // preset's row is one line tall and a second would overflow it.
-        let subtitle = self
-            .subtitles
-            .then(|| item.comment().map(str::to_owned))
-            .flatten();
-        self.list_row(icon, item.name().to_owned(), subtitle, selected)
+        }
     }
 
     /// An extension row's icon: its art, a builtin tinted to read on the
@@ -2577,9 +4635,31 @@ impl LauncherApp {
         icon: &crate::extension_page::RowIcon,
         selected: bool,
     ) -> Element<'_, Message> {
+        self.masked_icon(icon, compass_core::image_url::ImageMask::None, selected)
+    }
+
+    /// [`Self::extension_icon`], clipped to `mask` (`Image.mask`): the
+    /// image drawn into pixels and clipped as `applyCircleMask` and
+    /// `applyRoundedRectMask` clip it.
+    fn masked_icon(
+        &self,
+        icon: &crate::extension_page::RowIcon,
+        mask: compass_core::image_url::ImageMask,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        self.icon_art(icon, mask, selected, f32::from(self.geometry.icon_size))
+    }
+
+    /// [`Self::masked_icon`] in a square of `side`.
+    fn icon_art(
+        &self,
+        icon: &crate::extension_page::RowIcon,
+        mask: compass_core::image_url::ImageMask,
+        selected: bool,
+        side: f32,
+    ) -> Element<'_, Message> {
         use crate::extension_page::RowIcon;
-        let geometry = self.geometry;
-        let size = Length::Fixed(f32::from(geometry.icon_size));
+        let size = Length::Fixed(side);
         let palette = self.palette();
         let text_color = if selected {
             palette.selection_text
@@ -2587,7 +4667,33 @@ impl LauncherApp {
             palette.text
         }
         .to_iced();
+        let masked = match icon {
+            RowIcon::Art {
+                art,
+                monochrome,
+                tint,
+            } if mask != compass_core::image_url::ImageMask::None => {
+                let color = tint.or(monochrome.then_some(text_color)).map(|c| {
+                    let [r, g, b, _] = c.into_rgba8();
+                    [r, g, b]
+                });
+                self.masked.get(art, mask, color)
+            }
+            _ => None,
+        };
+        if let Some(handle) = masked {
+            return container(image(handle).width(Length::Fill).height(Length::Fill))
+                .width(size)
+                .height(size)
+                .into();
+        }
         let art: Element<Message> = match icon {
+            RowIcon::Text(glyph) => container(text(glyph.clone()).size(side * 0.75))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into(),
             RowIcon::Swatch(color) => {
                 let color = *color;
                 container(text(""))
@@ -2622,6 +4728,220 @@ impl LauncherApp {
             }
         };
         container(art).width(size).height(size).into()
+    }
+
+    /// A builtin command's icon slot: its icon on its C++ tile when icons are
+    /// on and the builtin set is installed, its initial otherwise.
+    fn command_icon(
+        &self,
+        command: &compass_core::commands::BuiltinCommand,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = self
+            .icons
+            .then(|| crate::icons::command_glyph(command, self.palette().accent));
+        self.glyph_or_initial(glyph.as_ref(), command.title, selected)
+    }
+
+    /// A window's icon slot: its application's icon, else `AppWindow`
+    /// (`SwitchWindowsSection::displayIcon`).
+    fn window_icon(
+        &self,
+        window: &crate::backend::WindowRow,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = self.icons.then(|| {
+            self.window_app(window)
+                .and_then(|item| self.row_art(item))
+                .cloned()
+                .map_or_else(
+                    || crate::icons::Glyph::builtin("app-window"),
+                    crate::icons::Glyph::Art,
+                )
+        });
+        self.glyph_or_initial(glyph.as_ref(), &window.app, selected)
+    }
+
+    /// The application a window belongs to, when the engine recognised it.
+    fn window_app(&self, window: &crate::backend::WindowRow) -> Option<&AppItem> {
+        if !window.app_known {
+            return None;
+        }
+        self.app_index
+            .items()
+            .iter()
+            .find(|item| item.name() == window.app)
+    }
+
+    /// `glyph` drawn in the row's icon slot, or `title`'s initial when there
+    /// is none or it cannot be drawn (a builtin with no installed icon set).
+    fn glyph_or_initial(
+        &self,
+        glyph: Option<&crate::icons::Glyph>,
+        title: &str,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        glyph
+            .and_then(|glyph| self.glyph(glyph, selected, f32::from(self.geometry.icon_size)))
+            .unwrap_or_else(|| self.initial_badge(title, selected))
+    }
+
+    /// The builtin icon `name` as an SVG of `size`, drawn in `color`.
+    fn builtin_svg(
+        &self,
+        name: &str,
+        color: Color,
+        size: f32,
+    ) -> Option<Element<'static, Message>> {
+        let file = self
+            .builtin_icons
+            .as_ref()?
+            .join(compass_core::builtin_icon::file_name(name)?);
+        Some(
+            svg(file)
+                .width(Length::Fixed(size))
+                .height(Length::Fixed(size))
+                .style(move |_: &Theme, _| iced::widget::svg::Style { color: Some(color) })
+                .into(),
+        )
+    }
+
+    /// A [`crate::icons::Glyph`] drawn in a square of `size`.
+    ///
+    /// A tile is `applyBackdrop`'s rounded square (a quarter of the side),
+    /// with the glyph inset by 19% of it as `backdropContentSize`; a badge is
+    /// `applyBadge`'s black disc, 44% of the side, 4% in from the corner,
+    /// carrying the badge glyph in white.
+    fn glyph(
+        &self,
+        glyph: &crate::icons::Glyph,
+        selected: bool,
+        size: f32,
+    ) -> Option<Element<'static, Message>> {
+        use crate::icons::Glyph;
+        let square = Length::Fixed(size);
+        match glyph {
+            Glyph::Text(glyph) => Some(
+                container(text(glyph.clone()).size(size * 0.75))
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into(),
+            ),
+            Glyph::Art(art) => {
+                let drawn: Element<'static, Message> = match art {
+                    crate::icons::IconArt::Raster(path) => image(path.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into(),
+                    crate::icons::IconArt::Vector(path) => svg(path.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into(),
+                };
+                Some(container(drawn).width(square).height(square).into())
+            }
+            Glyph::Builtin {
+                name,
+                fill,
+                tile,
+                badge,
+            } => {
+                let palette = self.palette();
+                let text_color = if selected {
+                    palette.selection_text
+                } else {
+                    palette.text
+                };
+                let base: Element<'static, Message> = match tile {
+                    None => container(self.builtin_svg(
+                        name,
+                        fill.unwrap_or(text_color).to_iced(),
+                        size * 0.8,
+                    )?)
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    Some(tile) => {
+                        let (top, bottom) = crate::icons::tile_gradient(*tile);
+                        let gradient = iced::gradient::Linear::new(std::f32::consts::PI)
+                            .add_stop(0.0, top.to_iced())
+                            .add_stop(1.0, bottom.to_iced());
+                        let inner = size * (1.0 - 2.0 * 0.19);
+                        let centred = |element: Element<'static, Message>, drop: f32| {
+                            container(element)
+                                .width(square)
+                                .height(square)
+                                .align_x(Alignment::Center)
+                                .align_y(Alignment::Center)
+                                .padding(Padding::ZERO.top(drop * 2.0))
+                        };
+                        // `applyBackdrop`'s shadow: the glyph's silhouette in
+                        // translucent black, a little lower, under it.
+                        let shadow = self.builtin_svg(
+                            name,
+                            Color::from_rgba8(
+                                0,
+                                0,
+                                0,
+                                f32::from(crate::icons::TILE_SHADOW_ALPHA) / 255.0,
+                            ),
+                            inner,
+                        )?;
+                        let glyph = self.builtin_svg(
+                            name,
+                            fill.unwrap_or(crate::design::Rgb::new(255, 255, 255))
+                                .to_iced(),
+                            inner,
+                        )?;
+                        container(iced::widget::stack![
+                            centred(shadow, size * crate::icons::TILE_SHADOW_OFFSET),
+                            centred(glyph, 0.0),
+                        ])
+                        .width(square)
+                        .height(square)
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(iced::Background::Gradient(gradient.into())),
+                            border: Border {
+                                color: Color::from_rgba8(255, 255, 255, 30.0 / 255.0),
+                                width: (size / 32.0).max(1.0),
+                                radius: (size * 0.25).into(),
+                            },
+                            ..container::Style::default()
+                        })
+                        .into()
+                    }
+                };
+                let Some(badge) = badge else {
+                    return Some(base);
+                };
+                let diameter = size * 0.44;
+                let disc = container(self.builtin_svg(badge, Color::WHITE, diameter * 0.56)?)
+                    .width(Length::Fixed(diameter))
+                    .height(Length::Fixed(diameter))
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Color::BLACK.into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: (diameter / 2.0).into(),
+                        },
+                        ..container::Style::default()
+                    });
+                let corner = container(disc)
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::End)
+                    .padding(size * 0.04);
+                Some(iced::widget::stack![base, corner].into())
+            }
+        }
     }
 
     /// The first letter of `title` in a tinted square, for a row with no art.
@@ -2676,6 +4996,43 @@ impl LauncherApp {
         subtitle: Option<String>,
         selected: bool,
     ) -> Element<'a, Message> {
+        self.list_row_with(icon, title, subtitle, None, selected)
+    }
+
+    /// [`Self::list_row`] with a line of muted text at the right edge, as a
+    /// store row shows its download count and whether it is installed.
+    fn list_row_with<'a>(
+        &'a self,
+        icon: Element<'a, Message>,
+        title: String,
+        subtitle: Option<String>,
+        accessory: Option<String>,
+        selected: bool,
+    ) -> Element<'a, Message> {
+        let colour = if selected {
+            self.palette().selection_text
+        } else {
+            self.palette().muted
+        };
+        let accessory = accessory.filter(|text| !text.is_empty()).map(|accessory| {
+            text(accessory)
+                .font(self.font())
+                .size(f32::from(self.geometry.subtitle_size))
+                .color(colour.to_iced())
+                .into()
+        });
+        self.list_row_parts(icon, title, subtitle, accessory, selected)
+    }
+
+    /// [`Self::list_row_with`], with any element at the row's right.
+    fn list_row_parts<'a>(
+        &'a self,
+        icon: Element<'a, Message>,
+        title: String,
+        subtitle: Option<String>,
+        accessory: Option<Element<'a, Message>>,
+        selected: bool,
+    ) -> Element<'a, Message> {
         let geometry = self.geometry;
         let palette = self.palette();
         let title_color = if selected {
@@ -2704,31 +5061,33 @@ impl LauncherApp {
             );
         }
 
-        container(
-            row![icon, labels]
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .padding(Padding::new(0.0).left(12).right(12)),
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(f32::from(geometry.row_height)))
+        let line = match accessory {
+            Some(accessory) => row![icon, labels.width(Length::Fill), accessory],
+            None => row![icon, labels],
+        }
+        .spacing(12)
         .align_y(Alignment::Center)
-        .style(move |_: &Theme| {
-            if selected {
-                container::Style {
-                    background: Some(palette.selection.to_iced().into()),
-                    border: Border {
-                        color: Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: f32::from(geometry.row_radius).into(),
-                    },
-                    ..container::Style::default()
+        .padding(Padding::new(0.0).left(12).right(12));
+        container(line)
+            .width(Length::Fill)
+            .height(Length::Fixed(f32::from(geometry.row_height)))
+            .align_y(Alignment::Center)
+            .style(move |_: &Theme| {
+                if selected {
+                    container::Style {
+                        background: Some(palette.selection.to_iced().into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: f32::from(geometry.row_radius).into(),
+                        },
+                        ..container::Style::default()
+                    }
+                } else {
+                    container::Style::default()
                 }
-            } else {
-                container::Style::default()
-            }
-        })
-        .into()
+            })
+            .into()
     }
 
     /// Draw the action panel.
@@ -2736,9 +5095,12 @@ impl LauncherApp {
     /// A floating card at the bottom right, the way Raycast's sits. Headers
     /// and dividers are drawn as themselves rather than as indented text, and
     /// the selection is the same filled rectangle the result list uses.
-    fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
+    fn view_panel<'a>(&'a self, panel: &'a PanelState) -> Element<'a, Message> {
         let geometry = self.geometry;
         let palette = self.palette();
+        if let Some(recorder) = &panel.recorder {
+            return self.view_recorder(recorder);
+        }
         let filter = text_input("Search…", &panel.filter)
             .id(PANEL_INPUT)
             .font(self.font())
@@ -2836,6 +5198,79 @@ impl LauncherApp {
         .into()
     }
 
+    /// The shortcut recorder in the panel's place (`ShortcutRecorderPanel`):
+    /// the item's title, then the chord or the current shortcut, the status
+    /// line and, while the item has a shortcut, how to remove it.
+    fn view_recorder<'a>(
+        &'a self,
+        recorder: &'a crate::shortcut_recorder::ShortcutRecorder,
+    ) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        let palette = self.palette();
+        let small = f32::from(geometry.subtitle_size);
+        let title = container(
+            text(recorder.title.clone())
+                .font(self.font())
+                .size(f32::from(geometry.title_size))
+                .color(palette.text.to_iced()),
+        )
+        .height(design::panel_metric("filter-height"))
+        .align_y(Alignment::Center)
+        .padding(Padding::new(0.0).left(design::panel_metric("inset")));
+        let divider = container(Space::new().height(Length::Fixed(1.0)))
+            .width(Length::Fill)
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.border.to_iced().into()),
+                ..container::Style::default()
+            });
+        let mut capture = column![].spacing(5).align_x(Alignment::Center);
+        if !recorder.tokens.is_empty() {
+            capture = capture.push(
+                text(recorder.tokens.join(" "))
+                    .font(self.font())
+                    .size(f32::from(geometry.title_size))
+                    .color(palette.text.to_iced()),
+            );
+        }
+        let status = if recorder.error {
+            iced::Color::from_rgb8(0xe5, 0x48, 0x4d)
+        } else {
+            palette.text.to_iced()
+        };
+        capture = capture.push(
+            text(recorder.status.clone())
+                .font(self.font())
+                .size(small)
+                .color(status),
+        );
+        if recorder.current.is_some() {
+            capture = capture.push(
+                text(crate::shortcut_recorder::REMOVE_HINT)
+                    .font(self.font())
+                    .size(small)
+                    .color(palette.muted.to_iced()),
+            );
+        }
+        let capture = container(capture)
+            .width(Length::Fill)
+            .height(Length::Fixed(130.0))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+        container(column![title, divider, capture])
+            .width(Length::Fixed(design::panel_metric("width")))
+            .padding(design::panel_metric("padding"))
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.surface.to_iced().into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     /// One action row, with its shortcut right-aligned.
     fn panel_item(
         &self,
@@ -2909,7 +5344,11 @@ impl LauncherApp {
     fn search_task(&mut self) -> Task<Message> {
         self.cancel_search();
         self.error = None;
-        if let Some(backend) = self.backend.clone() {
+        // The provider search view ranks here: the engine's search is the
+        // whole root list.
+        if let Some(backend) = self.backend.clone()
+            && self.provider_scope.is_none()
+        {
             self.results.clear();
             self.selected = 0;
             let query = self.query.clone();
@@ -2967,6 +5406,24 @@ impl LauncherApp {
                 title: title.clone(),
                 result,
             },
+        )
+    }
+
+    /// An extension command offered as a fallback: launched through the
+    /// engine with the query as its fallback text, which comes back as a
+    /// launch like any other (`OpenBuiltinCommandAction` forwarding the
+    /// search text).
+    fn run_extension_fallback(&mut self, index: usize, query: String) -> Task<Message> {
+        let Some(command) = self.app_index.extensions().get(index) else {
+            return Task::none();
+        };
+        let Some(backend) = self.backend.clone() else {
+            return self.run_extension_command(index);
+        };
+        let id = command.id.clone();
+        Task::perform(
+            async move { backend.launch_command(id, Some(query)).await },
+            Message::BuiltinCommandDone,
         )
     }
 
@@ -3044,7 +5501,20 @@ impl LauncherApp {
                 crate::preferences_page::Purpose::Preferences => {
                     format!("{} needs a few settings", page.title)
                 }
-                crate::preferences_page::Purpose::Arguments => page.title.clone(),
+                crate::preferences_page::Purpose::CommandPreferences => {
+                    format!("{} settings", page.title)
+                }
+                crate::preferences_page::Purpose::Arguments
+                | crate::preferences_page::Purpose::ShortcutArguments
+                | crate::preferences_page::Purpose::ShortcutForm { .. }
+                | crate::preferences_page::Purpose::SnippetArguments { .. }
+                | crate::preferences_page::Purpose::SnippetForm { .. }
+                | crate::preferences_page::Purpose::ScriptArguments
+                | crate::preferences_page::Purpose::MediaArguments
+                | crate::preferences_page::Purpose::GlyphKeywords
+                | crate::preferences_page::Purpose::ClipboardKeywords
+                | crate::preferences_page::Purpose::Alias
+                | crate::preferences_page::Purpose::CreateExtension => page.title.clone(),
             })
             .font(self.font())
             .size(14)
@@ -3097,6 +5567,16 @@ impl LauncherApp {
                     })
                     .into()
                 }
+                (PreferenceInputKind::TextArea, _) => match page.editors.get(&index) {
+                    Some(editor) => iced::widget::text_editor(editor)
+                        .placeholder(field.placeholder.as_str())
+                        .font(self.font())
+                        .height(Length::Fixed(120.0))
+                        .padding(8)
+                        .on_action(move |action| Message::PreferenceTextEdited(index, action))
+                        .into(),
+                    None => iced::widget::text("").into(),
+                },
                 (PreferenceInputKind::Unsupported { declared }, _) => {
                     iced::widget::text(format!("Compass cannot edit {declared} preferences yet"))
                         .font(self.font())
@@ -3116,7 +5596,7 @@ impl LauncherApp {
             form = form.push(entry);
         }
         form = form.push(
-            iced::widget::text("Enter: save and run    Esc: back")
+            iced::widget::text(page.purpose.hint())
                 .font(self.font())
                 .size(12),
         );
@@ -3167,9 +5647,19 @@ impl LauncherApp {
                 entry = entry.push(iced::widget::text(title.clone()).font(self.font()).size(13));
             }
             let input: Element<Message> = match &field.kind {
-                FieldKind::Text { placeholder }
-                | FieldKind::Password { placeholder }
-                | FieldKind::TextArea { placeholder, .. } => {
+                FieldKind::TextArea { placeholder, .. } => match page.editors.get(&field.name) {
+                    Some(editor) => iced::widget::text_editor(editor)
+                        .placeholder(placeholder.as_deref().unwrap_or_default())
+                        .font(self.font())
+                        .height(Length::Fixed(96.0))
+                        .padding(8)
+                        .on_action(move |action| {
+                            Message::ExtensionTextAreaEdited(name.clone(), action)
+                        })
+                        .into(),
+                    None => iced::widget::text("").into(),
+                },
+                FieldKind::Text { placeholder } | FieldKind::Password { placeholder } => {
                     text_input(placeholder.as_deref().unwrap_or_default(), text_value)
                         .secure(matches!(field.kind, FieldKind::Password { .. }))
                         .font(self.font())
@@ -3209,14 +5699,32 @@ impl LauncherApp {
                     })
                     .into()
                 }
-                FieldKind::DatePicker { .. }
-                | FieldKind::TagPicker { .. }
-                | FieldKind::FilePicker { .. } => {
-                    iced::widget::text("Compass cannot edit this kind of field yet")
-                        .font(self.font())
-                        .size(12)
-                        .into()
-                }
+                FieldKind::DatePicker { precision, .. } => crate::extension_fields::date_field(
+                    &field.name,
+                    page.date_shown(&field.name, *precision),
+                    *precision,
+                    self.font(),
+                ),
+                FieldKind::TagPicker { options, .. } => crate::extension_fields::tag_field(
+                    &field.name,
+                    options,
+                    &crate::extension_fields::strings(value),
+                    self.font(),
+                ),
+                FieldKind::FilePicker {
+                    allow_multiple,
+                    allow_directories,
+                    allow_files,
+                } => crate::extension_fields::file_field(
+                    &field.name,
+                    &crate::extension_fields::strings(value),
+                    crate::extension_fields::FileChoice {
+                        multiple: *allow_multiple,
+                        directories: *allow_directories,
+                        files: *allow_files,
+                    },
+                    self.font(),
+                ),
             };
             entry = entry.push(input);
             if let Some(error) = &field.error {
@@ -3236,7 +5744,14 @@ impl LauncherApp {
             .and_then(|panel| panel.actions().into_iter().next())
             .map_or_else(
                 || "Esc: back".to_owned(),
-                |action| format!("Enter: {}    Esc: back", action.title),
+                |action| {
+                    let submit = if page.has_text_area() {
+                        "Ctrl+Enter"
+                    } else {
+                        "Enter"
+                    };
+                    format!("{submit}: {}    Esc: back", action.title)
+                },
             );
         body = body.push(iced::widget::text(submit).font(self.font()).size(12));
         if let Some(notice) = &page.notice {
@@ -3248,7 +5763,31 @@ impl LauncherApp {
             .into()
     }
 
+    /// An extension's page: its view, with its toast underneath.
     fn extension_body<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+    ) -> Element<'a, Message> {
+        let body = self.extension_view_body(page);
+        let Some(toast) = &page.toast else {
+            return body;
+        };
+        let mut line = toast.title.clone();
+        if !toast.message.is_empty() {
+            line.push_str(" — ");
+            line.push_str(&toast.message);
+        }
+        if toast.animated {
+            line.push('…');
+        }
+        let mut footer = iced::widget::text(line).font(self.font()).size(12);
+        if toast.failure {
+            footer = footer.color(self.theme().palette().danger);
+        }
+        column![body, container(footer).padding(Padding::new(6.0).left(14))].into()
+    }
+
+    fn extension_view_body<'a>(
         &'a self,
         page: &'a crate::extension_page::ExtensionPage,
     ) -> Element<'a, Message> {
@@ -3269,26 +5808,32 @@ impl LauncherApp {
             if !alert.message.is_empty() {
                 prompt = prompt.push(iced::widget::text(alert.message.clone()).font(self.font()));
             }
-            prompt = prompt.push(
-                iced::widget::text(format!(
+            let keys = match &alert.remember_text {
+                Some(remember) => format!(
+                    "Enter: {}    Ctrl+Enter: {remember}    Esc: {}",
+                    alert.confirm_text, alert.cancel_text
+                ),
+                None => format!(
                     "Enter: {}    Esc: {}",
                     alert.confirm_text, alert.cancel_text
-                ))
-                .font(self.font())
-                .size(12),
-            );
+                ),
+            };
+            prompt = prompt.push(iced::widget::text(keys).font(self.font()).size(12));
             return prompt.into();
         }
         match (&page.status, &page.view) {
             (Status::Loading, _) => return self.notice("Loading…"),
             (Status::Stopped(why), _) => return self.notice(why),
             (Status::Ready, Some(View::Detail(_))) => {
-                let theme = self.theme();
-                let markdown = iced::widget::markdown::view(
+                // Its images drawn once fetched, as the store page draws a
+                // README's.
+                let markdown = iced::widget::markdown::view_with(
                     &page.markdown,
-                    iced::widget::markdown::Settings::with_text_size(14, &theme),
-                )
-                .map(Message::ExtensionLinkClicked);
+                    self.markdown_settings(),
+                    &stores::StoreMarkdown {
+                        images: &page.markdown_art,
+                    },
+                );
                 let body = scrollable(container(markdown).padding(Padding::new(14.0)))
                     .id(crate::scroll::ROOT_RESULTS)
                     .height(Length::Shrink);
@@ -3310,6 +5855,9 @@ impl LauncherApp {
                 .map_or("No results", |empty| empty.title.as_str());
             return self.notice(empty);
         }
+        if page.grid_columns.is_some() {
+            return self.extension_grid(page);
+        }
         let mut list = column![].spacing(f32::from(geometry.row_spacing));
         let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
         for (position, &(s, i)) in page.shown.iter().enumerate() {
@@ -3329,7 +5877,7 @@ impl LauncherApp {
                 (None, true) => None,
             };
             let icon = match page.icon(s, i) {
-                Some(icon) => self.extension_icon(icon, selected),
+                Some(icon) => self.masked_icon(icon, page.mask(s, i), selected),
                 None => self.initial_badge(&item.title, selected),
             };
             let row = self.list_row(
@@ -3357,6 +5905,115 @@ impl LauncherApp {
         }
     }
 
+    /// An extension's grid: each section under its title, its cells in rows
+    /// of the section's columns, each cell its content (an image, a colour)
+    /// over its title, as `SectionGridModel` lays them out.
+    fn extension_grid<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
+        let width = f32::from(self.geometry.card_width) - 24.0;
+        let mut grid = column![].spacing(8);
+        for (section, positions) in page.grid_groups() {
+            if let Some(title) = sections.get(section).and_then(|s| s.title.clone()) {
+                grid = grid.push(self.section_heading(title));
+            }
+            let columns = page.section_columns(section);
+            #[allow(clippy::cast_precision_loss)]
+            let side = (width / columns as f32 - 8.0).max(16.0);
+            for chunk in positions.chunks(columns) {
+                let mut cells = row![].spacing(8);
+                for &position in chunk {
+                    let (s, i) = page.shown[position];
+                    let Some(item) = sections.get(s).and_then(|sec| sec.items.get(i)) else {
+                        continue;
+                    };
+                    let selected = position == page.selected;
+                    let art: Element<Message> = match page.icon(s, i) {
+                        Some(icon) => self.icon_art(icon, page.mask(s, i), selected, side * 0.7),
+                        None => Space::new().into(),
+                    };
+                    let tile = container(art)
+                        .width(Length::Fixed(side))
+                        .height(Length::Fixed(side))
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center)
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(palette.surface.to_iced().into()),
+                            border: Border {
+                                color: if selected {
+                                    palette.accent.to_iced()
+                                } else {
+                                    palette.border.to_iced()
+                                },
+                                width: if selected { 2.0 } else { 1.0 },
+                                radius: 8.0.into(),
+                            },
+                            ..container::Style::default()
+                        });
+                    let cell = column![
+                        tile,
+                        text(item.title.clone())
+                            .font(self.font())
+                            .size(12)
+                            .color(palette.text.to_iced())
+                            .width(Length::Fixed(side)),
+                    ]
+                    .spacing(4);
+                    let cell: Element<Message> = mouse_area(cell)
+                        .on_press(Message::ExtensionItemSelected(position))
+                        .into();
+                    let cell: Element<Message> = if selected {
+                        container(cell).id(crate::scroll::ROOT_SELECTION).into()
+                    } else {
+                        cell
+                    };
+                    cells = cells.push(cell);
+                }
+                grid = grid.push(cells);
+            }
+        }
+        let body = scrollable(container(grid).padding(Padding::new(12.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![body, self.notice(notice)].into(),
+            None => body.into(),
+        }
+    }
+
+    /// Asks the engine whether its catalog moved since this window last
+    /// looked.
+    fn catalog_task(&self) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.catalog_generation().await },
+            Message::CatalogGeneration,
+        )
+    }
+
+    /// The engine rescanned applications or extensions: this window scans
+    /// its own copy again, as the C++'s one process reloads its root items on
+    /// `appsChanged`, and searches again so no row points at a moved entry.
+    fn catalog_moved(&mut self, generation: u64) -> Task<Message> {
+        if generation == self.catalog_generation {
+            return Task::none();
+        }
+        self.catalog_generation = generation;
+        self.app_index.rescan_applications();
+        self.app_index.rescan_extensions();
+        if matches!(self.page, Page::Root) {
+            self.search_task()
+        } else {
+            self.results.clear();
+            Task::none()
+        }
+    }
+
     fn open_command(
         &mut self,
         command: &'static compass_core::commands::BuiltinCommand,
@@ -3376,15 +6033,167 @@ impl LauncherApp {
             None => Task::none(),
         };
         match command.kind {
-            CommandKind::ClipboardHistory => {
-                self.page = Page::Clipboard(crate::clipboard_page::ClipboardPage::default());
-                Task::batch([record, self.clipboard_search_task(), focus_search()])
+            CommandKind::ClipboardHistory => Task::batch([record, self.open_clipboard_history()]),
+            CommandKind::Power(id) => {
+                let Some(power) = compass_core::power_commands::command(id) else {
+                    return record;
+                };
+                let asks = self
+                    .power_asks
+                    .get(power.id)
+                    .copied()
+                    .unwrap_or(power.confirm_by_default);
+                if asks {
+                    self.power_confirm = Some(power);
+                    return record;
+                }
+                Task::batch([record, self.run_power_command(power)])
+            }
+            CommandKind::Media(id) => Task::batch([record, self.run_media(command, id, None)]),
+            CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
+            CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
+            CommandKind::SearchTray => Task::batch([record, self.open_search_tray()]),
+            CommandKind::OpenSettings => Task::batch([record, self.open_settings(None)]),
+            CommandKind::Compass(id) => Task::batch([record, self.open_compass_command(id)]),
+            CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
+            CommandKind::RefreshExchangeRates => {
+                Task::batch([record, self.refresh_exchange_rates(command)])
+            }
+            CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
+            CommandKind::SetDefaultBrowser => Task::batch([
+                record,
+                self.open_default_picker(crate::backend::DefaultApp::Browser),
+            ]),
+            CommandKind::SetDefaultTerminal => Task::batch([
+                record,
+                self.open_default_picker(crate::backend::DefaultApp::Terminal),
+            ]),
+            CommandKind::SearchEmojis => Task::batch([record, self.open_emoji_picker()]),
+            CommandKind::SearchFiles => {
+                Task::batch([record, self.open_search_files(String::new())])
+            }
+            CommandKind::CreateShortcut => Task::batch([
+                record,
+                self.open_shortcut_form(compass_core::shortcut_form::Mode::Create, None, false),
+            ]),
+            CommandKind::ManageShortcuts => Task::batch([record, self.open_manage_shortcuts()]),
+            CommandKind::CreateSnippet => Task::batch([
+                record,
+                self.open_snippet_form(compass_core::shortcut_form::Mode::Create),
+            ]),
+            CommandKind::ManageSnippets => Task::batch([record, self.open_manage_snippets()]),
+            CommandKind::RunProgram => Task::batch([record, self.open_run_program()]),
+            CommandKind::SetTheme => Task::batch([record, self.open_set_theme()]),
+            CommandKind::CreateExtension => Task::batch([record, self.open_create_extension()]),
+            CommandKind::ExtensionStore => {
+                self.parked_store = None;
+                Task::batch([
+                    record,
+                    self.open_store_or_intro(crate::backend::Store::Vicinae),
+                ])
+            }
+            CommandKind::RaycastStore => {
+                self.parked_store = None;
+                Task::batch([
+                    record,
+                    self.open_store_or_intro(crate::backend::Store::Raycast),
+                ])
+            }
+            CommandKind::BrowseFonts => {
+                self.parked_fonts = None;
+                Task::batch([record, self.open_browse_fonts()])
             }
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
             }
+            CommandKind::SwitchWorkspaces => Task::batch([record, self.open_switch_workspaces()]),
+            CommandKind::ToggleFullscreen => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Fullscreen),
+            ]),
+            CommandKind::ToggleFloating => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Floating),
+            ]),
+            CommandKind::ToggleOverview => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Overview),
+            ]),
         }
+    }
+
+    /// Opens Search Files with `query` typed, and the remembered category
+    /// (`restoreCategoryFilter`: anything but "All").
+    fn open_search_files(&mut self, query: String) -> Task<Message> {
+        let mut page = crate::files_page::FilesPage::default();
+        if let Some(key) = self.view_memory.get(crate::view_memory::FILE_CATEGORY) {
+            page.set_category(key);
+        }
+        page.set_query(query);
+        self.page = Page::Files(page);
+        Task::batch([self.files_query_task(), focus_search()])
+    }
+
+    /// Asks Search Files' query: at once, or once its debounce runs out.
+    fn files_query_task(&mut self) -> Task<Message> {
+        let Page::Files(page) = &self.page else {
+            return Task::none();
+        };
+        let generation = page.generation;
+        match crate::files_page::debounce_for(&page.query) {
+            Some(delay) => Task::perform(
+                async move {
+                    tokio::time::sleep(delay).await;
+                    generation
+                },
+                Message::FilesDebounced,
+            ),
+            None => self.files_search_task(generation),
+        }
+    }
+
+    /// Sends Search Files' query `generation`, unless the text moved on.
+    fn files_search_task(&mut self, generation: u64) -> Task<Message> {
+        let Page::Files(page) = &mut self.page else {
+            return Task::none();
+        };
+        if page.generation != generation {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            page.apply(
+                generation,
+                Err(
+                    "Search Files needs the Compass engine, and this window is running \
+                     without one"
+                        .to_owned(),
+                ),
+            );
+            return Task::none();
+        };
+        let query = page.query.clone();
+        let category = page.category.clone();
+        Task::perform(
+            async move { backend.search_files(query, category).await },
+            move |result| Message::FilesLoaded { generation, result },
+        )
+    }
+
+    /// Opens the selected file with its default application, or shows it in
+    /// the file browser when `reveal`.
+    fn open_selected_file(&mut self, reveal: bool) -> Task<Message> {
+        let Page::Files(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(backend)) = (page.selected_row(), self.backend.clone()) else {
+            return Task::none();
+        };
+        let path = row.path.clone();
+        Task::perform(
+            async move { backend.open_file(path, reveal).await },
+            Message::FileOpened,
+        )
     }
 
     /// Asks for clipboard history matching the view's filter.
@@ -3403,15 +6212,31 @@ impl LauncherApp {
             );
             return Task::none();
         };
-        let query = page.query.clone();
+        let (query, kind) = (page.query.clone(), page.kind);
         Task::perform(
             async move {
                 clipboard
-                    .clipboard_history(query, crate::clipboard_page::PAGE_SIZE)
+                    .clipboard_history_of_kind(query, crate::clipboard_page::PAGE_SIZE, kind)
                     .await
             },
             move |result| Message::ClipboardLoaded { generation, result },
         )
+    }
+
+    /// Runs what the open question asked about, once Enter confirms it.
+    fn run_confirmed(&mut self) -> Task<Message> {
+        let Some(confirm) = self.confirm.take() else {
+            return Task::none();
+        };
+        let task = match confirm.action {
+            ConfirmAction::ClipboardRemoveAll => self.remove_all_clipboard_entries(),
+            ConfirmAction::RootEdit(id, edit) => self.edit_root_item(id, edit),
+            ConfirmAction::UninstallExtension(id) => self.uninstall_extension(id),
+            ConfirmAction::RemoveTokenSet(extension, provider) => {
+                self.remove_token_set(extension, provider)
+            }
+        };
+        Task::batch([task, focus_search()])
     }
 
     /// Asks the engine for the open windows.
@@ -3527,15 +6352,22 @@ impl LauncherApp {
 
     /// Re-rank locally when no daemon backend is attached.
     fn search(&mut self) {
-        if self.query.trim().is_empty() {
+        let options = compass_core::root_items::SearchOptions {
+            provider_id: self.provider_scope.as_ref().map(|scope| scope.id.clone()),
+            ..compass_core::root_items::SearchOptions::default()
+        };
+        self.favorites_len = 0;
+        if self.query.trim().is_empty() && options.provider_id.is_none() {
             self.results.clear();
             self.selected = 0;
+            self.apply_favorites();
+            self.apply_update();
             return;
         }
 
         self.results = self
             .app_index
-            .search_root_all(&self.query, None)
+            .search_root_with(&self.query, None, &options)
             .into_iter()
             .map(|hit| match hit {
                 compass_core::RootHit::App(app) => RootRow::App(app.index),
@@ -3547,13 +6379,126 @@ impl LauncherApp {
                         .position(|known| known.id == command.id)
                         .unwrap_or_default(),
                 ),
+                compass_core::RootHit::Script { script, .. } => RootRow::Script(
+                    self.app_index
+                        .scripts()
+                        .iter()
+                        .position(|known| known.id == script.id)
+                        .unwrap_or_default(),
+                ),
+                compass_core::RootHit::RhaiScript { script, .. } => RootRow::RhaiScript(
+                    self.app_index
+                        .rhai_scripts()
+                        .iter()
+                        .position(|known| known.id == script.id)
+                        .unwrap_or_default(),
+                ),
+                compass_core::RootHit::Shortcut { shortcut, .. } => RootRow::Shortcut(
+                    self.app_index
+                        .shortcuts()
+                        .iter()
+                        .position(|known| known.id == shortcut.id)
+                        .unwrap_or_default(),
+                ),
             })
             .collect();
         // Back to the top on every new query: the old selection pointed into a
         // different list, and keeping its position would silently select an
         // unrelated application.
         self.selected = 0;
+        if self.provider_scope.is_none() {
+            self.apply_calculator();
+            self.apply_fallbacks();
+        }
         self.warm_icons();
+    }
+
+    /// Offers the fallbacks under the results for a non-empty query, as
+    /// `RootFallbackSection` does.
+    fn apply_fallbacks(&mut self) {
+        self.results
+            .retain(|row| !matches!(row, RootRow::Fallback(_)));
+        if self.query.trim().is_empty() || self.provider_scope.is_some() {
+            return;
+        }
+        let fallbacks: Vec<RootRow> = self
+            .fallbacks
+            .iter()
+            .filter_map(|id| self.resolve_fallback(id))
+            .map(RootRow::Fallback)
+            .collect();
+        self.results.extend(fallbacks);
+    }
+
+    /// The fallback a `fallbacks` entry names here, when it names an item
+    /// that can be one (`isSuitableForFallback`): Search Files, any
+    /// extension command, or a quicklink with exactly one argument.
+    fn resolve_fallback(&self, id: &str) -> Option<Fallback> {
+        if let Some(command) = compass_core::commands::fallback(id) {
+            return Some(Fallback::Command(command));
+        }
+        if let Some(index) = self
+            .app_index
+            .extensions()
+            .iter()
+            .position(|command| command.id == id)
+        {
+            return Some(Fallback::Extension(index));
+        }
+        let shortcut = self.app_index.shortcut_by_entrypoint(id)?;
+        if shortcut.link.arguments.len() != 1 {
+            return None;
+        }
+        self.app_index
+            .shortcuts()
+            .iter()
+            .position(|known| known.id == shortcut.id)
+            .map(Fallback::Shortcut)
+    }
+
+    /// What a fallback row says.
+    fn fallback_title(&self, fallback: Fallback) -> Option<String> {
+        Some(match fallback {
+            Fallback::Command(command) => command.title.to_owned(),
+            Fallback::Extension(index) => self.app_index.extensions().get(index)?.title.clone(),
+            Fallback::Shortcut(index) => {
+                crate::shortcuts_page::display_name(self.app_index.shortcuts().get(index)?)
+                    .to_owned()
+            }
+        })
+    }
+
+    /// Runs a fallback with the query: Search Files opens searching for it,
+    /// an extension command opens with it as its fallback text
+    /// (`OpenBuiltinCommandAction::setForwardSearchText`), and a quicklink
+    /// opens with it as its argument (`OpenShortcutFromSearchText`).
+    fn open_fallback(&mut self, fallback: Fallback) -> Task<Message> {
+        use compass_core::commands::CommandKind;
+        self.panel = None;
+        let query = self.query.clone();
+        match fallback {
+            Fallback::Command(command) => match command.kind {
+                CommandKind::SearchFiles => self.open_search_files(query),
+                _ => self.open_command(command),
+            },
+            Fallback::Extension(index) => self.run_extension_fallback(index, query),
+            Fallback::Shortcut(index) => {
+                let Some(shortcut) = self.app_index.shortcuts().get(index) else {
+                    return Task::none();
+                };
+                let id = shortcut.id.clone();
+                self.send_open_shortcut(id, vec![query])
+            }
+        }
+    }
+
+    /// Puts the calculator's answer to the query first, when there is one.
+    fn apply_calculator(&mut self) {
+        self.results.retain(|row| *row != RootRow::Calculator);
+        self.calculator = compass_core::calculator::evaluate(&self.query, !self.results.is_empty());
+        if self.calculator.is_some() {
+            self.results.insert(0, RootRow::Calculator);
+        }
     }
 
     /// What goes in a row's icon slot: resolved art, or nothing for the initial.
@@ -3569,6 +6514,89 @@ impl LauncherApp {
         item.icon().and_then(|name| self.icon_cache.cached(name))
     }
 
+    /// A root row's `ImageURL` drawn in its icon slot, once warmed, else
+    /// `title`'s initial.
+    fn url_icon(
+        &self,
+        url: Option<&compass_core::image_url::ImageUrl>,
+        title: &str,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = url
+            .filter(|_| self.icons)
+            .and_then(|url| self.url_glyphs.get(&url.to_url())?.as_ref());
+        self.glyph_or_initial(glyph, title, selected)
+    }
+
+    /// An extension command's icon URL, once warmed.
+    fn extension_url(
+        &self,
+        command: &compass_core::extension_commands::ExtensionCommand,
+    ) -> Option<compass_core::image_url::ImageUrl> {
+        self.icons
+            .then(|| command.icon_url(|path| self.known_files.contains(path)))
+    }
+
+    /// Resolves `urls` into [`Self::url_glyphs`], asking for each remote
+    /// image not yet fetched (when [`AppFlags::remote_icons`] allows).
+    fn warm_urls(&mut self, urls: Vec<compass_core::image_url::ImageUrl>) {
+        let find = self.icon_lookup.clone();
+        let find = |name: &str| find.find(name);
+        for url in urls {
+            let key = url.to_url();
+            if self.url_glyphs.contains_key(&key) {
+                continue;
+            }
+            let remote_files = &self.remote_files;
+            let remote = |remote: &str| remote_files.get(remote).cloned();
+            let lookup = crate::icons::UrlLookup {
+                find: &find,
+                remote: &remote,
+                favicon: self.favicon_service,
+                accent: self.palette().accent,
+            };
+            let glyph = crate::icons::url_glyph(&url, &lookup);
+            let waiting = crate::icons::remote_source(&url, self.favicon_service)
+                .filter(|remote| !self.remote_files.contains_key(remote));
+            if let Some(remote) = waiting {
+                if self.remote_icons && self.remote_requested.insert(remote.clone()) {
+                    self.remote_pending.push(remote);
+                }
+                if glyph.is_none() {
+                    // Resolved again when it arrives.
+                    continue;
+                }
+            }
+            self.url_glyphs.insert(key, glyph);
+        }
+    }
+
+    /// A remote root icon arrived in the cache, or could not be fetched.
+    fn root_icon_arrived(&mut self, url: &str, result: &Result<std::path::PathBuf, String>) {
+        match result {
+            Ok(path) => {
+                self.remote_files.insert(url.to_owned(), path.clone());
+                // Whatever waited on it (and its fallbacks) is resolved again.
+                self.url_glyphs.clear();
+                self.warm_icons();
+                self.warm_clipboard_icons();
+            }
+            Err(reason) => tracing::debug!(%url, %reason, "a root icon was not fetched"),
+        }
+    }
+
+    /// Resolve the favicons of clipboard history's link rows.
+    fn warm_clipboard_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Clipboard(page) = &self.page else {
+            return;
+        };
+        let urls: Vec<_> = page.rows.iter().filter_map(clipboard_url).collect();
+        self.warm_urls(urls);
+    }
+
     /// Resolve the icons of the rows now on screen.
     ///
     /// Here rather than in `view` because resolution walks the theme
@@ -3579,7 +6607,7 @@ impl LauncherApp {
     ///
     /// A no-op when icons are off, so the default configuration does no lookup
     /// at all.
-    fn warm_icons(&mut self) {
+    pub(super) fn warm_icons(&mut self) {
         if !self.icons {
             return;
         }
@@ -3589,12 +6617,94 @@ impl LauncherApp {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => self.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
+                | RootRow::Calculator
+                | RootRow::Update => None,
             })
             .filter_map(AppItem::icon)
             .collect();
         let find = self.icon_lookup.clone();
         self.icon_cache.warm(names, &|name| find.find(name));
+
+        // Extension, script and shortcut rows: their `ImageURL`s.
+        let mut urls = Vec::new();
+        for row in &self.results {
+            match row {
+                RootRow::Extension(index) => {
+                    if let Some(command) = self.app_index.extensions().get(*index) {
+                        for icon in [
+                            command.icon.as_deref(),
+                            Some(command.extension_icon.as_str()),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .filter(|icon| !icon.is_empty())
+                        {
+                            let path = command.extension_dir.join("assets").join(icon);
+                            if path.is_file() {
+                                self.known_files.insert(path);
+                            }
+                        }
+                        urls.push(command.icon_url(|path| self.known_files.contains(path)));
+                    }
+                }
+                RootRow::Script(index) => {
+                    if let Some(url) = self
+                        .app_index
+                        .scripts()
+                        .get(*index)
+                        .and_then(|script| self.script_icons.get(&script.id))
+                    {
+                        urls.push(url.clone());
+                    }
+                }
+                RootRow::Shortcut(index) => {
+                    if let Some(shortcut) = self.app_index.shortcuts().get(*index) {
+                        urls.push(shortcut_url(&shortcut.icon));
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.warm_urls(urls);
+    }
+
+    /// Resolve the file-type icons of Search Files' rows.
+    fn warm_file_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Files(page) = &self.page else {
+            return;
+        };
+        let find = self.icon_lookup.clone();
+        self.file_glyphs
+            .warm(page.rows.iter().map(|file| file.path.as_str()), &|name| {
+                find.find(name)
+            });
+    }
+
+    /// Resolve the icons of the windows' applications.
+    fn warm_window_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Windows(page) = &self.page else {
+            return;
+        };
+        let names: Vec<String> = page
+            .all
+            .iter()
+            .filter_map(|window| self.window_app(window)?.icon().map(str::to_owned))
+            .collect();
+        let find = self.icon_lookup.clone();
+        self.icon_cache
+            .warm(names.iter().map(String::as_str), &|name| find.find(name));
     }
 }
 
@@ -3622,6 +6732,37 @@ mod tests {
 
     fn app(dir: &std::path::Path) -> LauncherApp {
         LauncherApp::with_index(index(dir))
+    }
+
+    #[test]
+    fn a_moved_catalog_generation_rescans_and_the_same_one_does_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        fs::write(
+            dir.path().join("zephyr.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Zephyr\nExec=/bin/true\n",
+        )
+        .expect("write entry");
+        let _ = app.update(Message::CatalogGeneration(Ok(0)));
+        assert!(app.app_index.get("zephyr.desktop").is_none(), "unchanged");
+
+        let _ = app.update(Message::CatalogGeneration(Ok(1)));
+        assert!(app.app_index.get("zephyr.desktop").is_some());
+        let _ = app.update(Message::QueryChanged("zeph".into()));
+        assert_eq!(
+            app.selected_item().map(AppItem::key),
+            Some("zephyr.desktop")
+        );
+
+        fs::remove_file(dir.path().join("zephyr.desktop")).expect("remove");
+        let _ = app.update(Message::CatalogGeneration(Ok(1)));
+        assert!(
+            app.app_index.get("zephyr.desktop").is_some(),
+            "same generation"
+        );
+        let _ = app.update(Message::CatalogGeneration(Err("no engine".into())));
+        let _ = app.update(Message::CatalogGeneration(Ok(2)));
+        assert!(app.app_index.get("zephyr.desktop").is_none());
     }
 
     #[test]
@@ -3669,6 +6810,117 @@ mod tests {
     }
 
     #[test]
+    fn a_due_onboarding_opens_the_window_even_when_started_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            onboarding: Some(dir.path().join("compass/onboarding.json")),
+            ..AppFlags::default()
+        });
+        assert!(app.pending_window.is_some(), "the flow is put on screen");
+        assert_eq!(
+            app.onboarding_step(),
+            Some(compass_core::onboarding::Step::Welcome)
+        );
+
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            onboarding: None,
+            ..AppFlags::default()
+        });
+        assert!(app.pending_window.is_none(), "not due: hidden as asked");
+        assert!(!app.showing_onboarding());
+    }
+
+    #[test]
+    fn finishing_the_onboarding_records_it_and_hides() {
+        use compass_core::onboarding::{self, Step};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compass").join(onboarding::FILE_NAME);
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        app.open_onboarding(path.clone());
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert_eq!(app.onboarding_step(), Some(Step::Personalize));
+        let task = app.update(Message::OnboardingTheme(
+            crate::onboarding_page::ThemeOption(crate::theme::Theme::Dracula),
+        ));
+        settle(&mut app, task);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula, "previewed");
+        assert_eq!(
+            backend.themes_kept.lock().unwrap().as_slice(),
+            ["dracula"],
+            "and kept"
+        );
+        let task = app.update(Message::OnboardingOpen(onboarding::HOTKEY_DOCS_URL));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            [onboarding::HOTKEY_DOCS_URL]
+        );
+
+        let _ = app.update(Message::OnboardingContinue);
+        assert_eq!(app.onboarding_step(), Some(Step::Complete));
+        assert!(onboarding::should_show(&path, false), "not before Finish");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(!app.showing_onboarding(), "Finish hides the flow");
+        assert!(!onboarding::should_show(&path, false), "and records it");
+    }
+
+    #[test]
+    fn escape_closes_the_onboarding_without_recording_it() {
+        use compass_core::onboarding;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(onboarding::FILE_NAME);
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.open_onboarding(path.clone());
+        let _ = app.update(Message::OnboardingJump(2));
+        assert_eq!(
+            app.onboarding_step(),
+            Some(onboarding::Step::Complete),
+            "a dot goes straight to its step"
+        );
+        let _ = app.update(Message::OnboardingBack);
+        assert_eq!(app.onboarding_step(), Some(onboarding::Step::Personalize));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.showing_onboarding());
+        assert!(!path.exists(), "the next start asks again");
+    }
+
+    #[test]
+    fn every_onboarding_step_draws_its_heading_and_buttons() {
+        use compass_core::onboarding::Step;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        for (step, expected) in [
+            (Step::Welcome, ["Welcome to Compass", "Continue"]),
+            (Step::Personalize, ["Make it your own", "Open Docs"]),
+            (Step::Complete, ["Setup complete", "Finish"]),
+        ] {
+            assert_eq!(app.onboarding_step(), Some(step));
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            for label in expected {
+                assert!(ui.find(label).is_ok(), "{step:?} has no {label:?}");
+            }
+            drop(ui);
+            let _ = app.update(Message::OnboardingContinue);
+        }
+    }
+
+    #[test]
     fn hidden_boot_requires_an_engine_and_waits_for_activation() {
         let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
         let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
@@ -3695,6 +6947,130 @@ mod tests {
         assert!(
             standalone.pending_window.is_some(),
             "never strand an undriven UI invisibly"
+        );
+    }
+
+    #[test]
+    fn a_copied_answer_is_remembered_and_calculator_history_lists_pins_and_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+
+        // Copying the root list's answer keeps the calculation.
+        app.query = "5 ft to m".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Calculator));
+        let task = app.update(Message::LaunchSelected);
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, ["1.524 m"]);
+        let kept = backend.calculations.lock().unwrap().clone();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            (kept[0].question.as_str(), kept[0].conversion),
+            ("5 ft to m", true)
+        );
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        app.query = "calculator history".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Calculator(page) = &app.page else {
+            panic!("not on Calculator History: {}", app.state_line());
+        };
+        assert_eq!(page.groups.len(), 1);
+        assert_eq!(page.groups[0].records[0].answer, "1.524 m");
+
+        // The live result for what is typed leads, and copying it keeps it.
+        let task = app.update(Message::CalculatorQueryChanged("=6*7".into()));
+        settle(&mut app, task);
+        let Page::Calculator(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.live.as_ref().map(|a| a.answer.as_str()), Some("42"));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, ["42"]);
+        assert_eq!(backend.calculations.lock().unwrap().len(), 2);
+
+        // The panel pins and removes a remembered row.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let task = app.open_calculator_history();
+        settle(&mut app, task);
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(Message::PanelFilterChanged("Pin entry".into()));
+        settle(&mut app, task);
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("Delete entry".into()));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.calculator_edits.lock().unwrap().as_slice(),
+            [
+                crate::backend::CalculatorChange::Pin("r1".into()),
+                crate::backend::CalculatorChange::Remove("r1".into()),
+            ]
+        );
+        let Page::Calculator(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.notice.as_deref(), Some("Entry removed"));
+        assert_eq!(page.len(), 1, "the list reloaded without it");
+    }
+
+    #[test]
+    fn describe_answers_whether_the_window_is_open_and_changes_nothing() {
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (mut app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            ..AppFlags::default()
+        });
+        let _ = app.update(Message::Command(UiCommand::Describe));
+        assert_eq!(outcomes.try_recv(), Ok(UiOutcome::Hidden));
+        assert!(app.pending_window.is_none(), "asking opened nothing");
+        assert!(!app.is_awaiting());
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let _ = app.update(Message::Command(UiCommand::Describe));
+        assert_eq!(
+            outcomes.try_recv(),
+            Ok(UiOutcome::Shown),
+            "a window on its way counts as open"
+        );
+    }
+
+    #[test]
+    fn a_command_line_launch_opens_the_builtin_and_types_its_fallback_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        let launch = crate::backend::ExtensionLaunch {
+            id: "commands:search-files".into(),
+            arguments: None,
+            preferences: false,
+            fallback_text: Some("report".into()),
+        };
+        // Not settled: the search waits out its debounce on a timer.
+        let _ = app.update(Message::LaunchFetched(Ok(launch)));
+        assert_eq!(files_page(&app).query, "report", "{}", app.state_line());
+
+        let launch = crate::backend::ExtensionLaunch {
+            id: "commands:manage-snippets".into(),
+            arguments: None,
+            preferences: false,
+            fallback_text: None,
+        };
+        let _ = app.update(Message::LaunchFetched(Ok(launch)));
+        assert!(
+            matches!(app.page, Page::Snippets(_)),
+            "{}",
+            app.state_line()
         );
     }
 
@@ -3763,7 +7139,8 @@ mod tests {
                 root_config: config.root_config(),
                 ..AppFlags::default()
             });
-            let _ = app.update(Message::QueryChanged("Firefox".into()));
+            app.query = "Firefox".into();
+            app.search();
             assert!(app.results.is_empty());
             let _ = app.update(Message::QueryChanged("shellwork".into()));
             assert_eq!(app.results.len(), usize::from(provider_enabled));
@@ -3796,7 +7173,8 @@ mod tests {
             app.results.is_empty(),
             "clearing settings removes the alias"
         );
-        let _ = app.update(Message::QueryChanged("Firefox".into()));
+        app.query = "Firefox".into();
+        app.search();
         assert_eq!(app.results.len(), 1);
     }
 
@@ -3879,8 +7257,186 @@ mod tests {
         assert_eq!(recorded_launch(false), [None]);
     }
 
+    // ---- The pointer ----
+
+    /// What clicking the text `label` in the current view produces.
+    fn click(app: &LauncherApp, label: &str) -> Vec<Message> {
+        let mut ui = iced_test::simulator(app.view());
+        ui.click(label)
+            .unwrap_or_else(|_| panic!("{label:?} is not on screen: {}", app.state_line()));
+        ui.into_messages().collect()
+    }
+
+    fn deliver(app: &mut LauncherApp, messages: Vec<Message>) {
+        for message in messages {
+            let task = app.update(message);
+            settle(app, task);
+        }
+    }
+
+    /// The desktop entries launched, by name.
+    /// Four applications, all matching "Application", the first selected.
+    fn four_applications(dir: &std::path::Path) -> LauncherApp {
+        for i in 0..4 {
+            fs::write(
+                dir.join(format!("app-{i:02}.desktop")),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName=Application {i:02}\nExec=/bin/true\n"
+                ),
+            )
+            .expect("write entry");
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        app.query = "Application".into();
+        app.search();
+        assert!(app.results.len() >= 4, "{}", app.state_line());
+        assert_eq!(app.selected, 0);
+        app
+    }
+
+    #[derive(Debug, Default)]
+    struct LaunchedEntries(std::sync::Mutex<Vec<String>>);
+
+    impl AppLauncher for LaunchedEntries {
+        fn launch<'a>(
+            &'a self,
+            entry: &'a compass_xdg::DesktopEntry,
+            _uris: &'a [&'a str],
+        ) -> compass_platform::LaunchFuture<'a> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(entry.name().to_owned());
+                Ok(compass_platform::LaunchMethod::Direct)
+            })
+        }
+
+        fn launch_action<'a>(
+            &'a self,
+            entry: &'a compass_xdg::DesktopEntry,
+            _action_id: &'a str,
+            uris: &'a [&'a str],
+        ) -> compass_platform::LaunchFuture<'a> {
+            self.launch(entry, uris)
+        }
+    }
+
+    #[test]
+    fn clicking_a_root_row_launches_that_row_not_the_selected_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = Arc::new(LaunchedEntries::default());
+        let mut app = four_applications(dir.path()).with_launcher(launcher.clone());
+        let (position, name) = app
+            .results
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(position, row)| match row {
+                RootRow::App(index) => {
+                    Some((position, app.app_index.items()[*index].name().to_owned()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no application below the first row: {}", app.state_line()));
+
+        let messages = click(&app, &name);
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::ResultClicked(p) if *p == position)),
+            "{messages:?}"
+        );
+        deliver(&mut app, messages);
+        assert_eq!(launcher.0.lock().unwrap().as_slice(), [name]);
+    }
+
+    #[test]
+    fn clicking_a_root_command_opens_it_and_a_store_row_opens_that_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = store_backend(dir.path());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        app.view_memory.set(
+            crate::compass_pages::intro_key(crate::backend::Store::Vicinae),
+            "true",
+        );
+        app.query = "extension store".into();
+        app.search();
+        let title = app
+            .results
+            .iter()
+            .find_map(|row| match row {
+                RootRow::Command(command) if command.id() == "commands:store" => {
+                    Some(command.title)
+                }
+                _ => None,
+            })
+            .expect("the store is a root result");
+
+        let messages = click(&app, title);
+        deliver(&mut app, messages);
+        let Page::Store(page) = &app.page else {
+            panic!("the click did not open the store: {}", app.state_line());
+        };
+        assert_eq!(page.selected, 0);
+        assert_eq!(page.rows[1].title, "Timer");
+
+        let messages = click(&app, "Timer");
+        deliver(&mut app, messages);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("the click did not open the row: {}", app.state_line());
+        };
+        assert_eq!(detail.title, "Extension Store - Timer");
+    }
+
+    /// Hovering sends nothing and selects nothing: the C++ list moves its
+    /// selection only on a click or a key (`SelectableDelegate.qml`).
+    #[test]
+    fn hovering_a_root_row_does_not_move_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = four_applications(dir.path());
+        let RootRow::App(index) = app.results[1] else {
+            panic!("the second row is not an application: {}", app.state_line())
+        };
+        let name = app.app_index.items()[index].name().to_owned();
+        let mut ui = iced_test::simulator(app.view());
+        let centre = ui
+            .find(name.as_str())
+            .expect("the row is drawn")
+            .bounds()
+            .center();
+        ui.point_at(centre);
+        ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position: centre,
+        })]);
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(messages.is_empty(), "{messages:?}");
+        assert_eq!(app.selected, 0);
+    }
+
+    /// A snippet the fake expanded or pasted: `(id, arguments, pasted)`.
+    type SnippetUse = (String, Vec<(String, String)>, bool);
+
     #[derive(Debug, Default)]
     struct TestBackend {
+        /// Local storage, by namespace.
+        storage: Vec<(String, Vec<crate::backend::StorageItemRow>)>,
+        /// Stored token sets.
+        token_sets: std::sync::Mutex<Vec<crate::backend::TokenSetRow>>,
+        /// The root edits the engine was asked for.
+        root_edits: std::sync::Mutex<Vec<(String, compass_core::root_items::RootEdit)>>,
+        /// Other applications' tray icons.
+        tray: Vec<crate::backend::TrayItemRow>,
+        /// What the tray was asked to do.
+        tray_calls: std::sync::Mutex<Vec<String>>,
+        /// What the default pickers offer.
+        default_apps: Vec<crate::backend::DefaultAppRow>,
+        /// The recorder's capture, as the engine was told it.
+        captures: std::sync::Mutex<Vec<bool>>,
+        /// What the desktop says of every probed combination, and the
+        /// combinations probed.
+        probe_refusal: Option<String>,
+        probes: std::sync::Mutex<Vec<String>>,
+        /// The defaults set: `(kind, id)`.
+        defaults_set: std::sync::Mutex<Vec<(crate::backend::DefaultApp, String)>>,
         keys: Vec<String>,
         recorded: std::sync::Mutex<Vec<String>>,
         fail_history: bool,
@@ -3894,18 +7450,182 @@ mod tests {
         depth: std::sync::Mutex<u32>,
         /// An alert the fake's first view carries.
         alert: Option<crate::backend::ExtensionPrompt>,
+        /// A toast the fake's views carry.
+        toast: Option<crate::backend::ExtensionToast>,
+        /// The power commands asked for.
+        powered: std::sync::Mutex<Vec<String>>,
+        /// The media commands asked for, each with its argument after a
+        /// space.
+        played: std::sync::Mutex<Vec<String>>,
+        /// The players Now Playing lists.
+        players: std::sync::Mutex<Vec<crate::backend::MediaPlayerRow>>,
+        /// The families "Set as Compass font" saved.
+        fonts_set: std::sync::Mutex<Vec<String>>,
+        /// What the user allowed their Rhai scripts.
+        grants: std::sync::Mutex<Vec<crate::backend::ScriptGrant>>,
+        /// The calculator's history, one group, and what changed it.
+        calculations: std::sync::Mutex<Vec<crate::backend::CalculatorRow>>,
+        calculator_edits: std::sync::Mutex<Vec<crate::backend::CalculatorChange>>,
+        /// What "Open with…" offers, and what it was asked to open.
+        openers: Vec<crate::backend::OpenerRow>,
+        opener_lookups: std::sync::Mutex<Vec<String>>,
+        opened_with: std::sync::Mutex<Vec<(String, String)>>,
+        /// What a file's panel depends on, and the file actions asked for.
+        file_info: crate::backend::FileActions,
+        file_calls: std::sync::Mutex<Vec<(&'static str, String)>>,
+        /// What Now Playing asked the players to do.
+        controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
+        remembered: std::sync::Mutex<Vec<()>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
         saved: std::sync::Mutex<Vec<serde_json::Map<String, serde_json::Value>>>,
         /// Arguments the fake asks for until a run carries some.
         wants: Vec<crate::backend::PreferenceInput>,
         given: std::sync::Mutex<Vec<Option<serde_json::Map<String, serde_json::Value>>>>,
+        /// The files Search Files finds, by name.
+        files: Vec<crate::backend::FileRow>,
+        /// The Search Files queries asked, in order.
+        file_queries: std::sync::Mutex<Vec<String>>,
+        /// The files opened, and whether each was only revealed.
+        opened: std::sync::Mutex<Vec<(String, bool)>>,
+        /// The shortcut store.
+        shortcuts: std::sync::Mutex<Vec<crate::backend::Shortcut>>,
+        /// The shortcuts opened, with their arguments.
+        opened_shortcuts: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// The root items launched through the engine, with their text.
+        launched: std::sync::Mutex<Vec<(String, Option<String>)>>,
+        /// The text pasted.
+        pasted: std::sync::Mutex<Vec<String>>,
+        /// Whether a paste is refused, as where the engine cannot paste.
+        refuse_paste: bool,
+        /// The shortcuts saved, as the form sent them.
+        drafts: std::sync::Mutex<Vec<crate::backend::ShortcutDraft>>,
+        /// The snippet store.
+        snippets: std::sync::Mutex<Vec<crate::backend::Snippet>>,
+        /// The snippets saved, as the form sent them.
+        snippet_drafts: std::sync::Mutex<Vec<crate::backend::SnippetDraft>>,
+        /// The snippets expanded or pasted: `(id, arguments, pasted)`.
+        snippet_uses: std::sync::Mutex<Vec<SnippetUse>>,
+        /// The script commands the fake lists.
+        scripts: Vec<compass_core::script_scan::ScriptItem>,
+        /// Each script's icon URL, by id.
+        script_icons: Vec<(String, String)>,
+        /// The scripts run, with their arguments.
+        script_runs: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// The programs Run Terminal Program ran: `(argv, terminal, hold)`.
+        programs_ran: std::sync::Mutex<Vec<(Vec<String>, bool, bool)>>,
+        /// The dmenu answers sent: `(token, output)`.
+        dmenu_answers: std::sync::Mutex<Vec<(u64, Option<String>)>>,
+        /// The themes kept.
+        themes_kept: std::sync::Mutex<Vec<String>>,
+        /// The extensions created.
+        created: std::sync::Mutex<Vec<crate::backend::ExtensionDraft>>,
+        /// The store's rows; an install marks one installed and writes its
+        /// manifest into `store_dir`, as the engine would.
+        store_rows: std::sync::Mutex<Vec<crate::backend::StoreRow>>,
+        /// Where installs land.
+        store_dir: Option<std::path::PathBuf>,
+        /// The store browses asked, in order.
+        store_queries: std::sync::Mutex<Vec<(crate::backend::Store, String)>>,
+        /// The URLs opened.
+        opened_urls: std::sync::Mutex<Vec<String>>,
+        /// The newer release the engine reports.
+        update: std::sync::Mutex<Option<crate::backend::UpdateOffer>>,
+        /// The releases skipped.
+        skipped: std::sync::Mutex<Vec<String>>,
+        /// The exchange rates the fake engine holds and refreshes to, and
+        /// why a refresh fails when it does.
+        rates: Option<compass_core::exchange_rates::ExchangeRates>,
+        refuse_rates: Option<String>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
         fn search(&self, _query: String) -> crate::backend::BackendFuture<'_, Vec<String>> {
             Box::pin(async { Ok(self.keys.clone()) })
+        }
+
+        fn set_shortcut_capture(&self, capturing: bool) -> crate::backend::BackendFuture<'_, ()> {
+            self.captures.lock().unwrap().push(capturing);
+            Box::pin(async { Ok(()) })
+        }
+
+        fn probe_shortcut(
+            &self,
+            trigger: String,
+        ) -> crate::backend::BackendFuture<'_, Option<String>> {
+            self.probes.lock().unwrap().push(trigger);
+            let refusal = self.probe_refusal.clone();
+            Box::pin(async move { Ok(refusal) })
+        }
+
+        fn edit_root_item(
+            &self,
+            id: String,
+            edit: compass_core::root_items::RootEdit,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.root_edits.lock().unwrap().push((id, edit));
+                Ok(())
+            })
+        }
+
+        fn local_storage_namespaces(&self) -> crate::backend::BackendFuture<'_, Vec<String>> {
+            Box::pin(async move { Ok(self.storage.iter().map(|(ns, _)| ns.clone()).collect()) })
+        }
+
+        fn local_storage_items(
+            &self,
+            namespace: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::StorageItemRow>> {
+            Box::pin(async move {
+                Ok(self
+                    .storage
+                    .iter()
+                    .find(|(ns, _)| *ns == namespace)
+                    .map(|(_, items)| items.clone())
+                    .unwrap_or_default())
+            })
+        }
+
+        fn oauth_token_sets(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TokenSetRow>> {
+            Box::pin(async move { Ok(self.token_sets.lock().unwrap().clone()) })
+        }
+
+        fn remove_oauth_token_set(
+            &self,
+            extension_id: String,
+            provider_id: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.token_sets.lock().unwrap().retain(|set| {
+                    set.extension_id != extension_id || set.provider_id != provider_id
+                });
+                Ok(())
+            })
+        }
+
+        fn list_default_apps(
+            &self,
+            _kind: crate::backend::DefaultApp,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::DefaultAppRow>> {
+            Box::pin(async move { Ok(self.default_apps.clone()) })
+        }
+
+        fn set_default_app(
+            &self,
+            kind: crate::backend::DefaultApp,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if id == "broken.desktop" {
+                    return Err(compass_core::default_app::BROWSER_FAILURE.to_owned());
+                }
+                self.defaults_set.lock().unwrap().push((kind, id));
+                Ok(())
+            })
         }
 
         fn record_launch(&self, key: String) -> crate::backend::BackendFuture<'_, ()> {
@@ -3916,6 +7636,733 @@ mod tests {
                 } else {
                     Ok(())
                 }
+            })
+        }
+
+        fn run_power_command(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.powered.lock().unwrap().push(id);
+                Ok(())
+            })
+        }
+
+        fn run_media_command(
+            &self,
+            id: String,
+            argument: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.played.lock().unwrap().push(match argument {
+                    Some(argument) => format!("{id} {argument}"),
+                    None => id,
+                });
+                Err("No media player is running".to_owned())
+            })
+        }
+
+        fn list_media_players(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::MediaPlayerRow>> {
+            Box::pin(async move { Ok(self.players.lock().unwrap().clone()) })
+        }
+
+        fn control_media_player(
+            &self,
+            player: String,
+            action: crate::backend::MediaAction,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let mut players = self.players.lock().unwrap();
+                if action == crate::backend::MediaAction::PlayPause
+                    && let Some(row) = players.iter_mut().find(|row| row.id == player)
+                {
+                    row.playing = !row.playing;
+                    row.paused = !row.playing;
+                }
+                self.controlled.lock().unwrap().push((player, action));
+                Ok(())
+            })
+        }
+
+        fn file_actions(
+            &self,
+            _path: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::FileActions> {
+            Box::pin(async move { Ok(self.file_info.clone()) })
+        }
+
+        fn copy_file(&self, path: String, paste: bool) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let what = if paste { "paste" } else { "copy" };
+                self.file_calls.lock().unwrap().push((what, path));
+                Ok(())
+            })
+        }
+
+        fn run_executable(
+            &self,
+            path: String,
+            make_executable: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                assert!(make_executable);
+                self.file_calls.lock().unwrap().push(("run", path));
+                Ok(())
+            })
+        }
+
+        fn set_wallpaper(&self, path: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.file_calls.lock().unwrap().push(("wallpaper", path));
+                Err("Failed to set wallpaper: no backend".to_owned())
+            })
+        }
+
+        fn search_files(
+            &self,
+            query: String,
+            category: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::FileResults> {
+            Box::pin(async move {
+                self.file_queries.lock().unwrap().push(match &category {
+                    Some(category) => format!("{query} [{category}]"),
+                    None => query.clone(),
+                });
+                Ok(crate::backend::FileResults {
+                    heading: if query.is_empty() {
+                        "Recently Accessed".to_owned()
+                    } else {
+                        "Results".to_owned()
+                    },
+                    files: self
+                        .files
+                        .iter()
+                        .filter(|file| file.name.contains(&query))
+                        .filter(|file| category.as_ref().is_none_or(|c| &file.category == c))
+                        .cloned()
+                        .collect(),
+                })
+            })
+        }
+
+        fn open_file(&self, path: String, reveal: bool) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened.lock().unwrap().push((path, reveal));
+                Ok(())
+            })
+        }
+
+        fn fetch_dmenu(
+            &self,
+            token: u64,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::DmenuList> {
+            Box::pin(async move {
+                assert_eq!(token, 5);
+                Ok(crate::backend::DmenuList {
+                    content: "alpha\nbeta\n\ngamma\n".into(),
+                    section_title: Some("Pick ({count})".into()),
+                    ..crate::backend::DmenuList::default()
+                })
+            })
+        }
+
+        fn create_extension(
+            &self,
+            draft: crate::backend::ExtensionDraft,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let path = format!("{}/{}", draft.location, draft.title.to_lowercase());
+                self.created.lock().unwrap().push(draft);
+                Ok(path)
+            })
+        }
+
+        fn set_theme(&self, theme: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.themes_kept.lock().unwrap().push(theme);
+                Ok(())
+            })
+        }
+
+        fn list_fonts(&self) -> crate::backend::BackendFuture<'_, crate::backend::FontList> {
+            Box::pin(async {
+                let font = |name: &str, primary: &str, categories: &[&str]| {
+                    crate::backend::FontListEntry {
+                        name: name.into(),
+                        family: name.into(),
+                        glyph: Some("Aa".into()),
+                        color: false,
+                        primary: primary.into(),
+                        categories: categories.iter().map(|c| (*c).to_owned()).collect(),
+                    }
+                };
+                Ok(crate::backend::FontList {
+                    fonts: vec![
+                        font("Inter", "Latin", &["Latin"]),
+                        font("JetBrains Mono", "Monospace", &["Latin", "Monospace"]),
+                    ],
+                    categories: vec!["Latin".into(), "Monospace".into()],
+                })
+            })
+        }
+
+        fn list_script_grants(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
+            Box::pin(async move { Ok(self.grants.lock().unwrap().clone()) })
+        }
+
+        fn tray_items(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TrayItemRow>> {
+            Box::pin(async move { Ok(self.tray.clone()) })
+        }
+
+        fn tray_activate(
+            &self,
+            key: String,
+            secondary: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.tray_calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("activate {key} {secondary}"));
+                Ok(())
+            })
+        }
+
+        fn tray_menu(
+            &self,
+            key: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TrayMenuRow>> {
+            Box::pin(async move {
+                self.tray_calls.lock().unwrap().push(format!("menu {key}"));
+                Ok(vec![
+                    crate::backend::TrayMenuRow {
+                        id: 1,
+                        label: "Open Chat".into(),
+                        ..crate::backend::TrayMenuRow::default()
+                    },
+                    crate::backend::TrayMenuRow {
+                        id: 3,
+                        label: "Status › Away".into(),
+                        toggled: Some(true),
+                        ..crate::backend::TrayMenuRow::default()
+                    },
+                ])
+            })
+        }
+
+        fn tray_trigger(&self, key: String, id: i32) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.tray_calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("trigger {key} {id}"));
+                Ok(())
+            })
+        }
+
+        fn exchange_rates(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Option<compass_core::exchange_rates::ExchangeRates>>
+        {
+            Box::pin(async move { Ok(self.rates.clone()) })
+        }
+
+        fn refresh_exchange_rates(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, compass_core::exchange_rates::ExchangeRates>
+        {
+            Box::pin(async move {
+                match (&self.refuse_rates, &self.rates) {
+                    (Some(reason), _) => Err(reason.clone()),
+                    (None, Some(rates)) => Ok(rates.clone()),
+                    (None, None) => Err("there is no exchange rate source".to_owned()),
+                }
+            })
+        }
+
+        fn calculator_history(
+            &self,
+            query: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::CalculatorGroupRow>> {
+            Box::pin(async move {
+                let records: Vec<_> = self
+                    .calculations
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|r| r.question.contains(&query) || r.answer.contains(&query))
+                    .cloned()
+                    .collect();
+                Ok(if records.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![crate::backend::CalculatorGroupRow {
+                        name: "Today".into(),
+                        records,
+                    }]
+                })
+            })
+        }
+
+        fn add_calculator_record(
+            &self,
+            question: String,
+            answer: String,
+            conversion: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let mut rows = self.calculations.lock().unwrap();
+                let id = format!("r{}", rows.len());
+                rows.insert(
+                    0,
+                    crate::backend::CalculatorRow {
+                        id,
+                        question,
+                        answer,
+                        conversion,
+                        pinned: false,
+                    },
+                );
+                Ok(())
+            })
+        }
+
+        fn edit_calculator_history(
+            &self,
+            change: crate::backend::CalculatorChange,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if let crate::backend::CalculatorChange::Remove(id) = &change {
+                    self.calculations.lock().unwrap().retain(|r| r.id != *id);
+                }
+                self.calculator_edits.lock().unwrap().push(change);
+                Ok(())
+            })
+        }
+
+        fn revoke_script_grant(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
+            Box::pin(async move {
+                let mut grants = self.grants.lock().unwrap();
+                grants.retain(|grant| grant.id != id);
+                Ok(grants.clone())
+            })
+        }
+
+        fn set_font(&self, family: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.fonts_set.lock().unwrap().push(family);
+                Ok(())
+            })
+        }
+
+        fn font_specimen(&self, name: String) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move { Ok(format!("# {name}\n\nThe quick brown fox\n\n---\n")) })
+        }
+
+        fn store_browse(
+            &self,
+            store: crate::backend::Store,
+            query: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::StoreList> {
+            Box::pin(async move {
+                self.store_queries
+                    .lock()
+                    .unwrap()
+                    .push((store, query.clone()));
+                let rows = self
+                    .store_rows
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|row| row.title.to_lowercase().contains(&query.to_lowercase()))
+                    .cloned()
+                    .collect();
+                Ok(crate::backend::StoreList {
+                    heading: if query.is_empty() {
+                        "Extensions"
+                    } else {
+                        "Results"
+                    }
+                    .into(),
+                    rows,
+                })
+            })
+        }
+
+        fn store_extension(
+            &self,
+            _store: crate::backend::Store,
+            _author: String,
+            name: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::StoreDetail> {
+            Box::pin(async move {
+                let row = self
+                    .store_rows
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row.name == name)
+                    .cloned()
+                    .ok_or("Extension not found")?;
+                Ok(crate::backend::StoreDetail {
+                    markdown: format!("# {}\n\n{}", row.title, row.description),
+                    row,
+                    readme_url: Some("https://example.com/README.md".into()),
+                    ..crate::backend::StoreDetail::default()
+                })
+            })
+        }
+
+        fn store_install(
+            &self,
+            _store: crate::backend::Store,
+            _author: String,
+            name: String,
+        ) -> crate::backend::BackendFuture<'_, (String, String)> {
+            Box::pin(async move {
+                let mut rows = self.store_rows.lock().unwrap();
+                let row = rows
+                    .iter_mut()
+                    .find(|row| row.name == name)
+                    .ok_or("Extension not found")?;
+                row.installed = true;
+                if let Some(dir) = &self.store_dir {
+                    let target = dir.join(&row.id);
+                    fs::create_dir_all(&target).unwrap();
+                    fs::write(
+                        target.join("package.json"),
+                        format!(
+                            r#"{{"name": "{name}", "title": "{}", "author": "zoe",
+                                "commands": [{{"name": "show", "title": "Show The Clock", "mode": "view"}}]}}"#,
+                            row.title
+                        ),
+                    )
+                    .unwrap();
+                }
+                Ok((row.id.clone(), row.title.clone()))
+            })
+        }
+
+        fn store_uninstall(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                for row in self.store_rows.lock().unwrap().iter_mut() {
+                    if row.id == id {
+                        row.installed = false;
+                    }
+                }
+                if let Some(dir) = &self.store_dir {
+                    let _ = fs::remove_dir_all(dir.join(&id));
+                }
+                Ok(())
+            })
+        }
+
+        fn open_url(&self, url: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened_urls.lock().unwrap().push(url);
+                Ok(())
+            })
+        }
+
+        fn update_status(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Option<crate::backend::UpdateOffer>> {
+            Box::pin(async move { Ok(self.update.lock().unwrap().clone()) })
+        }
+
+        fn skip_update(&self, tag: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let mut update = self.update.lock().unwrap();
+                if update.as_ref().is_some_and(|offer| offer.tag == tag) {
+                    *update = None;
+                }
+                self.skipped.lock().unwrap().push(tag);
+                Ok(())
+            })
+        }
+
+        fn choose_dmenu(
+            &self,
+            token: u64,
+            output: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.dmenu_answers.lock().unwrap().push((token, output));
+                Ok(())
+            })
+        }
+
+        fn list_programs(&self) -> crate::backend::BackendFuture<'_, crate::backend::ProgramList> {
+            Box::pin(async {
+                Ok(crate::backend::ProgramList {
+                    programs: vec!["/usr/bin/htop".into(), "/usr/bin/top".into()],
+                    terminal: Some("Ptyxis".into()),
+                    default_action: "run-in-terminal".into(),
+                })
+            })
+        }
+
+        fn run_program(
+            &self,
+            argv: Vec<String>,
+            terminal: bool,
+            hold: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.programs_ran
+                    .lock()
+                    .unwrap()
+                    .push((argv, terminal, hold));
+                Ok(())
+            })
+        }
+
+        fn list_scripts(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
+            Box::pin(async move { Ok(self.scripts.clone()) })
+        }
+
+        fn run_script(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, Option<u64>> {
+            Box::pin(async move {
+                let mode = self
+                    .scripts
+                    .iter()
+                    .find(|script| script.id == id)
+                    .map(|script| script.mode)
+                    .ok_or("No script command has that id")?;
+                self.script_runs.lock().unwrap().push((id, arguments));
+                Ok(match mode {
+                    compass_core::script_command::OutputMode::Silent
+                    | compass_core::script_command::OutputMode::Terminal => None,
+                    _ => Some(7),
+                })
+            })
+        }
+
+        fn script_output(
+            &self,
+            session: u64,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ScriptOutputState> {
+            Box::pin(async move {
+                let (id, arguments) = self.script_runs.lock().unwrap().last().cloned().unwrap();
+                assert_eq!(session, 7);
+                Ok(crate::backend::ScriptOutputState {
+                    output: format!(
+                        "\u{1b}[31m{id}\u{1b}[0m {}\nsecond line",
+                        arguments.join(" ")
+                    ),
+                    finished: true,
+                    exit_code: Some(0),
+                    elapsed_ms: 1200,
+                })
+            })
+        }
+
+        fn list_snippets(&self) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move { Ok(self.snippets.lock().unwrap().clone()) })
+        }
+
+        fn save_snippet(
+            &self,
+            draft: crate::backend::SnippetDraft,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move {
+                self.snippet_drafts.lock().unwrap().push(draft.clone());
+                let mut snippets = self.snippets.lock().unwrap();
+                let id = draft
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("snp-{}", snippets.len()));
+                let stored = crate::backend::Snippet {
+                    id: id.clone(),
+                    name: draft.name,
+                    data: compass_core::snippet_store::SnippetData::Text { text: draft.text },
+                    expansion: draft.keyword.map(|keyword| {
+                        compass_core::snippet_store::StoredExpansion {
+                            keyword,
+                            apps: draft.apps,
+                            word: draft.word,
+                        }
+                    }),
+                    ..crate::backend::Snippet::default()
+                };
+                match snippets.iter_mut().find(|s| s.id == id) {
+                    Some(existing) => *existing = stored,
+                    None => snippets.push(stored),
+                }
+                Ok(snippets.clone())
+            })
+        }
+
+        fn remove_snippet(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move {
+                let mut snippets = self.snippets.lock().unwrap();
+                snippets.retain(|s| s.id != id);
+                Ok(snippets.clone())
+            })
+        }
+
+        fn preview_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let values: Vec<String> = arguments.into_iter().map(|(_, v)| v).collect();
+                Ok(format!("preview {id}:{}", values.join(",")))
+            })
+        }
+
+        fn script_icons(&self) -> crate::backend::BackendFuture<'_, Vec<(String, String)>> {
+            Box::pin(async move { Ok(self.script_icons.clone()) })
+        }
+
+        fn expand_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                self.snippet_uses
+                    .lock()
+                    .unwrap()
+                    .push((id.clone(), arguments.clone(), false));
+                let values: Vec<String> = arguments.into_iter().map(|(_, v)| v).collect();
+                Ok(format!("{id}:{}", values.join(",")))
+            })
+        }
+
+        fn paste_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.snippet_uses
+                    .lock()
+                    .unwrap()
+                    .push((id, arguments, true));
+                Ok(())
+            })
+        }
+
+        fn list_shortcuts(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move { Ok(self.shortcuts.lock().unwrap().clone()) })
+        }
+
+        fn save_shortcut(
+            &self,
+            draft: crate::backend::ShortcutDraft,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move {
+                self.drafts.lock().unwrap().push(draft.clone());
+                let mut shortcuts = self.shortcuts.lock().unwrap();
+                let id = draft
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("sct-{}", shortcuts.len()));
+                let stored = crate::backend::Shortcut {
+                    id: id.clone(),
+                    name: draft.name,
+                    icon: draft.icon,
+                    url: draft.url,
+                    app: draft.app,
+                    ..crate::backend::Shortcut::default()
+                };
+                match shortcuts.iter_mut().find(|s| s.id == id) {
+                    Some(existing) => *existing = stored,
+                    None => shortcuts.push(stored),
+                }
+                Ok(shortcuts.clone())
+            })
+        }
+
+        fn remove_shortcut(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move {
+                let mut shortcuts = self.shortcuts.lock().unwrap();
+                shortcuts.retain(|s| s.id != id);
+                Ok(shortcuts.clone())
+            })
+        }
+
+        fn list_openers(
+            &self,
+            target: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::OpenerRow>> {
+            Box::pin(async move {
+                self.opener_lookups.lock().unwrap().push(target);
+                Ok(self.openers.clone())
+            })
+        }
+
+        fn open_with(&self, app: String, target: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened_with.lock().unwrap().push((app, target));
+                Ok(())
+            })
+        }
+
+        fn open_shortcut(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened_shortcuts.lock().unwrap().push((id, arguments));
+                Ok(())
+            })
+        }
+
+        fn paste_text(&self, text: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if self.refuse_paste {
+                    return Err("Pasting needs the GNOME Shell extension".to_owned());
+                }
+                self.pasted.lock().unwrap().push(text);
+                Ok(())
+            })
+        }
+
+        fn launch_command(
+            &self,
+            id: String,
+            query: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.launched.lock().unwrap().push((id, query));
+                Ok(())
+            })
+        }
+
+        fn expand_shortcut(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let shortcuts = self.shortcuts.lock().unwrap();
+                let shortcut = shortcuts.iter().find(|s| s.id == id).ok_or("gone")?;
+                Ok(format!("{}|{}", shortcut.url, arguments.join(",")))
             })
         }
 
@@ -3968,6 +8415,7 @@ mod tests {
                     ended: after > 0,
                     depth: *self.depth.lock().unwrap(),
                     alert: self.alert.clone(),
+                    toast: self.toast.clone(),
                 })
             })
         }
@@ -4002,6 +8450,13 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.answers.lock().unwrap().push(confirmed);
+                Ok(())
+            })
+        }
+
+        fn extension_alert_remember(&self, _session: u64) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.remembered.lock().unwrap().push(());
                 Ok(())
             })
         }
@@ -4041,6 +8496,289 @@ mod tests {
     }
 
     #[test]
+    fn configure_fallback_commands_moves_items_between_its_sections() {
+        use compass_core::root_items::RootEdit;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.fallbacks = vec!["files:search".into()];
+        open_builtin(&mut app, "configure fallback", "commands:manage-fallback");
+        let Page::Fallbacks(page) = &app.page else {
+            panic!("not the fallback manager: {}", app.state_line());
+        };
+        let titles: Vec<(&str, Option<&str>)> = page
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(at, row)| {
+                (
+                    page.candidates[row.candidate].title.as_str(),
+                    page.heading_at(at),
+                )
+            })
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                ("Search Files", Some("Enabled")),
+                ("Write Greeting", Some("Available"))
+            ]
+        );
+
+        // Enter on the available command enables it, first.
+        let _ = app.update(Message::FallbacksQueryChanged("greet".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            app.fallbacks,
+            ["@someone/hello:write".to_owned(), "files:search".to_owned()]
+        );
+        assert_eq!(
+            backend.root_edits.lock().unwrap().last(),
+            Some(&("@someone/hello:write".to_owned(), RootEdit::Fallback(true)))
+        );
+
+        // The panel's action disables Search Files by the id it is stored as.
+        let _ = app.update(Message::FallbacksQueryChanged("search files".into()));
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Disable fallback");
+        settle(&mut app, task);
+        assert_eq!(app.fallbacks, ["@someone/hello:write".to_owned()]);
+        assert_eq!(
+            backend.root_edits.lock().unwrap().last(),
+            Some(&("files:search".to_owned(), RootEdit::Fallback(false)))
+        );
+
+        // A root fallback row's panel opens the manager.
+        let _ = app.update(Message::Back);
+        app.query = "zzzz".into();
+        app.search();
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Fallback(_)))
+            .expect("the extension is a fallback now");
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            ["Open command", "Manage Fallback Actions"]
+        );
+        let task = choose(&mut app, "Manage Fallback Actions");
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Fallbacks(_)));
+    }
+
+    #[test]
+    fn installed_extensions_are_listed_copied_and_uninstalled_after_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(extension_app(dir.path(), backend.clone()));
+        open_builtin(&mut app, "installed extensions", "commands:list-extensions");
+        let Page::Extensions(page) = &app.page else {
+            panic!("not the installed extensions: {}", app.state_line());
+        };
+        assert_eq!(page.all.len(), 1);
+        assert_eq!(page.all[0].title, "Hello");
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Uninstall",
+                "Copy Name",
+                "Copy ID",
+                "Copy Path",
+                "Copy Author"
+            ]
+        );
+        let task = choose(&mut app, "Copy Author");
+        assert_eq!(settle(&mut app, task), ["someone"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "installed extensions", "commands:list-extensions");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.confirm.is_some(), "asks first");
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Extensions(page) = &app.page else {
+            panic!("left the view: {}", app.state_line());
+        };
+        assert!(page.all.is_empty(), "gone from the list");
+        assert_eq!(page.notice.as_deref(), Some("Extension uninstalled"));
+    }
+
+    #[test]
+    fn search_builtin_icons_copies_the_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let config = compass_core::Config::parse(
+            r#"{"providers":{"commands":{"entrypoints":{"search-builtin-icons":{"enabled":true}}}}}"#,
+            std::path::Path::new("config.json"),
+        )
+        .unwrap();
+        app.root_config = config.root_config();
+        app.app_index.apply_root_config(&app.root_config);
+        open_builtin(&mut app, "builtin icons", "commands:search-builtin-icons");
+        let _ = app.update(Message::IconsQueryChanged("copy-clipboard".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert_eq!(settle(&mut app, task), ["copy-clipboard"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+    }
+
+    /// Turns on the default-disabled Compass commands named.
+    fn enable_commands(app: &mut LauncherApp, entrypoints: &[&str]) {
+        let entries: Vec<String> = entrypoints
+            .iter()
+            .map(|id| format!("\"{id}\":{{\"enabled\":true}}"))
+            .collect();
+        let config = compass_core::Config::parse(
+            &format!(
+                "{{\"providers\":{{\"commands\":{{\"entrypoints\":{{{}}}}}}}}}",
+                entries.join(",")
+            ),
+            std::path::Path::new("config.json"),
+        )
+        .unwrap();
+        app.root_config = config.root_config();
+        app.app_index.apply_root_config(&app.root_config);
+    }
+
+    #[test]
+    fn inspect_local_storage_browses_a_namespace_and_shows_a_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            storage: vec![
+                (
+                    "@a/notes".to_owned(),
+                    vec![crate::backend::StorageItemRow {
+                        key: "draft".into(),
+                        value: "hello".into(),
+                    }],
+                ),
+                ("core".to_owned(), Vec::new()),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        enable_commands(&mut app, &["inspect-local-storage"]);
+        open_builtin(
+            &mut app,
+            "inspect local storage",
+            "commands:inspect-local-storage",
+        );
+        let Page::Storage(page) = &app.page else {
+            panic!("not local storage: {}", app.state_line());
+        };
+        assert_eq!(page.titles(), ["@a/notes", "core"]);
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(panel_titles(&app), ["Browse namespace"]);
+        let task = choose(&mut app, "Browse namespace");
+        settle(&mut app, task);
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let Page::Storage(page) = &app.page else {
+            panic!("left local storage");
+        };
+        assert_eq!(page.titles(), ["draft"]);
+        assert_eq!(page.notice.as_deref(), Some("hello"), "Show value");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        let Page::Storage(page) = &app.page else {
+            panic!("Escape left the view instead of the namespace");
+        };
+        assert!(page.browsing.is_none());
+    }
+
+    #[test]
+    fn manage_oauth_token_sets_copies_and_removes_after_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            token_sets: std::sync::Mutex::new(vec![crate::backend::TokenSetRow {
+                extension_id: "github".into(),
+                provider_id: Some("GitHub".into()),
+                access_token: "gho_token".into(),
+                scope: Some("repo".into()),
+                expires_at: Some(0),
+                expired: true,
+                ..crate::backend::TokenSetRow::default()
+            }]),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        enable_commands(&mut app, &["oauth-token-store"]);
+        open_builtin(
+            &mut app,
+            "manage oauth token sets",
+            "commands:oauth-token-store",
+        );
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Remove token set",
+                "Copy Access Token",
+                "Copy Scopes",
+                "Copy Expiration Date"
+            ]
+        );
+        let task = choose(&mut app, "Copy Access Token");
+        assert_eq!(settle(&mut app, task), ["gho_token"]);
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(
+            &mut app,
+            "manage oauth token sets",
+            "commands:oauth-token-store",
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.confirm.is_some(), "asks first");
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(backend.token_sets.lock().unwrap().is_empty());
+        let Page::Tokens(page) = &app.page else {
+            panic!("left the view");
+        };
+        assert!(page.sets.is_empty(), "listed again");
+        assert_eq!(page.notice.as_deref(), Some("Token set removed"));
+    }
+
+    #[test]
+    fn the_link_and_refresh_commands_do_what_their_cpp_ones_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "donate", "commands:sponsor");
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            [compass_core::commands::SPONSOR_URL]
+        );
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Opened in browser")
+        );
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "report a compass bug", "commands:report-bug");
+        let reported = backend.opened_urls.lock().unwrap().last().cloned().unwrap();
+        assert!(
+            reported.starts_with(compass_core::bug_report::CREATE_ISSUE_URL),
+            "{reported}"
+        );
+        assert!(reported.contains("type=bug"));
+
+        fs::write(
+            dir.path().join("zephyr.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Zephyr\nExec=/bin/true\n",
+        )
+        .unwrap();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "refresh apps", "commands:refresh-apps");
+        assert!(app.app_index.get("zephyr.desktop").is_some(), "rescanned");
+        assert_eq!(app.error.as_deref(), Some("Apps successfully refreshed"));
+    }
+
+    #[test]
     fn an_extension_command_is_a_row_and_enter_hands_it_to_the_engine() {
         let dir = tempfile::tempdir().unwrap();
         let backend = Arc::new(TestBackend {
@@ -4077,6 +8815,134 @@ mod tests {
             ["@someone/hello:write"]
         );
         assert!(app.error.is_none());
+    }
+
+    #[test]
+    fn an_extension_s_launch_runs_its_command_and_its_subtitle_override_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let _ = app.update(Message::ExtensionSubtitlesLoaded(Ok(vec![(
+            "@someone/hello:write".into(),
+            "3 unread".into(),
+        )])));
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("3 unread").is_ok(), "the override is the subtitle");
+            assert!(
+                ui.find("Hello").is_err(),
+                "in place of the extension's title"
+            );
+        }
+
+        let mut arguments = serde_json::Map::new();
+        arguments.insert("who".into(), "ada".into());
+        let launch = crate::backend::ExtensionLaunch {
+            id: "@someone/hello:write".into(),
+            arguments: Some(arguments.clone()),
+            preferences: false,
+            fallback_text: None,
+        };
+        for message in task_messages(app.update(Message::LaunchFetched(Ok(launch)))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.ran.lock().unwrap().as_slice(),
+            ["@someone/hello:write"]
+        );
+        assert_eq!(backend.given.lock().unwrap().last(), Some(&Some(arguments)));
+    }
+
+    #[test]
+    fn preferences_an_extension_opens_are_saved_without_running_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        let _ = app.update(Message::PreferencesOpened {
+            id: "@someone/hello:write".into(),
+            result: Ok(crate::backend::ExtensionStart::NeedsPreferences {
+                title: "Write Greeting".into(),
+                fields: Vec::new(),
+            }),
+        });
+        let Page::Preferences(page) = &app.page else {
+            panic!("no preferences form: {}", app.state_line());
+        };
+        assert_eq!(
+            page.purpose,
+            crate::preferences_page::Purpose::CommandPreferences
+        );
+        for message in task_messages(app.update(Message::PreferencesSubmit)) {
+            let _ = app.update(message);
+        }
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        assert_eq!(backend.saved.lock().unwrap().len(), 1);
+        assert!(
+            backend.ran.lock().unwrap().is_empty(),
+            "saving does not run it"
+        );
+    }
+
+    #[test]
+    fn a_rhai_script_is_a_row_opens_as_an_extension_view_and_leaves_when_it_pops() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["rhai:script.hello".to_owned()],
+            view: Some(greeting_list(false)),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let _ = app.update(Message::RhaiScriptsLoaded(Ok(vec![
+            compass_core::rhai_scripts::RhaiScriptItem {
+                id: "script.hello".into(),
+                title: "Hello Script".into(),
+                description: Some("Says hello".into()),
+                icon: Some("globe".into()),
+                keywords: Vec::new(),
+            },
+        ])));
+        for message in task_messages(app.update(Message::QueryChanged("hello script".into()))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::RhaiScript(0)),
+            "{}",
+            app.state_line()
+        );
+        assert!(app.state_line().contains("selected_title=\"Hello Script\""));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(
+                ui.find("Says hello").is_ok(),
+                "the description is the subtitle"
+            );
+        }
+
+        // The fake draws the list on the first poll and ends on the second,
+        // as a script that popped itself does.
+        let mut drawn = false;
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+            if let Page::Extension(page) = &app.page {
+                assert!(page.leaves_on_end);
+                drawn |= page.shown.len() == 2;
+            }
+        }
+        assert_eq!(
+            backend.ran.lock().unwrap().as_slice(),
+            ["rhai:script.hello"]
+        );
+        assert!(drawn, "the script's list was drawn");
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        assert_eq!(backend.closed.lock().unwrap().as_slice(), [7]);
     }
 
     fn greeting_list(host_filtering: bool) -> compass_extension_api::View {
@@ -4120,6 +8986,63 @@ mod tests {
             pending.extend(task_messages(app.update(message)));
         }
         (app, backend, dir)
+    }
+
+    #[test]
+    fn in_a_form_with_a_text_area_enter_is_a_newline_and_ctrl_enter_submits() {
+        use compass_extension_api::action::{Action, ActionPanel};
+        use compass_extension_api::view::{FieldKind, FormField, FormItem, FormView};
+        let form = compass_extension_api::View::Form(FormView {
+            items: vec![FormItem::Field(Box::new(FormField {
+                id: compass_extension_api::id::NodeId::ROOT,
+                name: "body".into(),
+                title: Some("Body".into()),
+                error: None,
+                info: None,
+                autofocus: false,
+                value: None,
+                echo: None,
+                on_change: None,
+                kind: FieldKind::TextArea {
+                    placeholder: None,
+                    markdown: false,
+                },
+            }))],
+            actions: Some(ActionPanel::of([Action::new("Save", "submit")])),
+            ..FormView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(form);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Ctrl+Enter: Save    Esc: back").is_ok());
+        }
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert!(
+            backend.events.lock().unwrap().is_empty(),
+            "Enter in a text area is a newline, not a submit"
+        );
+        let ctrl_enter = Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        });
+        let mut pending = task_messages(app.update(ctrl_enter));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("submit".to_owned(), vec![serde_json::json!({})])]
+        );
     }
 
     #[test]
@@ -4182,6 +9105,33 @@ mod tests {
             "submit".to_owned(),
             vec![serde_json::json!({"title": "Crash on paste", "urgent": true})]
         )));
+    }
+
+    #[test]
+    fn an_extensions_toast_is_drawn_under_its_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(greeting_list(true)),
+            toast: Some(crate::backend::ExtensionToast {
+                failure: true,
+                animated: false,
+                title: "Offline".into(),
+                message: "retrying".into(),
+            }),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend);
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("hello").is_ok(), "{}", app.state_line());
+        assert!(ui.find("Offline — retrying").is_ok());
     }
 
     #[test]
@@ -4352,6 +9302,7 @@ mod tests {
                 ended: false,
                 depth: 1,
                 alert: None,
+                toast: None,
             });
         }
         for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Escape))) {
@@ -4376,6 +9327,7 @@ mod tests {
                     message: "This cannot be undone.".into(),
                     confirm_text: "Delete".into(),
                     cancel_text: "Keep".into(),
+                    remember_text: None,
                 }),
                 ..TestBackend::default()
             });
@@ -4402,6 +9354,54 @@ mod tests {
                 "answered, and still in the view"
             );
         }
+    }
+
+    #[test]
+    fn a_consent_alert_takes_ctrl_enter_as_always_allow() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(greeting_list(true)),
+            alert: Some(crate::backend::ExtensionPrompt {
+                title: "Allow Brew to run brew?".into(),
+                message: String::new(),
+                confirm_text: "Allow Once".into(),
+                cancel_text: "Deny".into(),
+                remember_text: Some("Always Allow".into()),
+            }),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(
+                ui.find("Enter: Allow Once    Ctrl+Enter: Always Allow    Esc: Deny")
+                    .is_ok()
+            );
+        }
+        let ctrl_enter = Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        });
+        for message in task_messages(app.update(ctrl_enter)) {
+            let _ = app.update(message);
+        }
+        assert_eq!(backend.remembered.lock().unwrap().len(), 1);
+        assert!(backend.answers.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -4548,6 +9548,58 @@ mod tests {
             ui.find("# Release notes").is_err(),
             "not the Markdown source"
         );
+    }
+
+    #[test]
+    fn an_extension_grid_is_drawn_as_tiles_and_the_arrows_move_by_cell_and_row() {
+        use compass_extension_api::view::{Color, GridContent, GridItem, GridSection, GridView};
+        let cell = |title: &str| GridItem {
+            id: compass_extension_api::id::NodeId::ROOT,
+            key: None,
+            title: title.into(),
+            subtitle: None,
+            content: GridContent::Color(Color::Literal("#336699".into())),
+            tooltip: None,
+            keywords: Vec::new(),
+            actions: None,
+        };
+        let grid = compass_extension_api::View::Grid(GridView {
+            columns: Some(3),
+            sections: vec![GridSection {
+                title: Some("Swatches".into()),
+                items: ["Navy", "Teal", "Plum", "Rust"]
+                    .iter()
+                    .map(|t| cell(t))
+                    .collect(),
+                ..GridSection::default()
+            }],
+            ..GridView::default()
+        });
+        let (mut app, _backend, _dir) = open_extension_view(grid);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Swatches").is_ok(), "the section's title");
+            assert!(ui.find("Rust").is_ok(), "each cell's title under its tile");
+            assert!(
+                ui.find("N").is_err(),
+                "a tile, not a row with an initial: {}",
+                app.state_line()
+            );
+        }
+        let selected = |app: &LauncherApp| match &app.page {
+            Page::Extension(page) => page.selected,
+            _ => panic!("left the grid"),
+        };
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowRight));
+        assert_eq!(selected(&app), 1, "Right is the next cell");
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(
+            selected(&app),
+            3,
+            "Down keeps the column, clamped to the short row"
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(selected(&app), 0, "and Up goes back a row");
     }
 
     #[test]
@@ -4772,12 +9824,22 @@ mod tests {
     fn a_root_application_exposes_and_dispatches_its_desktop_action_in_the_panel() {
         use iced::futures::{StreamExt, executor::block_on};
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Webbrowser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
         let index = AppIndex::builder().dir(dir.path()).build();
         let launcher = Arc::new(RecordingLaunchTarget::default());
         let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
-        let _ = app.update(Message::QueryChanged("Browser".to_owned()));
-        assert_eq!(app.results.len(), 1, "actions are not duplicate root rows");
+        let _ = app.update(Message::QueryChanged("Webbrowser".to_owned()));
+        // Set Default Browser's subtitle matches too; only the application
+        // rows are in question here.
+        assert_eq!(
+            app.results
+                .iter()
+                .filter(|row| matches!(row, RootRow::App(_)))
+                .count(),
+            1,
+            "actions are not duplicate root rows"
+        );
+        assert!(matches!(app.results[0], RootRow::App(_)));
         let backend = Arc::new(TestBackend::default());
         app.backend = Some(backend.clone());
         let _ = app.update(Message::TogglePanel);
@@ -5323,6 +10385,969 @@ mod tests {
     }
 
     #[test]
+    fn a_power_command_asks_first_and_only_a_yes_runs_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:reboot".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let open = |app: &mut LauncherApp| {
+            for message in task_messages(app.update(Message::QueryChanged("reboot".into()))) {
+                let _ = app.update(message);
+            }
+            app.selected = app
+                .results
+                .iter()
+                .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "reboot"))
+                .expect("Reboot System is in root search");
+            let _ = app.update(Message::LaunchSelected);
+        };
+        open(&mut app);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Enter: Reboot System    Esc: cancel").is_ok());
+        }
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.power_confirm.is_none());
+        assert!(
+            backend.powered.lock().unwrap().is_empty(),
+            "Escape runs nothing"
+        );
+
+        open(&mut app);
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+    }
+
+    #[test]
+    fn the_confirm_preference_decides_whether_a_power_command_asks() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:reboot".to_owned(), "commands:lock".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.power_asks = [("reboot".to_owned(), false), ("lock".to_owned(), true)].into();
+        let launch = |app: &mut LauncherApp, query: &str, entrypoint: &str| {
+            for message in task_messages(app.update(Message::QueryChanged(query.into()))) {
+                let _ = app.update(message);
+            }
+            app.selected = app
+                .results
+                .iter()
+                .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == entrypoint))
+                .expect("the command is in root search");
+            let mut pending = task_messages(app.update(Message::LaunchSelected));
+            while let Some(message) = pending.pop() {
+                pending.extend(task_messages(app.update(message)));
+            }
+        };
+
+        launch(&mut app, "reboot", "reboot");
+        assert!(app.power_confirm.is_none(), "reboot was told not to ask");
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+
+        launch(&mut app, "lock", "lock");
+        assert_eq!(
+            app.power_confirm.map(|power| power.id),
+            Some("lock"),
+            "lock was told to ask, though by default it does not"
+        );
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+    }
+
+    #[test]
+    fn a_media_command_runs_at_once_and_shows_why_it_did_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:next-track".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("next track".into()))) {
+            let _ = app.update(message);
+        }
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "next-track"))
+            .expect("Next Track is in root search");
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert!(app.power_confirm.is_none(), "media commands do not ask");
+        assert_eq!(backend.played.lock().unwrap().as_slice(), ["next-track"]);
+        assert_eq!(app.error.as_deref(), Some("No media player is running"));
+    }
+
+    #[test]
+    fn a_media_command_runs_with_the_player_chosen_in_its_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:play-pause".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("play pause".into()))) {
+            let _ = app.update(message);
+        }
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "play-pause"))
+            .expect("Play / Pause is in root search");
+        let _ = app.update(Message::TogglePanel);
+        let panel = app.panel.as_ref().expect("a media command has a panel");
+        let titles: Vec<&str> = panel.sections[0]
+            .actions
+            .iter()
+            .map(|a| a.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Play / Pause", "Choose player…"]);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let _ = app.update(Message::PanelActivate);
+        assert!(
+            matches!(&app.page, Page::Preferences(page)
+                if page.purpose == crate::preferences_page::Purpose::MediaArguments),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text(" spotify ".into()),
+        ));
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(
+            backend.played.lock().unwrap().as_slice(),
+            ["play-pause spotify"]
+        );
+    }
+
+    #[test]
+    fn now_playing_lists_the_players_and_controls_the_selected_one() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _entered = runtime.enter();
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:now-playing".to_owned()],
+            ..TestBackend::default()
+        });
+        *backend.players.lock().unwrap() = vec![
+            crate::backend::MediaPlayerRow {
+                id: "org.mpris.MediaPlayer2.firefox".into(),
+                identity: "Firefox".into(),
+                ..Default::default()
+            },
+            crate::backend::MediaPlayerRow {
+                id: "org.mpris.MediaPlayer2.spotify".into(),
+                identity: "Spotify".into(),
+                title: "Blue Monday".into(),
+                artist: "New Order".into(),
+                playing: true,
+                can_go_next: true,
+                ..Default::default()
+            },
+        ];
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("now playing".into()))) {
+            let _ = app.update(message);
+        }
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "now-playing"))
+            .expect("Now Playing is in root search");
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        let Page::NowPlaying(page) = &app.page else {
+            panic!("Now Playing did not open: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+
+        for message in task_messages(app.update(Message::NowPlayingQueryChanged("order".into()))) {
+            let _ = app.update(message);
+        }
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app.panel.as_ref().expect("a player has a panel").sections[0]
+            .actions
+            .iter()
+            .map(|a| a.title.clone())
+            .collect();
+        assert_eq!(titles, ["Pause", "Next Track"]);
+        let _ = app.update(Message::TogglePanel);
+
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(
+            backend.controlled.lock().unwrap().as_slice(),
+            [(
+                "org.mpris.MediaPlayer2.spotify".to_owned(),
+                crate::backend::MediaAction::PlayPause
+            )]
+        );
+        let Page::NowPlaying(page) = &app.page else {
+            panic!("Now Playing closed: {}", app.state_line());
+        };
+        let row = page.selected_row().expect("still selected");
+        assert!(!row.playing && row.paused, "the list was reloaded");
+    }
+
+    #[test]
+    fn the_emoji_picker_opens_from_root_search_and_filters() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("emoji".to_owned()));
+        let position = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "search-emojis"))
+            .expect("the command is in root search");
+        app.selected = position;
+        let _ = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::EmojiQueryChanged("thumbs up".into()));
+        let Page::Emoji(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.selected_glyph().map(|g| g.character), Some("👍"));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("thumbs up").is_ok());
+    }
+
+    #[test]
+    fn the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file() {
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("emojis").join("emojis.json");
+        let mut app = app(dir.path());
+        app.glyph_path = Some(path.clone());
+        app.emoji_skin_tone = Some("dark".to_owned());
+        let command = compass_core::commands::by_id("commands:search-emojis").expect("command");
+        let _ = app.open_command(command);
+
+        // A pick is copied in the picker's tone and counted.
+        let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+        let copied: Vec<String> =
+            iced_winit::runtime::task::into_stream(app.update(pressed(Named::Enter)))
+                .map(|stream| {
+                    iced::futures::executor::block_on(iced::futures::StreamExt::collect::<Vec<_>>(
+                        stream,
+                    ))
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|action| match action {
+                    iced_winit::runtime::Action::Clipboard(
+                        iced_winit::runtime::clipboard::Action::Write { contents, .. },
+                    ) => Some(contents),
+                    _ => None,
+                })
+                .collect();
+        assert_eq!(copied, ["👋\u{1F3FF}"]);
+        let _ = app.open_command(command);
+        let Page::Emoji(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.recent, 1, "the pick is recently used");
+
+        // Pin from the panel.
+        let _ = app.update(Message::EmojiQueryChanged("pizza".into()));
+        let _ = app.update(Message::TogglePanel);
+        let pin = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Pin emoji"))
+            .expect("the panel offers to pin");
+        let _ = app.update(Message::PanelClicked(pin));
+
+        // A keyword of one's own, through the form and back to the picker.
+        let _ = app.update(Message::TogglePanel);
+        let edit = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Edit keyword"))
+            .expect("the panel offers the keyword form");
+        let _ = app.update(Message::PanelClicked(edit));
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::GlyphKeywords),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("qqsupper".into()),
+        ));
+        let _ = app.update(Message::PreferencesSubmit);
+        let Page::Emoji(page) = &app.page else {
+            panic!("back in the picker: {}", app.state_line());
+        };
+        assert_eq!(page.query, "pizza", "the picker comes back as it was");
+
+        let stored = compass_core::glyph_service::GlyphService::load_file(&path);
+        let pizza = stored.find("🍕").expect("pizza is remembered");
+        assert!(pizza.pinned_at.is_some());
+        assert_eq!(pizza.keyword.as_deref(), Some("qqsupper"));
+        assert_eq!(stored.find("👋").map(|wave| wave.visit_count), Some(1));
+    }
+
+    #[test]
+    fn a_newer_release_leads_the_empty_query_and_its_panel_opens_or_skips_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = Arc::new(TestBackend::default());
+        let url = "https://github.com/tuna-os/compass/releases/tag/v0.2.0";
+        *backend.update.lock().unwrap() = Some(crate::backend::UpdateOffer {
+            tag: "v0.2.0".into(),
+            version: "0.2.0".into(),
+            release_url: url.into(),
+            current: "v0.1.0".into(),
+        });
+        let mut app = app(dir.path());
+        app.backend = Some(backend.clone());
+
+        // What the window asks each time it opens.
+        let task = app.refresh_update_task();
+        settle(&mut app, task);
+        assert_eq!(app.results.first(), Some(&RootRow::Update));
+        assert_eq!(app.root_heading_at(0), Some("Update"));
+        assert!(
+            app.state_line()
+                .contains("selected_title=\"Compass v0.2.0 is available\""),
+            "{}",
+            app.state_line()
+        );
+        let offer = app.update.as_ref().expect("held");
+        assert_eq!(release_check::subtitle(offer), "You are running v0.1.0");
+
+        // Only for the empty query.
+        let task = app.update(Message::QueryChanged("fire".into()));
+        settle(&mut app, task);
+        assert!(!app.results.contains(&RootRow::Update));
+        let task = app.update(Message::QueryChanged(String::new()));
+        settle(&mut app, task);
+        assert_eq!(app.results.first(), Some(&RootRow::Update));
+
+        // Enter reads the release notes.
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(backend.opened_urls.lock().unwrap().as_slice(), [url]);
+
+        // The panel skips it, and the row goes.
+        let _ = app.update(Message::TogglePanel);
+        let skip = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Skip This Version"))
+            .expect("the panel offers to skip");
+        assert!(
+            app.panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("View Release Notes"))
+                .is_some()
+        );
+        let task = app.update(Message::PanelClicked(skip));
+        settle(&mut app, task);
+        assert_eq!(backend.skipped.lock().unwrap().as_slice(), ["v0.2.0"]);
+        assert!(app.update.is_none());
+        assert!(!app.results.contains(&RootRow::Update));
+        assert_eq!(app.root_heading_at(0), None);
+    }
+
+    #[test]
+    fn the_root_panel_favourites_aliases_and_the_up_arrow_recalls_searches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let history = dir.path().join("history").join("search-history.json");
+        app.search_history_path = Some(history.clone());
+
+        // Favouriting Firefox from its panel puts it first, under a heading.
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let firefox = app.selected_row().expect("a row");
+        let id = app.root_id(firefox).expect("a root item");
+        let _ = app.update(Message::TogglePanel);
+        let favorite = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Add to favorites"))
+            .expect("the panel offers to favourite");
+        let _ = app.update(Message::PanelClicked(favorite));
+        assert_eq!(app.root_config.favorites, std::slice::from_ref(&id));
+        let _ = app.update(Message::QueryChanged(String::new()));
+        assert_eq!(app.results.first(), Some(&firefox));
+        assert_eq!(app.root_heading_at(0), Some(FAVORITES_HEADING_FOR_TESTS));
+        assert_eq!(
+            app.results.iter().filter(|row| **row == firefox).count(),
+            1,
+            "a favourite is not suggested again"
+        );
+
+        // An alias through the form.
+        let _ = app.update(Message::TogglePanel);
+        let alias = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Set alias"))
+            .expect("the panel offers an alias");
+        let _ = app.update(Message::PanelClicked(alias));
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("ff".into()),
+        ));
+        let _ = app.update(Message::PreferencesSubmit);
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        assert_eq!(
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.alias.as_deref()),
+            Some("ff")
+        );
+
+        // Launching records the search; the up arrow at the top brings it back.
+        let _ = app.update(Message::QueryChanged("term".into()));
+        let _ = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::QueryChanged(String::new()));
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(app.query, "term");
+        let stored = compass_core::root_view::SearchHistory::load_file(&history);
+        assert_eq!(stored.queries(), ["term"]);
+    }
+
+    const FAVORITES_HEADING_FOR_TESTS: &str = "Favorites";
+
+    #[test]
+    fn the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot() {
+        use iced::keyboard::key::Named;
+        let command = compass_core::commands::by_id("commands:search-emojis").expect("command");
+        let picker = |backend: Arc<TestBackend>, default_action: &str| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let mut app = app(dir.path());
+            app.glyph_path = Some(dir.path().join("emojis.json"));
+            app.backend = Some(backend);
+            app.emoji_default_action = default_action.to_owned();
+            let _ = app.open_command(command);
+            let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+            (app, dir)
+        };
+
+        // Paste is the default: first in the panel, on Enter, and nothing is
+        // copied by the window.
+        let backend = Arc::new(TestBackend::default());
+        let (mut app, _dir) = picker(backend.clone(), "paste");
+        let _ = app.update(Message::TogglePanel);
+        let first = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.sections.first()?.actions.first().cloned())
+            .expect("an action");
+        assert_eq!(first.title, "Paste to active window");
+        assert_eq!(first.shortcut.as_deref(), Some("enter"));
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(pressed(Named::Enter));
+        let copied = settle(&mut app, task);
+        assert_eq!(backend.pasted.lock().unwrap().as_slice(), ["👋"]);
+        assert!(copied.is_empty(), "{copied:?}");
+        let Page::Root = app.page else {
+            panic!("the picker hides once pasted: {}", app.state_line());
+        };
+
+        // Refused (no Shell extension): the glyph is copied instead.
+        let backend = Arc::new(TestBackend {
+            refuse_paste: true,
+            ..TestBackend::default()
+        });
+        let (mut app, _dir) = picker(backend.clone(), "paste");
+        let task = app.update(pressed(Named::Enter));
+        assert_eq!(settle(&mut app, task), ["👋"]);
+        assert!(backend.pasted.lock().unwrap().is_empty());
+
+        // `defaultAction: copy` puts copy first and on Enter.
+        let backend = Arc::new(TestBackend::default());
+        let (mut app, _dir) = picker(backend.clone(), "copy");
+        let task = app.update(pressed(Named::Enter));
+        assert_eq!(settle(&mut app, task), ["👋"]);
+        assert!(backend.pasted.lock().unwrap().is_empty());
+        let _ = app.open_command(command);
+        let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(titles[..2], ["Copy", "Paste to active window"]);
+    }
+
+    fn key_event(
+        pressed: bool,
+        key: iced::keyboard::Key,
+        modifiers: iced::keyboard::Modifiers,
+    ) -> Message {
+        let physical = iced::keyboard::key::Physical::Unidentified(
+            iced::keyboard::key::NativeCode::Unidentified,
+        );
+        Message::Keyboard(if pressed {
+            iced::keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: physical,
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            }
+        } else {
+            iced::keyboard::Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: physical,
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+            }
+        })
+    }
+
+    /// Whether `task` asks for the window `id` to close.
+    fn closes(task: Task<Message>, id: window::Id) -> bool {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, task, window as runtime_window};
+        let Some(stream) = task::into_stream(task) else {
+            return false;
+        };
+        let actions: Vec<_> = block_on(stream.collect());
+        actions.iter().any(|action| {
+            matches!(action, Action::Window(runtime_window::Action::Close(closed)) if *closed == id)
+        })
+    }
+
+    /// A launcher on screen, attached to an engine.
+    /// The engine's ends of the link come back with it, to keep it open.
+    fn shown(dir: &std::path::Path) -> (LauncherApp, window::Id, Box<dyn std::any::Any>) {
+        let mut app = app(dir);
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.open_window();
+        let id = app.pending_window.unwrap();
+        let _ = app.update(Message::Opened(id));
+        assert!(app.is_visible());
+        (app, id, Box::new((commands, outcomes)))
+    }
+
+    #[test]
+    fn losing_the_focus_hides_the_launcher_when_close_on_focus_loss_is_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        app.close_on_focus_loss = true;
+        let _ = app.update(Message::WindowFocusChanged(true));
+        assert!(closes(app.update(Message::WindowFocusChanged(false)), id));
+        let _ = app.update(Message::Closed(id));
+        assert!(!app.is_visible());
+    }
+
+    #[test]
+    fn losing_the_focus_keeps_the_launcher_when_close_on_focus_loss_is_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        assert!(!app.closes_on_focus_loss(), "off by default, as in the C++");
+        let _ = app.update(Message::WindowFocusChanged(true));
+        assert!(!closes(app.update(Message::WindowFocusChanged(false)), id));
+        assert!(app.is_visible());
+    }
+
+    #[test]
+    fn only_losing_a_focus_the_launcher_had_hides_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        app.close_on_focus_loss = true;
+        assert!(
+            !closes(app.update(Message::WindowFocusChanged(false)), id),
+            "never focused: the compositor did not hand it over"
+        );
+        let _ = app.update(Message::WindowFocusChanged(true));
+        app.choosing_files = true;
+        assert!(
+            !closes(app.update(Message::WindowFocusChanged(false)), id),
+            "the file chooser the launcher opened took it"
+        );
+        assert!(app.is_visible());
+    }
+
+    #[test]
+    fn the_recorder_suspends_the_global_shortcuts_while_it_captures() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = Arc::new(TestBackend::default());
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let _ = app.update(Message::TogglePanel);
+        let row = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+            .expect("the panel offers a shortcut");
+        // Attached from here: the fake engine searches nothing.
+        app.backend = Some(backend.clone());
+        let task = app.update(Message::PanelClicked(row));
+        settle(&mut app, task);
+        assert!(app.capture_reported());
+        assert_eq!(backend.captures.lock().unwrap().as_slice(), [true]);
+
+        // The launcher hotkey and the launcher's own keys are taken.
+        let task = app.update(key_event(true, Key::Named(Named::Space), Modifiers::LOGO));
+        settle(&mut app, task);
+        let status = |app: &LauncherApp| {
+            app.panel
+                .as_ref()
+                .and_then(|p| p.recorder.as_ref())
+                .map(|r| r.status.clone())
+        };
+        assert_eq!(
+            status(&app).as_deref(),
+            Some("Already bound to \"the launcher hotkey\"")
+        );
+        let task = app.update(key_event(true, Key::Character("b".into()), Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            status(&app).as_deref(),
+            Some("Already bound to \"Toggle action panel\"")
+        );
+
+        let task = app.update(key_event(
+            true,
+            Key::Named(Named::Escape),
+            Modifiers::empty(),
+        ));
+        settle(&mut app, task);
+        assert!(!app.capture_reported());
+        assert_eq!(backend.captures.lock().unwrap().as_slice(), [true, false]);
+    }
+
+    #[test]
+    fn the_recorder_shows_the_desktops_refusal_and_keeps_what_it_takes() {
+        use iced::keyboard::{Key, Modifiers};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let open = |backend: Arc<TestBackend>| {
+            let mut app = app(dir.path());
+            let _ = app.update(Message::QueryChanged("firefox".into()));
+            let id = app.root_id(app.selected_row().unwrap()).unwrap();
+            let _ = app.update(Message::TogglePanel);
+            let row = app
+                .panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .expect("the panel offers a shortcut");
+            app.backend = Some(backend);
+            let task = app.update(Message::PanelClicked(row));
+            settle(&mut app, task);
+            (app, id)
+        };
+
+        let refusing = Arc::new(TestBackend {
+            probe_refusal: Some("The compositor has already bound super+Q".into()),
+            ..TestBackend::default()
+        });
+        let (mut app, _) = open(refusing.clone());
+        let task = app.update(key_event(true, Key::Character("q".into()), Modifiers::LOGO));
+        settle(&mut app, task);
+        assert_eq!(refusing.probes.lock().unwrap().as_slice(), ["super+Q"]);
+        let recorder = app
+            .panel
+            .as_ref()
+            .and_then(|p| p.recorder.as_ref())
+            .expect("the recorder stays open");
+        assert_eq!(recorder.status, "The compositor has already bound super+Q");
+        assert!(recorder.error);
+        assert!(
+            refusing.root_edits.lock().unwrap().is_empty(),
+            "nothing kept"
+        );
+
+        let taking = Arc::new(TestBackend::default());
+        let (mut app, id) = open(taking.clone());
+        let task = app.update(key_event(true, Key::Character("q".into()), Modifiers::LOGO));
+        settle(&mut app, task);
+        assert_eq!(taking.probes.lock().unwrap().as_slice(), ["super+Q"]);
+        assert!(
+            app.panel.is_none(),
+            "a combination the desktop takes is kept"
+        );
+        assert_eq!(
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.shortcut.clone())
+                .as_deref(),
+            Some("super+Q")
+        );
+    }
+
+    #[test]
+    fn the_root_panel_records_an_items_shortcut_and_backspace_removes_it() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let id = app.root_id(app.selected_row().unwrap()).unwrap();
+        let open_recorder = |app: &mut LauncherApp| {
+            let _ = app.update(Message::TogglePanel);
+            assert!(!app.shortcuts_inhibited(), "the panel alone takes nothing");
+            let row = app
+                .panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .expect("the panel offers a shortcut");
+            let _ = app.update(Message::PanelClicked(row));
+            assert!(
+                app.panel.as_ref().is_some_and(|p| p.recorder.is_some()),
+                "the recorder takes the panel's place"
+            );
+            assert!(
+                app.shortcuts_inhibited(),
+                "the compositor's shortcuts reach the recorder"
+            );
+        };
+        open_recorder(&mut app);
+
+        // A bare letter is refused and typed nowhere; Control, then K.
+        let _ = app.update(key_event(
+            true,
+            Key::Character("k".into()),
+            Modifiers::empty(),
+        ));
+        let recorder = app
+            .panel
+            .as_ref()
+            .and_then(|p| p.recorder.as_ref())
+            .unwrap();
+        assert_eq!(recorder.status, compass_core::key_combo::MODIFIER_REQUIRED);
+        assert_eq!(app.query, "firefox");
+        let _ = app.update(key_event(true, Key::Named(Named::Control), Modifiers::CTRL));
+        let _ = app.update(key_event(true, Key::Character("k".into()), Modifiers::CTRL));
+        assert!(app.panel.is_none(), "an accepted shortcut closes the panel");
+        assert!(!app.shortcuts_inhibited(), "and gives the shortcuts back");
+        let shortcut = |app: &LauncherApp| {
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.shortcut.clone())
+        };
+        assert_eq!(shortcut(&app).as_deref(), Some("control+K"));
+        let (provider, entrypoint) = compass_core::root_items::split_entrypoint_id(&id).unwrap();
+        assert_eq!(
+            app.root_config.providers[provider].entrypoints[entrypoint]
+                .shortcut
+                .as_deref(),
+            Some("control+K")
+        );
+
+        // Escape goes back to the actions; Backspace removes the shortcut.
+        let _ = app.update(key_event(
+            false,
+            Key::Named(Named::Control),
+            Modifiers::empty(),
+        ));
+        open_recorder(&mut app);
+        let _ = app.update(key_event(
+            true,
+            Key::Named(Named::Escape),
+            Modifiers::empty(),
+        ));
+        assert!(app.panel.as_ref().is_some_and(|p| p.recorder.is_none()));
+        assert!(!app.shortcuts_inhibited(), "Escape gives them back");
+        let _ = app.update(Message::TogglePanel);
+        open_recorder(&mut app);
+        let _ = app.update(key_event(
+            true,
+            Key::Named(Named::Backspace),
+            Modifiers::empty(),
+        ));
+        assert!(app.panel.is_none());
+        assert_eq!(shortcut(&app), None);
+    }
+
+    #[test]
+    fn a_launch_deeplink_to_a_provider_searches_its_items_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = extension_app(dir.path(), Arc::new(TestBackend::default()));
+
+        let task = app.open_deeplink("vicinae://launch/@someone/hello?fallbackText=wri");
+        settle(&mut app, task);
+        assert_eq!(app.search_field().0, "Search Hello");
+        assert_eq!(app.query, "wri");
+        assert_eq!(app.results, [RootRow::Extension(0)], "{}", app.state_line());
+
+        // The empty query lists every item of the provider, and nothing else:
+        // no favourites, no calculator, no fallbacks.
+        let task = app.open_deeplink("vicinae://launch/applications/");
+        settle(&mut app, task);
+        assert_eq!(app.search_field().0, "Search Applications");
+        assert_eq!(app.results.len(), 3, "{}", app.state_line());
+        assert!(app.results.iter().all(|row| matches!(row, RootRow::App(_))));
+        let _ = app.update(Message::QueryChanged("fire".into()));
+        assert!(
+            app.results.iter().all(|row| matches!(row, RootRow::App(_))),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(app.results.len(), 1);
+
+        // Leaving closes it: the next summon is the root again.
+        let _ = app.update(Message::Dismiss);
+        assert_eq!(app.provider_scope, None);
+        assert_eq!(app.search_field().0, "Search…");
+
+        let _ = app.open_deeplink("compass://launch/nothing");
+        assert_eq!(
+            app.error.as_deref(),
+            Some(compass_core::root_items::INVALID_LAUNCH_LINK)
+        );
+    }
+
+    #[test]
+    fn a_launch_deeplink_to_an_item_launches_it_with_its_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        let task = app.open_deeplink("vicinae://launch/@someone/hello/write?fallbackText=hi+there");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.launched.lock().unwrap().as_slice(),
+            [(
+                "@someone/hello:write".to_owned(),
+                Some("hi there".to_owned())
+            )]
+        );
+        assert_eq!(app.provider_scope, None);
+    }
+
+    #[test]
+    fn fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.fallbacks = vec![
+            "shortcuts:sct-news".into(),
+            "shortcuts:sct-docs".into(),
+            "files:search".into(),
+        ];
+        app.query = "serde".into();
+        app.search();
+        let fallbacks: Vec<RootRow> = app
+            .results
+            .iter()
+            .copied()
+            .filter(|row| matches!(row, RootRow::Fallback(_)))
+            .collect();
+        let docs = app
+            .app_index
+            .shortcuts()
+            .iter()
+            .position(|shortcut| shortcut.id == "sct-docs")
+            .unwrap();
+        assert!(
+            matches!(
+                fallbacks.as_slice(),
+                [
+                    RootRow::Fallback(Fallback::Shortcut(at)),
+                    RootRow::Fallback(Fallback::Command(_)),
+                ] if *at == docs
+            ),
+            "a shortcut without exactly one argument is no fallback: {fallbacks:?}"
+        );
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| *row == fallbacks[0])
+            .unwrap();
+        assert!(
+            app.state_line()
+                .contains("selected_title=\"Crate Docs\" fallback")
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().last(),
+            Some(&("sct-docs".to_owned(), vec!["serde".to_owned()]))
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.fallbacks = vec!["@someone/hello:write".into()];
+        app.query = "zzzz".into();
+        app.search();
+        assert_eq!(
+            app.results.last(),
+            Some(&RootRow::Fallback(Fallback::Extension(0)))
+        );
+        app.selected = app.results.len() - 1;
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.launched.lock().unwrap().as_slice(),
+            [("@someone/hello:write".to_owned(), Some("zzzz".to_owned()))]
+        );
+    }
+
+    #[test]
+    fn an_alias_and_a_space_open_an_items_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        compass_core::root_items::apply_edit(
+            &mut app.root_config,
+            "shortcuts:sct-docs",
+            &compass_core::root_items::RootEdit::Alias("cd".into()),
+        );
+        app.app_index.apply_root_config(&app.root_config);
+        app.query = "cd".into();
+        app.search();
+        assert!(
+            matches!(app.selected_row(), Some(RootRow::Shortcut(_))),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::QueryChanged("cd ".into()));
+        settle(&mut app, task);
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::ShortcutArguments),
+            "the space opens the arguments rather than being typed: {}",
+            app.state_line()
+        );
+        assert_eq!(app.query, "cd");
+        assert!(backend.opened_shortcuts.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_calculation_that_matches_nothing_is_answered_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("12*3+6".to_owned()));
+        assert_eq!(app.results, [RootRow::Calculator], "{}", app.state_line());
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("42").is_ok() && ui.find("12*3+6").is_ok());
+        }
+        assert!(app.state_line().contains("selected_title=\"42\""));
+
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        assert!(
+            !app.results.contains(&RootRow::Calculator),
+            "a query that matches applications is not a calculation"
+        );
+        let _ = app.update(Message::QueryChanged("=2^10".to_owned()));
+        assert_eq!(app.results.first(), Some(&RootRow::Calculator));
+    }
+
+    #[test]
     fn the_action_panel_is_not_bound_to_the_vim_chord() {
         // Ctrl+K is "move up" in the default Linux scheme. The C++ binds the
         // panel to Ctrl+K on macOS only and Ctrl+B everywhere else, and this
@@ -5595,7 +11620,14 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
+                | RootRow::Calculator
+                | RootRow::Update => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -5609,10 +11641,2135 @@ mod tests {
             );
             let _ = app.update(Message::MoveSelection(Direction::Down));
         }
+        // Commands rank after the applications here; walk past them too.
+        for _ in expected.len()..app.results.len() {
+            let _ = app.update(Message::MoveSelection(Direction::Down));
+        }
         assert_eq!(
             app.selected,
-            expected.len() - 1,
+            app.results.len() - 1,
             "and it stayed on the last row, because wrap_navigation is off by default"
+        );
+    }
+
+    // ---- Search Files ----
+
+    fn file_row(path: &str, category: &str) -> crate::backend::FileRow {
+        crate::backend::FileRow {
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap_or(path).into(),
+            category: category.into(),
+        }
+    }
+
+    fn files_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend {
+            files: vec![
+                file_row("/home/me/Documents/quarterly-report.pdf", "Documents"),
+                file_row("/home/me/notes.md", "Documents"),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        app.query = "search files".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Command(
+                compass_core::commands::by_id("commands:search-files").unwrap()
+            )),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        (app, backend)
+    }
+
+    fn files_page(app: &LauncherApp) -> &crate::files_page::FilesPage {
+        let Page::Files(page) = &app.page else {
+            panic!("not on Search Files: {}", app.state_line())
+        };
+        page
+    }
+
+    #[test]
+    fn search_files_lists_recent_files_then_searches_after_the_debounce() {
+        // The debounce sleeps on tokio's timer, which the iced executor
+        // provides in the launcher and this runtime provides here.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = files_app(dir.path());
+
+        let page = files_page(&app);
+        assert_eq!(page.heading, "Recently Accessed");
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["commands:search-files"]
+        );
+        assert!(
+            app.state_line().contains("page=files"),
+            "{}",
+            app.state_line()
+        );
+
+        // Two keystrokes inside one debounce: only the second is asked.
+        let first = app.update(Message::FilesQueryChanged("quart".into()));
+        let second = app.update(Message::FilesQueryChanged("quarterly".into()));
+        settle(&mut app, first);
+        settle(&mut app, second);
+        assert_eq!(
+            backend.file_queries.lock().unwrap().as_slice(),
+            ["", "quarterly"],
+            "the superseded keystroke never reached the engine"
+        );
+        let page = files_page(&app);
+        assert_eq!(page.heading, "Results");
+        assert_eq!(
+            page.selected_row().map(|row| row.name.as_str()),
+            Some("quarterly-report.pdf")
+        );
+
+        let back = app.update(pressed(iced::keyboard::key::Named::Escape));
+        drop(back);
+        assert!(matches!(app.page, Page::Root), "Escape goes back");
+    }
+
+    #[test]
+    fn enter_opens_the_file_and_ctrl_enter_shows_it_in_the_file_browser() {
+        let enter = |modifiers| {
+            Message::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            })
+        };
+        let dir = tempfile::tempdir().unwrap();
+
+        let (mut app, backend) = files_app(dir.path());
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(files_page(&app).selected, 1);
+        let task = app.update(enter(iced::keyboard::Modifiers::default()));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened.lock().unwrap().as_slice(),
+            [("/home/me/notes.md".to_owned(), false)]
+        );
+        assert!(matches!(app.page, Page::Root), "opening hides the launcher");
+
+        let (mut app, backend) = files_app(dir.path());
+        let task = app.update(enter(iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened.lock().unwrap().as_slice(),
+            [("/home/me/Documents/quarterly-report.pdf".to_owned(), true)]
+        );
+    }
+
+    #[test]
+    fn search_files_filters_by_a_remembered_category_and_previews_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.txt");
+        std::fs::write(&notes, "remember the milk").unwrap();
+        let picture = dir.path().join("cat.png");
+        std::fs::write(&picture, b"png").unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![
+                file_row(&notes.to_string_lossy(), "Documents"),
+                file_row(&picture.to_string_lossy(), "Images"),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut app, "search files", "commands:search-files");
+        let page = files_page(&app);
+        let preview = page.preview.as_ref().expect("the selection is previewed");
+        assert_eq!(preview.name, "notes.txt");
+        assert_eq!(
+            preview.content,
+            crate::file_preview::Content::Text("remember the milk".into())
+        );
+        assert!(preview.modified.is_some());
+        let _ = app.view();
+
+        let task = app.update(Message::FilesCategoryChanged("Images".into()));
+        settle(&mut app, task);
+        let page = files_page(&app);
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            page.preview.as_ref().map(|p| p.content.clone()),
+            Some(crate::file_preview::Content::Image(picture.clone()))
+        );
+        assert_eq!(
+            backend
+                .file_queries
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some(" [Images]")
+        );
+
+        // A new opening, even in a new process, starts filtered.
+        let mut again = LauncherApp::with_index(index(dir.path()));
+        again.backend = Some(backend.clone());
+        again.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut again, "search files", "commands:search-files");
+        assert_eq!(files_page(&again).category.as_deref(), Some("Images"));
+    }
+
+    #[test]
+    fn a_query_offers_search_files_as_a_fallback_that_searches_for_it() {
+        // The typed query waits out the indexer's debounce on a timer.
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _entered = runtime.enter();
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![file_row("/home/me/zebra-notes.md", "Documents")],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.apply(AppFlags {
+            backend: Some(backend.clone()),
+            fallbacks: vec!["files:search".into()],
+            ..AppFlags::default()
+        });
+        app.query = "zebra".into();
+        app.search();
+        assert!(
+            matches!(app.results.last(), Some(RootRow::Fallback(Fallback::Command(c)))
+                if c.kind == compass_core::commands::CommandKind::SearchFiles),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.view();
+        app.selected = app.results.len() - 1;
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let page = files_page(&app);
+        assert_eq!(page.query, "zebra");
+        assert_eq!(page.rows.len(), 1);
+        app.query.clear();
+        app.search();
+        assert!(app.results.is_empty(), "an empty query offers no fallback");
+    }
+
+    #[test]
+    fn search_files_panel_is_the_cpps_file_actions() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![
+                file_row("/home/me/sunset.png", "Images"),
+                file_row("/home/me/Tool.AppImage", "Documents"),
+            ],
+            file_info: crate::backend::FileActions {
+                mime: Some("image/png".into()),
+                has_opener: true,
+                can_set_wallpaper: true,
+                can_paste: true,
+            },
+            openers: vec![opener("gimp.desktop", "GIMP", false)],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "search files", "commands:search-files");
+        assert_eq!(files_page(&app).rows.len(), 2, "{}", app.state_line());
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Open",
+                "Show in file browser",
+                "Open with...",
+                "Set as wallpaper",
+                "Create shortcut",
+                "Paste to active window",
+                "Copy file",
+                "Copy file path",
+                "Copy file name",
+                "Copy mime type",
+            ]
+        );
+        let task = choose(&mut app, "Copy mime type");
+        assert_eq!(settle(&mut app, task), ["image/png"]);
+
+        let reopen = |app: &mut LauncherApp| {
+            let _ = app.update(Message::Command(UiCommand::Show));
+            open_builtin(app, "search files", "commands:search-files");
+            let task = app.update(Message::TogglePanel);
+            settle(app, task);
+        };
+        reopen(&mut app);
+        let task = choose(&mut app, "Copy file name");
+        assert_eq!(settle(&mut app, task), ["sunset.png"]);
+        reopen(&mut app);
+        let task = choose(&mut app, "Copy file");
+        settle(&mut app, task);
+        reopen(&mut app);
+        let task = choose(&mut app, "Paste to active window");
+        settle(&mut app, task);
+        reopen(&mut app);
+        let task = choose(&mut app, "Set as wallpaper");
+        settle(&mut app, task);
+        let Page::Files(page) = &app.page else {
+            panic!("a failure stays: {}", app.state_line());
+        };
+        assert_eq!(
+            page.notice.as_deref(),
+            Some("Failed to set wallpaper: no backend")
+        );
+        assert_eq!(
+            backend.file_calls.lock().unwrap().as_slice(),
+            [
+                ("copy", "/home/me/sunset.png".to_owned()),
+                ("paste", "/home/me/sunset.png".to_owned()),
+                ("wallpaper", "/home/me/sunset.png".to_owned()),
+            ]
+        );
+
+        // Create shortcut opens the form with the file's name and path.
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Create shortcut");
+        settle(&mut app, task);
+        let Page::Preferences(form) = &app.page else {
+            panic!("no shortcut form: {}", app.state_line());
+        };
+        let (name, link, _, _) = crate::shortcuts_page::form_values(form);
+        assert_eq!(
+            (name.as_str(), link.as_str()),
+            ("sunset.png", "/home/me/sunset.png")
+        );
+
+        // Open with… lists the file's openers.
+        reopen(&mut app);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::OpenWith(_)),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(
+            backend
+                .opener_lookups
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("/home/me/sunset.png")
+        );
+
+        // An AppImage runs, and it is primary only when nothing opens it.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "search files", "commands:search-files");
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(panel_titles(&app).contains(&"Run executable".to_owned()));
+        let task = choose(&mut app, "Run executable");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.file_calls.lock().unwrap().last(),
+            Some(&("run", "/home/me/Tool.AppImage".to_owned()))
+        );
+        let sections = super::file_actions::file_panel_sections(
+            "/x/Tool.AppImage",
+            &crate::backend::FileActions::default(),
+        );
+        assert_eq!(sections[0].actions[0].title, "Run executable");
+        assert_eq!(sections[0].actions[0].shortcut.as_deref(), Some("enter"));
+        assert!(
+            !sections
+                .iter()
+                .flat_map(|s| &s.actions)
+                .any(|a| a.title == "Set as wallpaper" || a.title == "Copy mime type")
+        );
+    }
+
+    #[test]
+    fn search_files_without_an_engine_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.query = "search files".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let page = files_page(&app);
+        assert!(
+            matches!(&page.status, crate::files_page::Status::Failed(reason)
+                if reason.contains("needs the Compass engine")),
+            "{:?}",
+            page.status
+        );
+    }
+
+    // ---- Shortcuts ----
+
+    fn stored_shortcut(id: &str, name: &str, url: &str) -> crate::backend::Shortcut {
+        crate::backend::Shortcut {
+            id: id.into(),
+            name: name.into(),
+            icon: "icon://omnicast/link".into(),
+            url: url.into(),
+            app: "default".into(),
+            ..crate::backend::Shortcut::default()
+        }
+    }
+
+    /// An app whose engine holds two shortcuts, already listed.
+    fn shortcuts_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 2);
+        (app, backend)
+    }
+
+    fn open_builtin(app: &mut LauncherApp, query: &str, id: &str) {
+        app.query = query.into();
+        app.search();
+        let Some(RootRow::Command(command)) = app.selected_row() else {
+            panic!("{query:?} did not select a command: {}", app.state_line());
+        };
+        assert_eq!(command.id(), id);
+        let task = app.update(Message::LaunchSelected);
+        settle(app, task);
+    }
+
+    fn opener(id: &str, name: &str, default: bool) -> crate::backend::OpenerRow {
+        crate::backend::OpenerRow {
+            id: id.into(),
+            name: name.into(),
+            icon: None,
+            default,
+        }
+    }
+
+    #[test]
+    fn manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            openers: vec![
+                opener("firefox.desktop", "Firefox", true),
+                opener("chromium.desktop", "Chromium", false),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        open_builtin(&mut app, "manage shortcuts", "commands:manage-shortcuts");
+
+        // The pane follows the selection: the link expanded, the default
+        // application named as such.
+        let Page::Shortcuts(page) = &app.page else {
+            panic!("not on Manage Shortcuts: {}", app.state_line());
+        };
+        let detail = page.detail.clone().expect("a pane for the first row");
+        assert_eq!(detail.id, "sct-docs");
+        assert_eq!(detail.expanded.as_deref(), Ok("https://docs.rs/{crate}|"));
+        assert_eq!(detail.app.as_deref(), Some("Firefox (Default)"));
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        let Page::Shortcuts(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(
+            page.detail.as_ref().map(|d| d.id.as_str()),
+            Some("sct-news")
+        );
+
+        // Open with… lists the applications for the stored link, opens the
+        // expanded one with the chosen application and hides.
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        let Page::OpenWith(page) = &app.page else {
+            panic!("no app selector: {}", app.state_line());
+        };
+        assert_eq!(page.all.len(), 2);
+        assert_eq!(
+            backend
+                .opener_lookups
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("https://news.ycombinator.com")
+        );
+        // Escape goes back to the list, and the selector opens again.
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        let _ = app.update(Message::OpenWithQueryChanged("chrom".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_with.lock().unwrap().as_slice(),
+            [(
+                "chromium.desktop".to_owned(),
+                "https://news.ycombinator.com|".to_owned()
+            )]
+        );
+        assert!(
+            !matches!(app.page, Page::OpenWith(_)),
+            "hidden after opening"
+        );
+    }
+
+    #[test]
+    fn a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.apply(AppFlags {
+            fallbacks: vec![
+                "shortcuts:sct-news".into(),
+                "files:search".into(),
+                "shortcuts:sct-docs".into(),
+            ],
+            ..AppFlags::default()
+        });
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        app.query = "tokio".into();
+        app.search();
+        let fallbacks: Vec<RootRow> = app
+            .results
+            .iter()
+            .copied()
+            .filter(|row| matches!(row, RootRow::Fallback(_)))
+            .collect();
+        assert_eq!(
+            fallbacks.len(),
+            2,
+            "Search Files and the one-argument shortcut, not the one with none: {}",
+            app.state_line()
+        );
+        assert!(
+            matches!(fallbacks[0], RootRow::Fallback(_)),
+            "in configured order"
+        );
+        assert_eq!(fallbacks[1], RootRow::Fallback(Fallback::Shortcut(0)));
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| *row == RootRow::Fallback(Fallback::Shortcut(0)))
+            .unwrap();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().as_slice(),
+            [("sct-docs".to_owned(), vec!["tokio".to_owned()])]
+        );
+    }
+
+    #[test]
+    fn a_shortcut_in_root_search_asks_for_its_argument_then_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.query = "crate docs".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Shortcut(0)),
+            "{}",
+            app.state_line()
+        );
+        assert!(app.state_line().contains("selected_title=\"Crate Docs\""));
+
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "crate");
+
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert!(
+            backend.opened_shortcuts.lock().unwrap().is_empty(),
+            "a required argument left empty does not open it"
+        );
+
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("serde".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().as_slice(),
+            [("sct-docs".to_owned(), vec!["serde".to_owned()])]
+        );
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["shortcuts:sct-docs"],
+            "the visit counts in root search's ranking"
+        );
+        assert!(matches!(app.page, Page::Root));
+
+        // One with no arguments opens at once.
+        app.query = "hacker news".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().last(),
+            Some(&("sct-news".to_owned(), Vec::new()))
+        );
+    }
+
+    #[test]
+    fn create_shortcut_saves_the_form_and_the_new_one_is_searchable() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        open_builtin(&mut app, "create shortcut", "commands:create-shortcut");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Create Shortcut");
+        let position = |name: &str| page.fields.iter().position(|f| f.name == name).unwrap();
+        let (name, link, icon) = (position("name"), position("link"), position("icon"));
+
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("the form went away without a link");
+        };
+        assert!(
+            page.notice.as_deref().is_some_and(|n| n.contains("Link")),
+            "{:?}",
+            page.notice
+        );
+
+        let _ = app.update(Message::PreferenceEdited(
+            name,
+            FieldValue::Text("Wiki".into()),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            link,
+            FieldValue::Text("https://en.wikipedia.org/wiki/{page}".into()),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            icon,
+            FieldValue::Choice(Some("icon://omnicast/book".into())),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.drafts.lock().unwrap().as_slice(),
+            [crate::backend::ShortcutDraft {
+                id: None,
+                name: "Wiki".into(),
+                icon: "icon://omnicast/book".into(),
+                url: "https://en.wikipedia.org/wiki/{page}".into(),
+                app: "default".into(),
+            }]
+        );
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        app.query = "wiki".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Shortcut(2)));
+    }
+
+    #[test]
+    fn manage_shortcuts_filters_edits_and_removes() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        open_builtin(&mut app, "manage shortcuts", "commands:manage-shortcuts");
+        assert!(
+            app.state_line().contains("page=shortcuts"),
+            "{}",
+            app.state_line()
+        );
+
+        let _ = app.update(Message::ShortcutsQueryChanged("hackr".into()));
+        let Page::Shortcuts(page) = &app.page else {
+            panic!("not on Manage Shortcuts");
+        };
+        assert_eq!(page.shown, [1], "the filter is fuzzy");
+
+        // Ctrl+E edits it in the form, prefilled; Escape comes back here.
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no edit form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Edit \"Hacker News\"");
+        assert_eq!(page.command_id, "sct-news");
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+
+        // Saving an edit sends the id, and returns to the list.
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend
+                .drafts
+                .lock()
+                .unwrap()
+                .last()
+                .and_then(|d| d.id.clone()),
+            Some("sct-news".to_owned())
+        );
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+
+        // Ctrl+X removes the selected one, here; Ctrl+Shift+X does not.
+        let _ = app.update(Message::ShortcutsQueryChanged(String::new()));
+        let task = app.update(chord("x", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 2);
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            app.app_index
+                .shortcuts()
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            ["sct-news"]
+        );
+
+        // The panel offers the rest; Copy writes the expanded link.
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("copy".into()));
+        let task = app.update(Message::PanelActivate);
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, ["https://news.ycombinator.com|"]);
+    }
+
+    #[test]
+    fn a_root_shortcut_is_removed_with_ctrl_shift_x() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _backend) = shortcuts_app(dir.path());
+        app.query = "hacker news".into();
+        app.search();
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            app.app_index.shortcuts().len(),
+            2,
+            "Ctrl+X is not remove here"
+        );
+        let task = app.update(chord("x", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 1);
+        assert!(
+            app.results
+                .iter()
+                .all(|row| !matches!(row, RootRow::Shortcut(_))),
+            "the removed shortcut left the results"
+        );
+    }
+
+    #[test]
+    fn shortcuts_without_an_engine_say_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        open_builtin(&mut app, "create shortcut", "commands:create-shortcut");
+        let _ = app.update(Message::PreferenceEdited(
+            1,
+            crate::preferences_page::FieldValue::Text("https://x.test".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("the form went away");
+        };
+        assert!(
+            page.notice
+                .as_deref()
+                .is_some_and(|n| n.contains("need the Compass engine")),
+            "{:?}",
+            page.notice
+        );
+    }
+
+    // ---- Create Extension ----
+
+    #[test]
+    fn create_extension_sends_the_form_and_shows_where_it_went() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "create extension", "commands:create-extension");
+        for (position, value) in [
+            "zoe",
+            "Hello",
+            "Says hello to the whole world",
+            "/home/me/code",
+            "Say Hello",
+            "Says hello",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let _ = app.update(Message::PreferenceEdited(
+                position,
+                FieldValue::Text(value.into()),
+            ));
+        }
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let created = backend.created.lock().unwrap().clone();
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].template, ":boilerplate/tmpl-list");
+        let Page::Created(page) = &app.page else {
+            panic!("no success page: {}", app.state_line());
+        };
+        assert_eq!(page.path, "/home/me/code/hello");
+    }
+
+    // ---- Browse Fonts ----
+
+    #[test]
+    fn browse_fonts_filters_previews_and_goes_back_to_the_same_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        open_builtin(&mut app, "browse fonts", "commands:browse-fonts");
+        let Page::Fonts(page) = &app.page else {
+            panic!("not Browse Fonts: {}", app.state_line());
+        };
+        assert_eq!(page.shown().0, "All Fonts (2)");
+        assert_eq!(page.options, ["All", "Latin", "Monospace"]);
+
+        let task = app.update(Message::FontsCategoryChanged("Monospace".into()));
+        settle(&mut app, task);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::FontPreview(preview) = &app.page else {
+            panic!("no specimen: {}", app.state_line());
+        };
+        assert_eq!(preview.name, "JetBrains Mono");
+        assert_eq!(
+            preview.lines.first(),
+            Some(&crate::fonts_page::SpecimenLine::Heading(
+                "JetBrains Mono".into()
+            ))
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Fonts(page) = &app.page else {
+            panic!("not back at the list: {}", app.state_line());
+        };
+        assert_eq!(page.category.as_deref(), Some("Monospace"), "filter kept");
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let task = app.update(Message::PanelActivate);
+        assert_eq!(
+            settle(&mut app, task),
+            ["JetBrains Mono"],
+            "Copy font family"
+        );
+    }
+
+    #[test]
+    fn browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut app, "browse fonts", "commands:browse-fonts");
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowRight));
+        settle(&mut app, task);
+        let Page::Fonts(page) = &app.page else {
+            panic!("not Browse Fonts: {}", app.state_line());
+        };
+        assert_eq!(page.selected, 1, "Right moves along the row");
+        let _ = app.view();
+
+        let task = app.update(Message::FontsCategoryChanged("Monospace".into()));
+        settle(&mut app, task);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.fonts_set.lock().unwrap().as_slice(),
+            ["JetBrains Mono"]
+        );
+        assert_eq!(app.font_family.as_deref(), Some("JetBrains Mono"));
+
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        let mut reopened = LauncherApp::with_index(index(dir.path()));
+        reopened.backend = Some(backend);
+        reopened.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut reopened, "browse fonts", "commands:browse-fonts");
+        let Page::Fonts(page) = &reopened.page else {
+            panic!("not Browse Fonts: {}", reopened.state_line());
+        };
+        assert_eq!(
+            page.category.as_deref(),
+            Some("Monospace"),
+            "the category is remembered across processes"
+        );
+    }
+
+    /// Browse Apps, once enabled (`isDefaultDisabled`): every application,
+    /// the hidden ones with `showHidden`, the name, comment and keyword
+    /// filter, Enter to open, `control+shift+1` for the first desktop action
+    /// and the copy actions from the panel.
+    #[test]
+    fn browse_apps_lists_filters_opens_and_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        drop(index(dir.path()));
+        fs::write(
+            dir.path().join("editor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Editor\nComment=Write prose\n\
+             Exec=/bin/true\nActions=new;\n[Desktop Action new]\nName=New Window\nExec=/bin/true -n\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("probe.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Probe\nExec=/bin/true\nNoDisplay=true\n",
+        )
+        .unwrap();
+        let launcher = Arc::new(RecordingLaunchTarget::default());
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build())
+            .with_launcher(launcher.clone());
+        app.query = "browse apps".into();
+        app.search();
+        assert!(
+            !matches!(app.selected_row(), Some(RootRow::Command(c)) if c.entrypoint == "browse-apps"),
+            "disabled until the configuration enables it"
+        );
+        let config = compass_core::Config::parse(
+            r#"{"providers":{"commands":{"entrypoints":{"browse-apps":{"enabled":true}}}}}"#,
+            std::path::Path::new("config.json"),
+        )
+        .unwrap();
+        app.app_index.apply_root_config(&config.root_config());
+        app.browse_apps.show_hidden = true;
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let Page::Apps(page) = &app.page else {
+            panic!("not Browse Apps: {}", app.state_line());
+        };
+        assert_eq!(page.heading(), "Applications (5)");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Probe").is_ok());
+            assert!(ui.find("Hidden").is_ok(), "the NoDisplay entry says so");
+        }
+
+        let _ = app.update(Message::AppsQueryChanged("prose".into()));
+        let task = app.update(chord(
+            "!",
+            iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT,
+        ));
+        settle(&mut app, task);
+        assert_eq!(*launcher.0.lock().unwrap(), [Some("new".to_owned())]);
+
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let _ = app.update(Message::AppsQueryChanged("prose".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            launcher.0.lock().unwrap().last(),
+            Some(&None),
+            "Open Application"
+        );
+
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let _ = app.update(Message::AppsQueryChanged("editor".into()));
+        let _ = app.open_apps_panel().expect("a panel");
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Open Application",
+                "New Window",
+                "Copy App ID",
+                "Copy App Location"
+            ],
+            "no Open Location without an engine to open it"
+        );
+        let writes = {
+            let task = app.apps_panel_action("apps.action.2").expect("copy id");
+            settle(&mut app, task)
+        };
+        assert_eq!(writes, ["editor.desktop"]);
+    }
+
+    /// Set Default Browser and Set Default Terminal: the engine's list with
+    /// the default marked, Enter to choose, back to the root on success and
+    /// the picker's sentence on failure.
+    #[test]
+    fn a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one() {
+        use crate::backend::{DefaultApp, DefaultAppRow};
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            default_apps: vec![
+                DefaultAppRow {
+                    id: "firefox.desktop".into(),
+                    name: "Firefox".into(),
+                    description: "Browse the web".into(),
+                    is_default: true,
+                },
+                DefaultAppRow {
+                    id: "broken.desktop".into(),
+                    name: "Broken".into(),
+                    ..DefaultAppRow::default()
+                },
+                DefaultAppRow {
+                    id: "files.desktop".into(),
+                    name: "Files".into(),
+                    ..DefaultAppRow::default()
+                },
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(
+            &mut app,
+            "set default browser",
+            "commands:set-default-browser",
+        );
+        let Page::Apps(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.placeholder(), "Select a web browser...");
+        assert_eq!(page.shown.len(), 3);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Available web browsers").is_ok());
+            assert!(ui.find("✓ Default").is_ok());
+        }
+
+        let _ = app.update(Message::AppsQueryChanged("broken".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Apps(page) = &app.page else {
+            panic!("a failure stays on the picker");
+        };
+        assert_eq!(
+            page.notice.as_deref(),
+            Some(compass_core::default_app::BROWSER_FAILURE)
+        );
+
+        let _ = app.update(Message::AppsQueryChanged("files".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Root), "popToRoot");
+        assert_eq!(
+            *backend.defaults_set.lock().unwrap(),
+            [(DefaultApp::Browser, "files.desktop".to_owned())]
+        );
+
+        open_builtin(
+            &mut app,
+            "set default terminal",
+            "commands:set-default-terminal",
+        );
+        let Page::Apps(page) = &app.page else {
+            panic!("not the terminal picker");
+        };
+        assert_eq!(page.heading(), "Available terminal emulators");
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.defaults_set.lock().unwrap().last(),
+            Some(&(DefaultApp::Terminal, "firefox.desktop".to_owned()))
+        );
+    }
+
+    #[test]
+    fn script_permissions_lists_what_was_allowed_and_revokes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        *backend.grants.lock().unwrap() = vec![
+            crate::backend::ScriptGrant {
+                id: "script.clip".into(),
+                title: "Clip Tool".into(),
+                capabilities: vec!["clipboard.write".into()],
+                descriptions: vec!["copy to the clipboard".into()],
+            },
+            crate::backend::ScriptGrant {
+                id: "script.notes".into(),
+                title: "Quick Notes".into(),
+                capabilities: vec!["storage.read".into()],
+                descriptions: vec!["read its saved data".into()],
+            },
+        ];
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(
+            &mut app,
+            "script permissions",
+            "commands:script-permissions",
+        );
+        let Page::Grants(page) = &app.page else {
+            panic!("not Script Permissions: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Copy to the clipboard").is_ok());
+        }
+        let _ = app.update(Message::GrantsQueryChanged("notes".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Grants(page) = &app.page else {
+            panic!("left Script Permissions");
+        };
+        assert_eq!(
+            page.all.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+            ["script.clip"]
+        );
+        assert_eq!(page.notice.as_deref(), Some(crate::grants_page::REVOKED));
+    }
+
+    #[test]
+    fn search_tray_lists_activates_and_browses_an_items_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            tray: vec![
+                crate::backend::TrayItemRow {
+                    key: ":1.7".into(),
+                    title: "Fake Chat".into(),
+                    subtitle: "3 unread messages".into(),
+                    attention: true,
+                    has_menu: true,
+                    ..crate::backend::TrayItemRow::default()
+                },
+                crate::backend::TrayItemRow {
+                    key: ":1.8".into(),
+                    title: "Network".into(),
+                    ..crate::backend::TrayItemRow::default()
+                },
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "search tray", "commands:search-tray");
+        let Page::Tray(page) = &app.page else {
+            panic!("not Search Tray: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Fake Chat").is_ok());
+            assert!(ui.find("3 unread messages").is_ok());
+            assert!(ui.find(crate::tray_page::ATTENTION).is_ok());
+        }
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app
+            .panel
+            .as_ref()
+            .unwrap()
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|a| a.title.clone()))
+            .collect();
+        assert_eq!(titles, ["Activate", "Browse Menu", "Secondary Activate"]);
+        let _ = app.update(Message::TogglePanel);
+
+        let _ = app.update(Message::TrayQueryChanged("network".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.tray_calls.lock().unwrap().as_slice(),
+            ["activate :1.8 false"],
+            "Enter activates"
+        );
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "search tray", "commands:search-tray");
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelFilterChanged("Browse Menu".into()));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        let Page::Tray(page) = &app.page else {
+            panic!("left Search Tray");
+        };
+        assert_eq!(page.menu_key(), Some(":1.7"));
+        assert_eq!(page.entries.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Status › Away").is_ok());
+        }
+        let _ = app.update(Message::TrayQueryChanged("away".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            backend
+                .tray_calls
+                .lock()
+                .unwrap()
+                .contains(&"trigger :1.7 3".to_owned())
+        );
+        assert!(
+            matches!(app.page, Page::Tray(_)),
+            "a toggle keeps the menu open"
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        let Page::Tray(page) = &app.page else {
+            panic!("Escape in a menu left Search Tray");
+        };
+        assert_eq!(page.menu_key(), None, "Escape goes back to the items");
+    }
+
+    #[test]
+    fn a_rhai_script_row_draws_its_manifest_icon_when_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        let _ = app.update(Message::RhaiScriptsLoaded(Ok(vec![
+            compass_core::rhai_scripts::RhaiScriptItem {
+                id: "script.no-icon".into(),
+                title: "No Icon".into(),
+                description: None,
+                icon: Some("not-a-builtin".into()),
+                keywords: Vec::new(),
+            },
+        ])));
+        assert!(
+            app.rhai_icons.is_empty(),
+            "an unknown name draws the initial"
+        );
+    }
+
+    // ---- The extension stores ----
+
+    fn store_backend(dir: &std::path::Path) -> Arc<TestBackend> {
+        let row = |name: &str, title: &str| crate::backend::StoreRow {
+            id: format!("store.vicinae.{name}"),
+            name: name.into(),
+            author: "zoe".into(),
+            title: title.into(),
+            description: format!("{title} does things"),
+            downloads: "12".into(),
+            ..crate::backend::StoreRow::default()
+        };
+        Arc::new(TestBackend {
+            store_rows: std::sync::Mutex::new(vec![row("clock", "Clock"), row("timer", "Timer")]),
+            store_dir: Some(dir.to_path_buf()),
+            ..TestBackend::default()
+        })
+    }
+
+    /// Every span's font, through quotes and lists, as `rich_text` gets it.
+    fn markdown_span_fonts(
+        items: &[iced::widget::markdown::Item],
+        style: iced::widget::markdown::Style,
+        out: &mut Vec<(String, iced::Font)>,
+    ) {
+        use iced::widget::markdown::{Bullet, Item};
+        for item in items {
+            match item {
+                Item::Heading(_, text) | Item::Paragraph(text) => {
+                    for span in text.spans(style).iter() {
+                        out.push((
+                            span.text.to_string(),
+                            span.font.expect("markdown sets every span's font"),
+                        ));
+                    }
+                }
+                Item::Quote(inner) => markdown_span_fonts(inner, style, out),
+                Item::List { bullets, .. } => {
+                    for bullet in bullets {
+                        let (Bullet::Point { items } | Bullet::Task { items, .. }) = bullet;
+                        markdown_span_fonts(items, style, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn markdown_is_drawn_in_the_launchers_font() {
+        // The store detail page's Markdown as `detail_markdown` writes it:
+        // heading, description, compatibility quote, bold-label facts and
+        // the command list, plus inline code.
+        let markdown = "# Brew\n\nSearch and install Homebrew formulae.\n\n\
+            > **No compatibility data for this extension**\n\n\
+            **Author** nhojb · **Downloads** 12.3K\n\n\
+            ## Commands (2)\n\n\
+            - **Search** — Search formulae and casks\n\
+            - **Installed** — List `brew list`\n";
+        let items: Vec<_> = iced::widget::markdown::parse(markdown).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+
+        for family in [None, Some("Cantarell")] {
+            app.font_family = family.map(str::to_owned);
+            let launcher = app.font();
+            let settings = app.markdown_settings();
+            let mut spans = Vec::new();
+            markdown_span_fonts(&items, settings.style, &mut spans);
+            assert!(spans.len() > 10, "the walk found the spans: {spans:?}");
+            for (text, font) in &spans {
+                if text == "brew list" {
+                    assert_eq!(
+                        font.family,
+                        iced::font::Family::Monospace,
+                        "inline code stays monospace"
+                    );
+                    continue;
+                }
+                assert_eq!(
+                    font.family, launcher.family,
+                    "{text:?} is drawn in {font:?}, not the launcher's {launcher:?}"
+                );
+                assert_eq!(
+                    font.style,
+                    iced::font::Style::Normal,
+                    "{text:?} has no emphasis and must not be italic"
+                );
+            }
+            let bold: Vec<_> = spans
+                .iter()
+                .filter(|(_, font)| font.weight == iced::font::Weight::Bold)
+                .map(|(text, _)| text.as_str())
+                .collect();
+            assert!(
+                bold.contains(&"Author") && bold.contains(&"Search"),
+                "the labels stay bold: {bold:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog() {
+        let dir = tempfile::tempdir().unwrap();
+        let extensions = dir.path().join("extensions");
+        fs::create_dir_all(&extensions).unwrap();
+        let backend = store_backend(&extensions);
+        {
+            let mut rows = backend.store_rows.lock().unwrap();
+            rows[1].installed = true;
+            rows[1].compat = Some(1);
+        }
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.window = Some(window::Id::unique());
+        let task = app.update(Message::Command(UiCommand::Deeplink(
+            "raycast://extensions/zoe/timer".into(),
+        )));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!(
+                "the deeplink did not open a detail page: {}",
+                app.state_line()
+            );
+        };
+        assert_eq!(detail.store, crate::backend::Store::Raycast);
+        assert_eq!(detail.detail.row.name, "timer");
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelActivate);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(detail.confirm, "the panel's uninstall asks first");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Are you sure?").is_ok());
+            assert!(ui.find("Uninstall Timer").is_ok(), "a dialog with buttons");
+        }
+        let task = app.update(Message::StoreConfirmAnswered(false));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(
+            !detail.confirm && detail.detail.row.installed,
+            "Cancel keeps it"
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Store(_) = &app.page else {
+            panic!("Escape did not go to the list: {}", app.state_line());
+        };
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Partial").is_ok(), "the tier beside its dot");
+        }
+
+        let bad = app.update(Message::Command(UiCommand::Deeplink(
+            "vicinae://extensions/only-one".into(),
+        )));
+        settle(&mut app, bad);
+    }
+
+    #[test]
+    fn the_extension_store_installs_into_root_search_and_uninstalls_after_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let extensions = dir.path().join("extensions");
+        fs::create_dir_all(&extensions).unwrap();
+        let backend = store_backend(&extensions);
+        let mut app = LauncherApp::with_index(
+            AppIndex::builder()
+                .dir(dir.path())
+                .extension_dirs([extensions.clone()])
+                .build(),
+        );
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "extension store", "commands:store");
+        // The first time, the intro (`StoreIntroViewHost`); Enter goes on,
+        // and it is not shown again.
+        assert!(
+            matches!(app.page, Page::StoreIntro(_)),
+            "{}",
+            app.state_line()
+        );
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Enter: Continue to store    Esc: back").is_ok());
+        }
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            app.view_memory.get(crate::compass_pages::intro_key(
+                crate::backend::Store::Vicinae
+            )),
+            Some("true")
+        );
+        let _ = app.update(Message::Back);
+        open_builtin(&mut app, "extension store", "commands:store");
+        let Page::Store(page) = &app.page else {
+            panic!("not the store: {}", app.state_line());
+        };
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(page.heading, "Extensions");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Clock").is_ok(), "{}", app.state_line());
+            assert!(ui.find("↓ 12").is_ok(), "the accessory is drawn");
+        }
+
+        let task = app.update(Message::StoreQueryChanged("clo".into()));
+        settle(&mut app, task);
+        let Page::Store(page) = &app.page else {
+            panic!("left the store");
+        };
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.rows[0].title, "Clock");
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("no detail page: {}", app.state_line());
+        };
+        assert_eq!(detail.title, "Extension Store - Clock");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Extension Store - Clock").is_ok());
+        }
+
+        assert!(app.app_index.extensions().is_empty());
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page: {}", app.state_line());
+        };
+        assert!(detail.detail.row.installed, "Enter installs");
+        assert_eq!(detail.notice.as_deref(), Some("Extension installed"));
+        assert_eq!(
+            app.app_index
+                .extensions()
+                .iter()
+                .map(|command| command.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Show The Clock"],
+            "root search has the new command"
+        );
+
+        // Enter on an installed extension asks before uninstalling.
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(detail.confirm, "asked first");
+        assert!(backend.store_rows.lock().unwrap()[0].installed);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(!detail.detail.row.installed);
+        assert_eq!(detail.notice.as_deref(), Some("Extension uninstalled"));
+        assert!(
+            app.app_index.extensions().is_empty(),
+            "gone from root search"
+        );
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let titles: Vec<_> = app
+            .panel
+            .as_ref()
+            .expect("a panel")
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|action| action.title.clone()))
+            .collect();
+        assert_eq!(titles, ["Install extension", "Open README", "Report issue"]);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        assert_eq!(
+            *backend.opened_urls.lock().unwrap(),
+            ["https://example.com/README.md"]
+        );
+    }
+
+    #[test]
+    fn escape_from_a_store_detail_returns_to_the_same_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = store_backend(dir.path());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.view_memory.set(
+            crate::compass_pages::intro_key(crate::backend::Store::Raycast),
+            "true",
+        );
+        open_builtin(&mut app, "raycast store", "commands:raycast-store");
+        // The Raycast store waits for typing to settle; the wait itself
+        // needs a runtime, so the test delivers its end.
+        let _debounce = app.update(Message::StoreQueryChanged("tim".into()));
+        let Page::Store(page) = &app.page else {
+            panic!("not the store");
+        };
+        let generation = page.generation;
+        let stale = app.update(Message::StoreSearchDue(generation - 1));
+        assert!(settle(&mut app, stale).is_empty());
+        let task = app.update(Message::StoreSearchDue(generation));
+        settle(&mut app, task);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::StoreDetail(_)));
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Store(page) = &app.page else {
+            panic!("not back at the list: {}", app.state_line());
+        };
+        assert_eq!(page.query, "tim", "the search is kept");
+        assert_eq!(page.rows[0].title, "Timer");
+        let asked = backend.store_queries.lock().unwrap().clone();
+        assert!(
+            asked
+                .iter()
+                .all(|(store, _)| *store == crate::backend::Store::Raycast)
+        );
+        assert_eq!(asked.last().map(|(_, q)| q.as_str()), Some("tim"));
+    }
+
+    // ---- Set Theme ----
+
+    #[test]
+    fn set_theme_previews_as_the_selection_moves_and_escape_puts_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.theme_choice = crate::theme::Theme::Nord;
+        open_builtin(&mut app, "set theme", "commands:set-theme");
+        assert!(
+            app.state_line().contains("page=themes"),
+            "{}",
+            app.state_line()
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        assert_ne!(app.theme_choice, crate::theme::Theme::Nord, "previewed");
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Nord, "put back");
+        assert!(matches!(app.page, Page::Root));
+        assert!(backend.themes_kept.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_theme_keeps_the_chosen_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.theme_choice = crate::theme::Theme::System;
+        open_builtin(&mut app, "set theme", "commands:set-theme");
+        let _ = app.update(Message::ThemesQueryChanged("dracula".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(backend.themes_kept.lock().unwrap().as_slice(), ["dracula"]);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        assert_eq!(
+            app.theme_choice,
+            crate::theme::Theme::Dracula,
+            "a kept theme stays when the launcher hides"
+        );
+    }
+
+    // ---- dmenu ----
+
+    fn dmenu_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        // Already open, so the summon focuses it rather than opening one,
+        // which only a running event loop could answer.
+        app.window = Some(window::Id::unique());
+        let task = app.update(Message::Command(UiCommand::Dmenu(5)));
+        settle(&mut app, task);
+        (app, backend)
+    }
+
+    #[test]
+    fn a_pushed_dmenu_list_is_shown_filtered_and_answered_with_the_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = dmenu_app(dir.path());
+        let Page::Dmenu(page) = &app.page else {
+            panic!("no dmenu view: {}", app.state_line());
+        };
+        assert_eq!(page.entries, ["alpha", "beta", "gamma"]);
+        assert_eq!(page.heading().as_deref(), Some("Pick (3)"));
+
+        let _ = app.update(Message::DmenuQueryChanged("gama".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.dmenu_answers.lock().unwrap().as_slice(),
+            [(5, Some("gamma".to_owned()))]
+        );
+        assert!(
+            matches!(app.page, Page::Root),
+            "choosing hides the launcher"
+        );
+    }
+
+    #[test]
+    fn escape_dismisses_a_dmenu_list_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = dmenu_app(dir.path());
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.dmenu_answers.lock().unwrap().as_slice(),
+            [(5, None)],
+            "one dismissal, however the view went away"
+        );
+    }
+
+    #[test]
+    fn a_dmenu_size_resizes_the_window_until_a_list_without_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = dmenu_app(dir.path());
+        assert_eq!(app.dmenu_card_size(), None);
+        assert_eq!(app.resized_to, None);
+        if let Page::Dmenu(page) = &mut app.page {
+            page.list.width = Some(400);
+            page.list.navigation_title = Some("Pick one".into());
+        }
+        let _ = app.apply_dmenu_size();
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "hello").unwrap();
+        if let Page::Dmenu(page) = &mut app.page {
+            page.entries.push(file.to_string_lossy().into_owned());
+            page.query = "notes".into();
+            page.refilter();
+            assert!(page.preview.is_some(), "quick look reads the file");
+        }
+        let _ = app.view();
+        let size = Some((400, u32::from(GEOMETRY.card_max_height)));
+        assert_eq!(app.dmenu_card_size(), size);
+        assert_eq!(app.resized_to, size);
+        let task = app.update(Message::Command(UiCommand::Dmenu(5)));
+        settle(&mut app, task);
+        assert_eq!(app.resized_to, None, "the next list puts the size back");
+    }
+
+    // ---- Run Terminal Program ----
+
+    #[test]
+    fn run_terminal_program_runs_the_typed_command_line_in_a_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "run terminal program", "commands:run-program");
+        let Page::Programs(page) = &app.page else {
+            panic!("not on Run Terminal Program: {}", app.state_line());
+        };
+        assert_eq!(page.rows.len(), 2, "every program for the empty query");
+
+        let _ = app.update(Message::ProgramsQueryChanged("htop -d 5".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.programs_ran.lock().unwrap().as_slice(),
+            [(
+                vec!["htop".to_owned(), "-d".to_owned(), "5".to_owned()],
+                true,
+                false
+            )],
+            "run-in-terminal is the default: a terminal that closes"
+        );
+        assert!(matches!(app.page, Page::Root), "running hides the launcher");
+    }
+
+    // ---- Script commands ----
+
+    fn script_item(
+        id: &str,
+        title: &str,
+        mode: compass_core::script_command::OutputMode,
+        arguments: usize,
+    ) -> compass_core::script_scan::ScriptItem {
+        compass_core::script_scan::ScriptItem {
+            id: id.into(),
+            title: title.into(),
+            subtitle: "scripts".into(),
+            keywords: vec![],
+            mode,
+            needs_confirmation: false,
+            arguments: (0..arguments)
+                .map(|n| compass_core::script_command::ScriptArgument {
+                    argument_type: compass_core::script_command::ArgumentType::Text,
+                    placeholder: Some(format!("arg{n}")),
+                    optional: false,
+                    percent_encoded: false,
+                    data: None,
+                })
+                .collect(),
+            path: format!("/scripts/{id}"),
+        }
+    }
+
+    fn scripts_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        use compass_core::script_command::OutputMode;
+        let backend = Arc::new(TestBackend {
+            scripts: vec![
+                script_item("report.sh", "Disk Report", OutputMode::Full, 1),
+                script_item("count.sh", "Count Things", OutputMode::Compact, 0),
+                script_item("touch.sh", "Touch Marker", OutputMode::Silent, 0),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_scripts_task();
+        settle(&mut app, task);
+        assert_eq!(app.app_index.scripts().len(), 3);
+        (app, backend)
+    }
+
+    #[test]
+    fn a_full_output_script_asks_for_its_argument_and_shows_its_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "disk report".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Script(0)),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "arg0");
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("/home".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.script_runs.lock().unwrap().as_slice(),
+            [("report.sh".to_owned(), vec!["/home".to_owned()])]
+        );
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["scripts:report.sh"]
+        );
+        let Page::ScriptOutput(page) = &app.page else {
+            panic!("no output view: {}", app.state_line());
+        };
+        assert_eq!(page.heading(), "Done in 1.2s (exit=0)");
+        assert_eq!(page.runs[0].text, "report.sh");
+        assert_eq!(
+            page.runs[0].foreground,
+            Some(compass_core::script_output::Color::Red)
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+    }
+
+    #[test]
+    fn a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "count things".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            app.error.as_deref(),
+            Some("count.sh "),
+            "{}",
+            app.state_line()
+        );
+
+        app.query = "touch marker".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(backend.script_runs.lock().unwrap().len(), 2);
+    }
+
+    // ---- Snippets ----
+
+    fn stored_snippet(
+        id: &str,
+        name: &str,
+        text: &str,
+        keyword: Option<&str>,
+    ) -> crate::backend::Snippet {
+        crate::backend::Snippet {
+            id: id.into(),
+            name: name.into(),
+            data: compass_core::snippet_store::SnippetData::Text { text: text.into() },
+            expansion: keyword.map(|keyword| compass_core::snippet_store::StoredExpansion {
+                keyword: keyword.into(),
+                apps: vec!["org.gnome.TextEditor.desktop".into()],
+                word: true,
+            }),
+            ..crate::backend::Snippet::default()
+        }
+    }
+
+    /// An app whose engine holds two snippets, with Manage Snippets open.
+    fn snippets_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend {
+            snippets: std::sync::Mutex::new(vec![
+                stored_snippet("snp-sig", "Signature", "Best,\nMe", Some(";sig")),
+                stored_snippet("snp-hi", "Greeting", "Hello {name}!", None),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+        assert!(
+            app.state_line().contains("page=snippets"),
+            "{}",
+            app.state_line()
+        );
+        (app, backend)
+    }
+
+    fn ctrl_enter() -> Message {
+        Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    #[test]
+    fn manage_snippets_shows_the_selected_snippets_detail_pane() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _backend) = snippets_app(dir.path());
+        let task = app.update(Message::SnippetsQueryChanged(String::new()));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets: {}", app.state_line());
+        };
+        assert_eq!(
+            page.detail,
+            Some(crate::snippets_page::Detail {
+                id: "snp-sig".into(),
+                expanded: Ok("preview snp-sig:".into()),
+            }),
+            "the first row's text, previewed by the engine"
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets: {}", app.state_line());
+        };
+        assert_eq!(
+            page.detail.as_ref().map(|d| d.id.as_str()),
+            Some("snp-hi"),
+            "the pane follows the selection"
+        );
+        // A late answer for a row no longer selected is dropped.
+        let _ = app.update(Message::SnippetDetailLoaded(crate::snippets_page::Detail {
+            id: "snp-sig".into(),
+            expanded: Ok("late".into()),
+        }));
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets");
+        };
+        assert_eq!(page.detail.as_ref().map(|d| d.id.as_str()), Some("snp-hi"));
+    }
+
+    #[test]
+    fn manage_snippets_copies_asking_for_arguments_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = snippets_app(dir.path());
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets");
+        };
+        assert_eq!(page.shown, [0, 1]);
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(
+            writes,
+            ["snp-sig:"],
+            "Enter copies, as the C++'s primary action"
+        );
+        assert!(
+            !matches!(app.page, Page::Snippets(_)),
+            "copying hides the launcher: {}",
+            app.state_line()
+        );
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+
+        let _ = app.update(Message::SnippetsQueryChanged("greting".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "name");
+        // Escape goes back to the list, as it was.
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!(
+                "Escape did not return to Manage Snippets: {}",
+                app.state_line()
+            );
+        };
+        assert_eq!(page.query, "greting");
+
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("paste".into()));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("Zoë".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.snippet_uses.lock().unwrap().last(),
+            Some(&(
+                "snp-hi".to_owned(),
+                vec![("name".to_owned(), "Zoë".to_owned())],
+                true
+            ))
+        );
+        assert!(matches!(app.page, Page::Root), "pasting hides the launcher");
+    }
+
+    #[test]
+    fn create_snippet_takes_several_lines_and_saves_with_ctrl_enter() {
+        use crate::preferences_page::FieldValue;
+        use iced::widget::text_editor::{Action, Edit};
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "create snippet", "commands:create-snippet");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Create Snippet");
+        let content = page
+            .fields
+            .iter()
+            .position(|f| f.name == "content")
+            .unwrap();
+
+        let _ = app.update(Message::PreferenceEdited(0, FieldValue::Text("Sig".into())));
+        let _ = app.update(Message::PreferenceTextEdited(
+            content,
+            Action::Edit(Edit::Paste(Arc::new("Best,\n{cursor}".to_owned()))),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            2,
+            FieldValue::Text(" ;sig ".into()),
+        ));
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            backend.snippet_drafts.lock().unwrap().is_empty(),
+            "Enter is a newline in the text area, not a submit"
+        );
+        let task = app.update(ctrl_enter());
+        settle(&mut app, task);
+        assert_eq!(
+            backend.snippet_drafts.lock().unwrap().as_slice(),
+            [crate::backend::SnippetDraft {
+                id: None,
+                name: "Sig".into(),
+                text: "Best,\n{cursor}".into(),
+                keyword: Some(";sig".into()),
+                word: true,
+                apps: vec![],
+            }]
+        );
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+    }
+
+    #[test]
+    fn editing_a_snippet_keeps_its_apps_and_returns_to_the_list() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = snippets_app(dir.path());
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no edit form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Edit \"Signature\"");
+        let task = app.update(ctrl_enter());
+        settle(&mut app, task);
+        let draft = backend
+            .snippet_drafts
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap();
+        assert_eq!(draft.id.as_deref(), Some("snp-sig"));
+        assert_eq!(draft.apps, ["org.gnome.TextEditor.desktop"]);
+        assert!(
+            matches!(app.page, Page::Snippets(_)),
+            "{}",
+            app.state_line()
+        );
+
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets");
+        };
+        assert_eq!(
+            page.all.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["snp-hi"]
+        );
+    }
+
+    #[test]
+    fn snippets_without_an_engine_say_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets");
+        };
+        assert!(
+            matches!(&page.status, crate::snippets_page::Status::Failed(reason)
+                if reason.contains("need the Compass engine")),
+            "{:?}",
+            page.status
         );
     }
 
@@ -5628,9 +13785,101 @@ mod tests {
         pasted: std::sync::Mutex<Vec<String>>,
         changes: std::sync::Mutex<Vec<String>>,
         fail_changes: bool,
+        /// Each entry's keywords, as set.
+        keywords: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+        /// Whether copies are being recorded; `None` is never asked.
+        monitoring: std::sync::Mutex<Option<bool>>,
+        /// The kinds history was asked for.
+        kinds: std::sync::Mutex<Vec<Option<crate::backend::ClipboardRowKind>>>,
     }
 
     impl crate::backend::ClipboardBackend for FakeClipboard {
+        fn clipboard_history_of_kind(
+            &self,
+            query: String,
+            _limit: u32,
+            kind: Option<crate::backend::ClipboardRowKind>,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ClipboardRow>> {
+            Box::pin(async move {
+                self.queries.lock().unwrap().push(query.clone());
+                self.kinds.lock().unwrap().push(kind);
+                Ok(self
+                    .rows
+                    .iter()
+                    .filter(|row| row.preview.contains(&query))
+                    .filter(|row| kind.is_none_or(|kind| row.kind == kind))
+                    .cloned()
+                    .collect())
+            })
+        }
+
+        fn clipboard_detail(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ClipboardDetail> {
+            Box::pin(async move {
+                let row = self
+                    .rows
+                    .iter()
+                    .find(|row| row.id == id)
+                    .ok_or_else(|| "gone".to_owned())?;
+                Ok(crate::backend::ClipboardDetail {
+                    id: id.clone(),
+                    mime_type: "text/plain".into(),
+                    kind: row.kind,
+                    size: 1536,
+                    md5: "abc".into(),
+                    updated_at: 1_700_000_000_000,
+                    encrypted: true,
+                    keywords: self
+                        .keywords
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_default(),
+                })
+            })
+        }
+
+        fn clipboard_set_keywords(
+            &self,
+            id: String,
+            keywords: String,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.changes
+                    .lock()
+                    .unwrap()
+                    .push(format!("keywords {id} {keywords}"));
+                self.keywords.lock().unwrap().insert(id, keywords);
+                Ok(())
+            })
+        }
+
+        fn clipboard_remove_all(&self) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.changes.lock().unwrap().push("remove-all".to_owned());
+                Ok(())
+            })
+        }
+
+        fn clipboard_monitoring(
+            &self,
+            enabled: Option<bool>,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ClipboardMonitoring> {
+            Box::pin(async move {
+                let mut state = self.monitoring.lock().unwrap();
+                if let Some(enabled) = enabled {
+                    *state = Some(enabled);
+                }
+                Ok(crate::backend::ClipboardMonitoring {
+                    supported: true,
+                    enabled: state.unwrap_or(true),
+                })
+            })
+        }
+
         fn clipboard_history(
             &self,
             query: String,
@@ -5780,6 +14029,210 @@ mod tests {
             app.state_line().contains("page=clipboard"),
             "{}",
             app.state_line()
+        );
+    }
+
+    #[test]
+    fn a_copied_link_opens_and_opens_with_a_chosen_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut link = clip_row("1", "https://docs.rs/serde");
+        link.kind = crate::backend::ClipboardRowKind::Link;
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![link],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"https://docs.rs/serde".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, backend) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let titles = panel_titles(&app);
+        assert_eq!(
+            titles[..4],
+            [
+                "Paste to active window",
+                "Copy to clipboard",
+                "Open",
+                "Open with..."
+            ]
+        );
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::OpenWith(_)),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(
+            backend.opener_lookups.lock().unwrap().as_slice(),
+            ["https://docs.rs/serde"]
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Clipboard(_)),
+            "Escape returns to the history: {}",
+            app.state_line()
+        );
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Open");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            ["https://docs.rs/serde"]
+        );
+    }
+
+    #[test]
+    fn plain_text_offers_no_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "some text")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"some text".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(!panel_titles(&app).iter().any(|t| t.starts_with("Open")));
+    }
+
+    #[test]
+    fn the_kind_filter_the_pane_keywords_remove_all_and_monitoring() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut image = clip_row("2", "Image");
+        image.kind = crate::backend::ClipboardRowKind::Image;
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "some text"), image],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"some text".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        app.view_memory = crate::view_memory::ViewMemory::load(None);
+        open_clipboard(&mut app);
+
+        // The pane shows the selected entry, its text and its metadata.
+        {
+            let Page::Clipboard(page) = &app.page else {
+                unreachable!()
+            };
+            let detail = page.detail.as_ref().expect("the pane is loaded");
+            assert_eq!(detail.id, "1");
+            assert_eq!(
+                detail.pane,
+                Some(crate::clipboard_page::DetailContent::Text(
+                    "some text".into()
+                ))
+            );
+            assert!(matches!(&detail.info, Some(Ok(info)) if info.size == 1536));
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("1.50 KB").is_ok(), "the size is in the pane");
+        }
+
+        // The filter asks the engine for one kind, and is remembered.
+        let task = app.update(Message::ClipboardKindChanged("Images".into()));
+        settle(&mut app, task);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            clipboard.kinds.lock().unwrap().last(),
+            Some(&Some(crate::backend::ClipboardRowKind::Image))
+        );
+        assert_eq!(
+            app.view_memory
+                .get(crate::clipboard_page::FILTER_MEMORY_KEY),
+            Some("image")
+        );
+        let task = app.update(Message::ClipboardKindChanged("All".into()));
+        settle(&mut app, task);
+
+        // Ctrl+E opens the keyword form with what is stored; saving it goes
+        // back to the history.
+        let task = app.update(chord("e", iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::ClipboardKeywords
+                    && form.command_id == "1"),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("invoice".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert!(app.showing_clipboard());
+        assert!(
+            clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"keywords 1 invoice".to_owned())
+        );
+
+        // Remove-all asks first; Escape leaves everything, Enter removes.
+        let _ = app.update(Message::TogglePanel);
+        let remove_all = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Remove all"))
+            .expect("the panel offers remove-all");
+        let _ = app.update(Message::PanelClicked(remove_all));
+        assert!(app.confirm.is_some());
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.confirm.is_none());
+        assert!(
+            !clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"remove-all".to_owned())
+        );
+        let _ = app.update(chord(
+            "x",
+            iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT,
+        ));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"remove-all".to_owned())
+        );
+
+        // The panel pauses recording, and then offers to resume it.
+        let _ = app.update(Message::TogglePanel);
+        let pause = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Pause clipboard"))
+            .expect("recording can be paused");
+        let task = app.update(Message::PanelClicked(pause));
+        settle(&mut app, task);
+        assert_eq!(*clipboard.monitoring.lock().unwrap(), Some(false));
+        let _ = app.update(Message::TogglePanel);
+        assert!(
+            app.panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Resume clipboard"))
+                .is_some()
         );
     }
 
@@ -6021,9 +14474,50 @@ mod tests {
         activated: std::sync::Mutex<Vec<u32>>,
         closed: std::sync::Mutex<Vec<u32>>,
         listed: std::sync::atomic::AtomicUsize,
+        /// The applications running, by desktop id.
+        running: Vec<(String, crate::backend::AppRuntimeInfo)>,
+        quits: std::sync::Mutex<Vec<(String, bool)>>,
+        window_quits: std::sync::Mutex<Vec<(u32, bool)>>,
+        fail_quit: bool,
+        /// What the window manager can do.
+        caps: compass_core::window_switcher::Capabilities,
+        workspaces: Vec<crate::backend::WorkspaceRow>,
+        focused_workspaces: std::sync::Mutex<Vec<String>>,
+        toggles: std::sync::Mutex<Vec<crate::backend::WindowToggle>>,
+        /// What a toggle answers when it fails.
+        toggle_refusal: Option<&'static str>,
     }
 
     impl crate::backend::WindowBackend for FakeWindows {
+        fn window_manager_capabilities(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, compass_core::window_switcher::Capabilities>
+        {
+            Box::pin(async move { Ok(self.caps) })
+        }
+        fn list_workspaces(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::WorkspaceRow>> {
+            Box::pin(async move { Ok(self.workspaces.clone()) })
+        }
+        fn focus_workspace(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.focused_workspaces.lock().unwrap().push(id);
+                Ok(())
+            })
+        }
+        fn toggle_window_state(
+            &self,
+            toggle: crate::backend::WindowToggle,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if let Some(refusal) = self.toggle_refusal {
+                    return Err(refusal.to_owned());
+                }
+                self.toggles.lock().unwrap().push(toggle);
+                Ok(())
+            })
+        }
         fn list_windows(
             &self,
         ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::WindowRow>> {
@@ -6048,6 +14542,428 @@ mod tests {
                 Ok(())
             })
         }
+        fn app_runtime(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::AppRuntimeInfo> {
+            Box::pin(async move {
+                Ok(self
+                    .running
+                    .iter()
+                    .find(|(known, _)| *known == id)
+                    .map(|(_, info)| info.clone())
+                    .unwrap_or_default())
+            })
+        }
+        fn quit_app(&self, id: String, force: bool) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if self.fail_quit {
+                    return Err(format!("Failed to quit {id}"));
+                }
+                self.quits.lock().unwrap().push((id, force));
+                Ok(())
+            })
+        }
+        fn quit_window_app(
+            &self,
+            window: u32,
+            force: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.window_quits.lock().unwrap().push((window, force));
+                Ok(())
+            })
+        }
+    }
+
+    fn panel_titles(app: &LauncherApp) -> Vec<String> {
+        app.panel
+            .as_ref()
+            .map(|panel| {
+                panel
+                    .sections
+                    .iter()
+                    .flat_map(|section| section.actions.iter().map(|a| a.title.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn choose(app: &mut LauncherApp, title: &str) -> Task<Message> {
+        let _ = app.update(Message::PanelFilterChanged(title.to_owned()));
+        assert_eq!(
+            app.panel
+                .as_ref()
+                .and_then(PanelState::selected_action)
+                .map(|a| a.title.as_str()),
+            Some(title)
+        );
+        app.update(Message::PanelActivate)
+    }
+
+    #[test]
+    fn a_running_applications_panel_offers_quit_and_force_quit_and_they_reach_the_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: false,
+            windows: vec![window_row(31, "Mozilla Firefox", "Firefox", 5)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("firefox.desktop".into(), running)],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+
+        // Not running: the panel is the plain one, and stays so.
+        app.query = "Terminal".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(!panel_titles(&app).iter().any(|t| t.contains("Quit")));
+        let _ = app.update(Message::TogglePanel);
+
+        app.query = "Firefox".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Open",
+                "Focus Window",
+                "Close Window",
+                "Copy name",
+                "Copy path",
+                "Quit Application",
+                "Force Quit Application",
+                "Copy Deeplink",
+                "Reset ranking",
+                "Add to favorites",
+                "Set alias",
+                "Set Global Shortcut",
+                "Open Preferences",
+                "Copy ID",
+                "Disable item"
+            ]
+        );
+        let quit_row = app
+            .panel
+            .as_ref()
+            .unwrap()
+            .sections
+            .iter()
+            .find(|section| {
+                section
+                    .actions
+                    .iter()
+                    .any(|a| a.id.as_deref() == Some(super::runtime::APP_QUIT))
+            })
+            .unwrap();
+        assert_eq!(quit_row.actions[0].shortcut.as_deref(), Some("ctrl+q"));
+
+        let task = choose(&mut app, "Force Quit Application");
+        settle(&mut app, task);
+        assert_eq!(
+            windows.quits.lock().unwrap().as_slice(),
+            [("firefox.desktop".to_owned(), true)]
+        );
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Quit Application");
+        settle(&mut app, task);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Focus Window");
+        settle(&mut app, task);
+        assert_eq!(
+            windows.quits.lock().unwrap().last(),
+            Some(&("firefox.desktop".to_owned(), false))
+        );
+        assert_eq!(windows.activated.lock().unwrap().as_slice(), [31]);
+    }
+
+    #[test]
+    fn a_quit_that_does_nothing_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: true,
+            windows: vec![window_row(31, "Files", "Files", 5)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("files.desktop".into(), running)],
+            fail_quit: true,
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        app.query = "Files".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Quit Application");
+        settle(&mut app, task);
+        assert_eq!(app.error.as_deref(), Some("Failed to quit files.desktop"));
+    }
+
+    /// A resident launcher (dismissal hides) whose presentation has a HUD.
+    fn with_resident_hud(mut app: LauncherApp) -> LauncherApp {
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, outcomes) = tokio::sync::mpsc::unbounded_channel();
+        // Kept alive for the test's length: a dropped end is a disconnect.
+        std::mem::forget((commands, outcomes));
+        app.link = Some(EngineLink::new(receiver, sender));
+        app.with_hud(true)
+    }
+
+    #[test]
+    fn refresh_exchange_rates_installs_the_fresh_rates_and_says_so_or_why_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let rates = compass_core::exchange_rates::ExchangeRates {
+            date: "2026-09-24".into(),
+            fetched_at: 7,
+            rates: [("EUR".to_owned(), 1.0), ("USD".to_owned(), 1.25)].into(),
+        };
+        let backend = Arc::new(TestBackend {
+            rates: Some(rates.clone()),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend);
+        open_builtin(&mut app, "refresh exchange rates", "commands:refresh-rates");
+        let installed = compass_core::calculator::exchange_rates();
+        let answer = compass_core::calculator::compute("10 usd to eur").map(|a| a.answer);
+        compass_core::calculator::set_exchange_rates(None);
+        assert_eq!(installed.as_deref(), Some(&rates));
+        assert_eq!(answer.as_deref(), Some("8 EUR"));
+        assert_eq!(
+            app.hud_content(),
+            Some(&crate::app::calculator::rates_refreshed())
+        );
+
+        let failing = Arc::new(TestBackend {
+            refuse_rates: Some("Could not refresh the exchange rates: offline".into()),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(failing);
+        open_builtin(&mut app, "refresh exchange rates", "commands:refresh-rates");
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Could not refresh the exchange rates: offline")
+        );
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Could not refresh the exchange rates: offline")
+        );
+    }
+
+    #[test]
+    fn quit_and_force_quit_hide_with_the_cpps_hud() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: true,
+            windows: vec![window_row(31, "Files", "Files", 5)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("files.desktop".into(), running)],
+            ..FakeWindows::default()
+        });
+        let (app, _) = windows_app(dir.path(), Some(windows));
+        let mut app = with_resident_hud(app);
+        app.query = "Files".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Quit Application");
+        settle(&mut app, task);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::new("Quit Files")));
+        assert!(matches!(app.page, Page::Root), "the launcher hid");
+
+        app.query = "Files".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Force Quit Application");
+        settle(&mut app, task);
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Force quit Files")
+        );
+    }
+
+    #[test]
+    fn a_copied_answer_shows_the_calculators_hud_until_its_time_is_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.query = "6*7".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Calculator));
+        let shown_at = std::time::Instant::now();
+        let task = app.update(Message::LaunchSelected);
+        assert_eq!(settle(&mut app, task), ["42"]);
+        let hud = app.hud_content().expect("a HUD").clone();
+        assert_eq!(hud.text, "Answer copied to clipboard");
+        assert_eq!(hud.icon.as_deref(), Some(crate::hud::COPY_ICON));
+
+        let _ = app.update(Message::HudTick(shown_at));
+        assert!(app.hud_content().is_some(), "not yet");
+        let _ = app.update(Message::HudTick(
+            shown_at + crate::hud::DURATION + std::time::Duration::from_millis(100),
+        ));
+        assert!(app.hud_content().is_none(), "gone after 1.5 s");
+    }
+
+    #[test]
+    fn without_a_hud_a_copy_only_hides_and_an_exiting_launcher_shows_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path()))).with_hud(false);
+        app.query = "6*7".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        assert_eq!(settle(&mut app, task), ["42"]);
+        assert!(app.hud_content().is_none(), "GNOME's toplevel has no HUD");
+
+        let mut exiting = LauncherApp::with_index(index(dir.path())).with_hud(true);
+        exiting.query = "6*7".into();
+        exiting.search();
+        let task = exiting.update(Message::LaunchSelected);
+        settle(&mut exiting, task);
+        assert!(
+            exiting.hud_content().is_none(),
+            "no process left to show it"
+        );
+    }
+
+    #[test]
+    fn the_hud_surface_is_not_taken_for_the_launcher_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let launcher = window::Id::unique();
+        let _ = app.update(Message::Opened(launcher));
+        assert_eq!(app.window, Some(launcher));
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Paused".into(),
+            icon: Some("pause".into()),
+        }));
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Paused")
+        );
+        assert_eq!(app.window, Some(launcher), "the launcher stays up");
+        let hud = app.hud.window_id().expect("the HUD surface");
+        let _ = app.update(Message::Opened(hud));
+        assert_eq!(app.window, Some(launcher), "the HUD is not the launcher");
+        let _ = app.update(Message::Closed(hud));
+        assert_eq!(app.window, Some(launcher));
+        assert!(app.hud_content().is_none());
+    }
+
+    #[test]
+    fn the_engines_hud_is_refused_where_the_presentation_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path())).with_hud(false);
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Next Track".into(),
+            icon: None,
+        }));
+        assert!(matches!(outcomes.try_recv(), Ok(UiOutcome::Failed(_))));
+
+        app.hud.set_supported(true);
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Next Track".into(),
+            icon: Some("forward".into()),
+        }));
+        assert_eq!(outcomes.try_recv().ok(), Some(UiOutcome::Hidden));
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Next Track")
+        );
+    }
+
+    #[test]
+    fn a_refused_paste_copies_the_glyph_with_the_copy_hud() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let task = app.emoji_pasted("🙂".into(), Err("no paste here".into()));
+        assert_eq!(settle(&mut app, task), ["🙂"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+    }
+
+    #[test]
+    fn a_set_wallpaper_and_a_copied_file_say_so_and_running_does_not() {
+        assert_eq!(
+            file_actions::file_action_hud("file.wallpaper"),
+            Some(crate::hud::Hud::new("Wallpaper set").with_icon("image"))
+        );
+        assert_eq!(
+            file_actions::file_action_hud("file.copy"),
+            Some(crate::hud::Hud::copied())
+        );
+        assert_eq!(file_actions::file_action_hud("file.run"), None);
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let task = app.update(Message::ActionDone(
+            file_actions::file_action_hud("file.wallpaper"),
+            Ok(()),
+        ));
+        settle(&mut app, task);
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Wallpaper set")
+        );
+        let task = app.update(Message::ActionDone(None, Err("no backend".into())));
+        settle(&mut app, task);
+        assert_eq!(app.error.as_deref(), Some("no backend"));
+    }
+
+    #[test]
+    fn the_window_switchers_panel_quits_a_known_windows_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![
+                window_row(7, "Downloads", "Files", 1),
+                crate::backend::WindowRow {
+                    app_known: false,
+                    ..window_row(9, "xterm", "XTerm", 2)
+                },
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+        open_windows(&mut app);
+        let _ = app.update(Message::WindowsQueryChanged("Downloads".into()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Focus Window",
+                "Close Window",
+                "Quit Application",
+                "Force Quit Application"
+            ]
+        );
+        let task = choose(&mut app, "Force Quit Application");
+        settle(&mut app, task);
+        assert_eq!(windows.window_quits.lock().unwrap().as_slice(), [(7, true)]);
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_windows(&mut app);
+        let _ = app.update(Message::WindowsQueryChanged("xterm".into()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            ["Focus Window", "Close Window"],
+            "no application to quit"
+        );
+        let task = choose(&mut app, "Close Window");
+        settle(&mut app, task);
+        assert_eq!(windows.closed.lock().unwrap().as_slice(), [9]);
     }
 
     fn window_row(id: u32, title: &str, app: &str, pid: u32) -> crate::backend::WindowRow {
@@ -6058,7 +14974,98 @@ mod tests {
             wm_class: app.to_lowercase(),
             pid: Some(pid),
             can_close: true,
+            app_known: true,
         }
+    }
+
+    #[test]
+    fn browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening() {
+        let dir = tempfile::tempdir().unwrap();
+        drop(index(dir.path()));
+        fs::write(
+            dir.path().join("editor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=/bin/true\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("probe.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Probe\nExec=/bin/true\nNoDisplay=true\n",
+        )
+        .unwrap();
+        let config_path = dir.path().join("compass.json");
+        let write_config = |show_hidden: bool| {
+            fs::write(
+                &config_path,
+                format!(
+                    r#"{{"providers":{{"commands":{{"entrypoints":{{"browse-apps":
+                        {{"enabled":true,"preferences":{{"showHidden":{show_hidden}}}}}}}}}}}}}"#
+                ),
+            )
+            .unwrap();
+        };
+        write_config(false);
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: false,
+            windows: vec![window_row(42, "Draft", "Editor", 7)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("editor.desktop".into(), running)],
+            ..FakeWindows::default()
+        });
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        app.apply(AppFlags {
+            windows: Some(windows.clone() as Arc<dyn crate::backend::WindowBackend>),
+            config_path: Some(config_path.clone()),
+            ..AppFlags::default()
+        });
+        let config = compass_core::Config::load_from(&config_path).unwrap();
+        app.app_index.apply_root_config(&config.root_config());
+
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let Page::Apps(page) = &app.page else {
+            panic!("not Browse Apps: {}", app.state_line());
+        };
+        assert_eq!(page.heading(), "Applications (4)");
+
+        // A change to the preference applies the next time the view opens,
+        // without a restart.
+        write_config(true);
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let Page::Apps(page) = &app.page else {
+            panic!("not Browse Apps: {}", app.state_line());
+        };
+        assert_eq!(
+            page.heading(),
+            "Applications (5)",
+            "the hidden entry now shows"
+        );
+
+        // A running application's panel starts with Focus Window, which Enter
+        // runs.
+        let task = app.update(Message::AppsQueryChanged("editor".into()));
+        settle(&mut app, task);
+        let _ = app.open_apps_panel().expect("a panel");
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(titles[..2], ["Focus Window", "Open Application"]);
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(windows.activated.lock().unwrap().as_slice(), [42]);
+
+        // One that does not run opens.
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let task = app.update(Message::AppsQueryChanged("terminal".into()));
+        settle(&mut app, task);
+        let _ = app.open_apps_panel().expect("a panel");
+        assert_eq!(
+            app.panel.as_ref().unwrap().sections[0].actions[0].title,
+            "Open Application"
+        );
     }
 
     fn windows_app(
@@ -6088,6 +15095,115 @@ mod tests {
         );
         let task = app.update(Message::LaunchSelected);
         settle(app, task);
+    }
+
+    #[test]
+    fn workspaces_and_the_toggles_are_offered_where_the_compositor_has_them() {
+        use compass_core::window_switcher::Capabilities;
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = |id: &str, name: &str, apps: &[&str]| crate::backend::WorkspaceRow {
+            id: id.into(),
+            name: name.into(),
+            monitor: Some("DP-1".into()),
+            window_count: apps.len(),
+            apps: apps.iter().map(|a| ((*a).to_owned(), None)).collect(),
+            active: false,
+        };
+        let windows = Arc::new(FakeWindows {
+            caps: Capabilities {
+                workspaces: true,
+                fullscreen: true,
+                toggle_floating: true,
+                ..Capabilities::default()
+            },
+            workspaces: vec![
+                workspace("1", "1", &["Firefox"]),
+                workspace("3", "music", &["Spotify"]),
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+        let is_command = |app: &LauncherApp, entrypoint: &str| matches!(app.selected_row(), Some(RootRow::Command(c)) if c.entrypoint == entrypoint);
+
+        // Until the engine says what the compositor can do, none is offered.
+        app.query = "switch workspaces".into();
+        app.search();
+        assert!(
+            !is_command(&app, "switch-workspaces"),
+            "{}",
+            app.state_line()
+        );
+        let task = app.window_capabilities_task();
+        settle(&mut app, task);
+        app.search();
+        assert!(
+            is_command(&app, "switch-workspaces"),
+            "{}",
+            app.state_line()
+        );
+        app.query = "toggle overview".into();
+        app.search();
+        assert!(
+            !is_command(&app, "toggle-overview"),
+            "no overview on this compositor"
+        );
+
+        // Switch Workspaces lists them, filters by an application on one,
+        // and Enter switches to it, then hides.
+        app.query = "switch workspaces".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Workspaces(page) = &app.page else {
+            panic!("not on Switch Workspaces: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        let _ = app.update(Message::WorkspacesQueryChanged("spotify".into()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(panel_titles(&app), ["Switch to workspace"]);
+        let task = choose(&mut app, "Switch to workspace");
+        settle(&mut app, task);
+        assert_eq!(windows.focused_workspaces.lock().unwrap().as_slice(), ["3"]);
+        assert!(
+            !matches!(app.page, Page::Workspaces(_)),
+            "hidden, and back at the root next time"
+        );
+
+        // A toggle runs from root search.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        app.query = "toggle floating".into();
+        app.search();
+        assert!(is_command(&app, "toggle-floating"));
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            windows.toggles.lock().unwrap().as_slice(),
+            [crate::backend::WindowToggle::Floating]
+        );
+    }
+
+    #[test]
+    fn a_refused_toggle_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            caps: compass_core::window_switcher::Capabilities {
+                fullscreen: true,
+                ..Default::default()
+            },
+            toggle_refusal: Some("Active window is not on the current workspace"),
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        let task = app.window_capabilities_task();
+        settle(&mut app, task);
+        app.query = "toggle fullscreen".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Active window is not on the current workspace")
+        );
     }
 
     #[test]
@@ -6205,6 +15321,319 @@ mod tests {
         assert!(matches!(app.results.first(), Some(RootRow::Command(_))));
         assert!(matches!(app.results.get(1), Some(RootRow::App(_))));
     }
+    use super::icon_tests::{app_with_icons, asked, recording};
+    use crate::icons::IconArt;
+    use std::path::{Path, PathBuf};
+
+    fn repo_builtin_icons() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../extra/builtin-icons")
+            .canonicalize()
+            .expect("the builtin icon set is in the repository")
+    }
+
+    #[test]
+    fn a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.query = "clipboard history".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Command(_))));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(
+                ui.find("C").is_ok(),
+                "with no builtin icon set installed the row keeps its initial"
+            );
+        }
+        app.builtin_icons = Some(repo_builtin_icons());
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Clipboard History").is_ok());
+        assert!(
+            ui.find("C").is_err(),
+            "the builtin icon replaces the initial"
+        );
+    }
+
+    #[test]
+    fn search_files_rows_draw_their_file_type_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = tempfile::tempdir().unwrap();
+        let photo = files.path().join("photo.png");
+        fs::write(&photo, b"x").unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        let (log, lookup) = recording(&["image-png"]);
+        app.icon_lookup = lookup;
+        let page = crate::files_page::FilesPage::default();
+        let generation = page.generation;
+        app.page = Page::Files(page);
+        let row = |path: &Path, category: &str| crate::backend::FileRow {
+            path: path.to_string_lossy().into_owned(),
+            name: path.file_name().unwrap().to_string_lossy().into_owned(),
+            category: category.into(),
+        };
+        let _ = app.update(Message::FilesLoaded {
+            generation,
+            result: Ok(crate::backend::FileResults {
+                heading: "Files".into(),
+                files: vec![row(&photo, "Images"), row(files.path(), "Folders")],
+            }),
+        });
+        assert_eq!(
+            app.file_glyphs.cached(&photo.to_string_lossy()),
+            Some(&crate::icons::Glyph::Art(IconArt::Vector(PathBuf::from(
+                "/i/image-png.svg"
+            ))))
+        );
+        assert_eq!(
+            app.file_glyphs.cached(&files.path().to_string_lossy()),
+            Some(&crate::icons::Glyph::builtin("folder")),
+            "a folder no theme has an icon for draws the builtin folder"
+        );
+        assert!(asked(&log).contains(&"inode-directory".to_owned()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("photo.png").is_ok());
+        assert!(ui.find("P").is_err(), "no initial on a file row");
+    }
+
+    #[test]
+    fn a_window_row_draws_its_applications_icon_or_the_app_window_builtin() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![
+                window_row(7, "Downloads", "Firefox", 1),
+                crate::backend::WindowRow {
+                    app_known: false,
+                    ..window_row(9, "xterm", "XTerm", 2)
+                },
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        let fresh = app_with_icons(dir.path());
+        app.app_index = fresh.app_index;
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        open_windows(&mut app);
+        assert!(asked(&log).contains(&"firefox".to_owned()));
+        let Page::Windows(page) = &app.page else {
+            panic!("not the window switcher: {}", app.state_line());
+        };
+        let firefox = page.all.iter().find(|w| w.id == 7).unwrap();
+        let xterm = page.all.iter().find(|w| w.id == 9).unwrap();
+        assert_eq!(
+            app.window_app(firefox).and_then(|item| app.row_art(item)),
+            Some(&IconArt::Vector(PathBuf::from("/i/firefox.svg")))
+        );
+        assert!(app.window_app(xterm).is_none());
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("X").is_err(), "the unknown window draws AppWindow");
+        assert!(ui.find("F").is_err());
+    }
+
+    #[test]
+    fn the_default_pickers_mark_is_the_green_check_icon() {
+        use crate::backend::DefaultAppRow;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            default_apps: vec![DefaultAppRow {
+                id: "firefox.desktop".into(),
+                name: "Firefox".into(),
+                description: "Browse the web".into(),
+                is_default: true,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        app.builtin_icons = Some(repo_builtin_icons());
+        open_builtin(
+            &mut app,
+            "set default browser",
+            "commands:set-default-browser",
+        );
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Firefox").is_ok());
+        assert!(
+            ui.find("✓ Default").is_err(),
+            "the check icon replaces the text mark"
+        );
+    }
+
+    #[test]
+    fn clipboard_rows_draw_the_builtin_for_their_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.builtin_icons = Some(repo_builtin_icons());
+        let page = crate::clipboard_page::ClipboardPage {
+            rows: vec![crate::backend::ClipboardRow {
+                id: "1".into(),
+                preview: "hello".into(),
+                kind: crate::backend::ClipboardRowKind::Text,
+                pinned: false,
+                url_host: None,
+            }],
+            status: crate::clipboard_page::Status::Ready,
+            ..crate::clipboard_page::ClipboardPage::default()
+        };
+        app.page = Page::Clipboard(page);
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("hello").is_ok());
+        assert!(ui.find("T").is_err(), "the text builtin, not an initial");
+    }
+
+    #[test]
+    fn extension_script_and_shortcut_rows_draw_their_icons_in_root_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let ext = dir.path().join("extensions/hello");
+        fs::create_dir_all(ext.join("assets")).unwrap();
+        fs::write(ext.join("assets/hello.png"), b"png").unwrap();
+        fs::write(
+            ext.join("package.json"),
+            r#"{"name": "hello", "title": "Hello", "author": "someone", "icon": "hello.png",
+                "commands": [{"name": "write", "title": "Write Greeting", "mode": "no-view"}]}"#,
+        )
+        .unwrap();
+        index(dir.path());
+        let mut app = LauncherApp::with_index(
+            AppIndex::builder()
+                .dir(dir.path())
+                .extension_dirs([dir.path().join("extensions")])
+                .build(),
+        );
+        app.backend = Some(backend);
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        app.query = "greeting".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Extension(0)));
+        let extension_icon = ext.join("assets/hello.png");
+        let key =
+            compass_core::image_url::ImageUrl::local(extension_icon.to_string_lossy()).to_url();
+        assert_eq!(
+            app.url_glyphs.get(&key),
+            Some(&Some(crate::icons::Glyph::Art(IconArt::Raster(
+                extension_icon
+            )))),
+            "the extension's own icon, from its assets"
+        );
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Write Greeting").is_ok());
+            assert!(ui.find("W").is_err(), "the icon replaces the initial");
+        }
+
+        // A script whose header names an emoji.
+        app.app_index.set_scripts(vec![script_item(
+            "party.sh",
+            "Party Time",
+            compass_core::script_command::OutputMode::Silent,
+            0,
+        )]);
+        let _ = app.update(Message::ScriptIconsLoaded(Ok(vec![(
+            "party.sh".into(),
+            "icon://emoji/🎉".into(),
+        )])));
+        app.query = "party time".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Script(_))));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("🎉").is_ok(), "the emoji is drawn as text");
+            assert!(ui.find("P").is_err());
+        }
+
+        // A shortcut with a builtin icon: on a purple tile.
+        app.app_index
+            .set_shortcuts(vec![compass_core::shortcut_service::CachedShortcut {
+                id: "s1".into(),
+                name: "Docs Search".into(),
+                icon: "icon://omnicast/link".into(),
+                link: compass_core::shortcut::parse_link("https://docs.rs/{query}"),
+                app: "default".into(),
+                open_count: 0,
+                created_at: 0,
+                updated_at: 0,
+                last_opened_at: None,
+            }]);
+        app.query = "docs search".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Shortcut(_))));
+        let key = "icon://omnicast/link?bg_tint=purple";
+        let Some(Some(crate::icons::Glyph::Builtin { name, tile, .. })) = app.url_glyphs.get(key)
+        else {
+            panic!("no glyph for {key}: {:?}", app.url_glyphs.keys());
+        };
+        assert_eq!(name, "link");
+        assert!(tile.is_some(), "a shortcut's builtin sits on a purple tile");
+    }
+
+    #[test]
+    fn a_favicon_is_fetched_once_into_the_cache_and_then_drawn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        app.favicon_service = compass_core::favicon::Service::Twenty;
+        let row = crate::backend::ClipboardRow {
+            id: "1".into(),
+            preview: "https://example.com/page".into(),
+            kind: crate::backend::ClipboardRowKind::Link,
+            pinned: false,
+            url_host: Some("example.com".into()),
+        };
+        let page = crate::clipboard_page::ClipboardPage::default();
+        let generation = page.generation;
+        app.page = Page::Clipboard(page);
+        let load = |app: &mut LauncherApp| {
+            let _ = app.update(Message::ClipboardLoaded {
+                generation,
+                result: Ok(vec![row.clone()]),
+            });
+        };
+        let favicon = clipboard_url(&row).expect("a link has a favicon").to_url();
+        let favicon = favicon.as_str();
+        assert!(favicon.starts_with("icon://favicon/example.com?fallback="));
+
+        // Without remote icons (every test's default) nothing is fetched and
+        // the link builtin stands in.
+        load(&mut app);
+        assert!(app.remote_requested.is_empty());
+        assert_eq!(
+            app.url_glyphs.get(favicon),
+            Some(&Some(crate::icons::Glyph::builtin("link")))
+        );
+
+        app.remote_icons = true;
+        app.url_glyphs.clear();
+        load(&mut app);
+        let wanted = "https://twenty-icons.com/example.com/128";
+        assert_eq!(
+            app.remote_requested.iter().collect::<Vec<_>>(),
+            [wanted],
+            "the favicon is asked of the configured service"
+        );
+        load(&mut app);
+        assert_eq!(app.remote_requested.len(), 1, "and asked for once");
+
+        let cached = dir.path().join("favicon.png");
+        fs::write(&cached, b"png").unwrap();
+        let _ = app.update(Message::ExtensionImageFetched {
+            url: wanted.into(),
+            result: Ok(cached.clone()),
+        });
+        assert_eq!(
+            app.url_glyphs.get(favicon),
+            Some(&Some(crate::icons::Glyph::Art(IconArt::Raster(cached)))),
+            "once in the cache, the favicon is drawn"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -6282,7 +15711,14 @@ mod quick_launch_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
+                | RootRow::Calculator
+                | RootRow::Update => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -6384,7 +15820,7 @@ mod icon_tests {
     use crate::icons::IconArt;
 
     /// Three entries, two of which name an icon.
-    fn app_with_icons(dir: &std::path::Path) -> LauncherApp {
+    pub(super) fn app_with_icons(dir: &std::path::Path) -> LauncherApp {
         for (file, name, icon) in [
             ("firefox.desktop", "Firefox", Some("firefox")),
             ("files.desktop", "Files", Some("system-file-manager")),
@@ -6403,7 +15839,7 @@ mod icon_tests {
     }
 
     /// A lookup that answers for `hits` and records every name it is asked.
-    fn recording(hits: &[&str]) -> (Arc<Mutex<Vec<String>>>, IconLookup) {
+    pub(super) fn recording(hits: &[&str]) -> (Arc<Mutex<Vec<String>>>, IconLookup) {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&asked);
         let hits: Vec<String> = hits.iter().map(|hit| (*hit).to_owned()).collect();
@@ -6416,7 +15852,7 @@ mod icon_tests {
         (asked, lookup)
     }
 
-    fn asked(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+    pub(super) fn asked(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
         log.lock().expect("lock").clone()
     }
 
@@ -6425,7 +15861,14 @@ mod icon_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => app.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
+                | RootRow::Calculator
+                | RootRow::Update => None,
             })
             .find(|item| item.name() == name)
             .unwrap_or_else(|| panic!("{name} is not a row"))
@@ -6581,7 +16024,7 @@ mod tint_tests {
 
     #[test]
     fn the_flag_reaches_the_launcher() {
-        // Through `apply`, which is the real assignment list `vicinae::run`
+        // Through `apply`, which is the real assignment list `compass::run`
         // uses -- a helper that set the field itself would be a test of the
         // helper. This is the control #108 recorded and could not close.
         let mut app = LauncherApp::with_index(AppIndex::default());
@@ -6596,6 +16039,59 @@ mod tint_tests {
             ..AppFlags::default()
         });
         assert!(!app.tint);
+    }
+
+    #[test]
+    fn a_translucent_card_asks_for_blur_behind_itself_and_an_opaque_one_takes_it_away() {
+        // `WindowMaterial.enabled: blurEnabled`, `radius: cornerRadius`,
+        // `region: (shadowPadding, shadowPadding, w, h)`.
+        let mut app = LauncherApp::with_index(AppIndex::default());
+        let card = iced::Size::new(768.0, 312.0);
+
+        let _ = app.update(Message::CardMeasured(card));
+        assert_eq!(app.material_asked, None, "no window, nothing to blur");
+
+        app.apply(AppFlags {
+            appearance_preset: preset::resolve(Some("raycast"), None, None),
+            ..AppFlags::default()
+        });
+        app.window = Some(window::Id::unique());
+        let _ = app.update(Message::CardMeasured(card));
+        let asked = app.material_asked.expect("a translucent card is blurred");
+        assert_eq!(
+            (asked.x, asked.y, asked.width, asked.height),
+            (
+                i32::from(design::SHADOW_PADDING),
+                i32::from(design::SHADOW_PADDING),
+                768,
+                312
+            )
+        );
+        assert_eq!(asked.radius, i32::from(app.geometry.card_radius));
+
+        // The card grows: the region follows it.
+        let _ = app.update(Message::CardMeasured(iced::Size::new(768.0, 560.0)));
+        assert_eq!(app.material_asked.map(|region| region.height), Some(560));
+
+        // Tint turned off: the blur is taken away.
+        app.tint = false;
+        let _ = app.update(Message::CardMeasured(iced::Size::new(768.0, 560.0)));
+        assert_eq!(app.material_asked, None);
+    }
+
+    #[test]
+    fn a_closed_window_forgets_its_blur() {
+        let mut app = LauncherApp::with_index(AppIndex::default());
+        let id = window::Id::unique();
+        app.window = Some(id);
+        app.tint = true;
+        let _ = app.update(Message::CardMeasured(iced::Size::new(768.0, 560.0)));
+        assert!(app.material_asked.is_some());
+        let _ = app.update(Message::Closed(id));
+        assert_eq!(
+            app.material_asked, None,
+            "the next window is a new surface and must be asked again"
+        );
     }
 
     #[test]
@@ -6656,7 +16152,7 @@ mod preset_tests {
     use super::*;
     use crate::preset::{self, Preset};
 
-    /// A launcher built from flags, through the code `vicinae` uses.
+    /// A launcher built from flags, through the code `compass` uses.
     ///
     /// `apply` rather than a hand-written assignment list: a helper that set
     /// the fields itself would pass while the real copying silently stopped,
@@ -7328,7 +16824,7 @@ mod view_tests {
         }
     }
 
-    /// A launcher showing results, built through the code `vicinae` uses.
+    /// A launcher showing results, built through the code `compass` uses.
     fn app_showing_results(dir: &std::path::Path, preset_name: &str) -> LauncherApp {
         // Comments matter: the subtitle is what `subtitles` hides, and a
         // fixture without one would make that assertion measure nothing.

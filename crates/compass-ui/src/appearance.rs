@@ -3,7 +3,7 @@
 //! This crate must not know which desktop it is on (ADR-0013), and reading
 //! `org.freedesktop.appearance` means a portal, a bus and `ashpd`. So the
 //! preference arrives the same way engine commands do: over a channel, fed by
-//! `vicinae`, which is the one place allowed to know that a portal is what is
+//! `compass`, which is the one place allowed to know that a portal is what is
 //! on the other end. A test feeds it by hand.
 //!
 //! The initial value is *not* carried here. It is [`crate::AppFlags`]'s

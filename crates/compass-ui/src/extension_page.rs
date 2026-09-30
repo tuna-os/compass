@@ -31,6 +31,33 @@ pub enum RowIcon {
     },
     /// A flat colour: a grid cell whose content is one.
     Swatch(iced::Color),
+    /// An emoji or another glyph, drawn as text.
+    Text(String),
+}
+
+/// What [`compass_core::image_url::ImageUrl::from_source`] asks of an
+/// extension's view: its builtin icons, its assets and the icon theme.
+struct PageLookup<'a> {
+    assets: Option<&'a std::path::Path>,
+    icon_lookup: Option<&'a crate::app::IconLookup>,
+}
+
+impl compass_core::image_url::SourceLookup for PageLookup<'_> {
+    fn builtin(&self, name: &str) -> bool {
+        compass_core::builtin_icon::path(name).is_some()
+    }
+    fn file(&self, path: &str) -> bool {
+        let path = std::path::Path::new(path);
+        path.is_absolute() && path.is_file()
+    }
+    fn asset(&self, relative: &str) -> Option<String> {
+        let path = self.assets?.join(relative);
+        path.is_file().then(|| path.to_string_lossy().into_owned())
+    }
+    fn themed(&self, name: &str) -> bool {
+        self.icon_lookup
+            .is_some_and(|lookup| lookup.find(name).is_some())
+    }
 }
 
 /// Where the command is.
@@ -70,6 +97,8 @@ pub struct ExtensionPage {
     pub notice: Option<String>,
     /// A confirmation the extension waits on; Enter and Escape answer it.
     pub alert: Option<crate::backend::ExtensionPrompt>,
+    /// The toast the extension shows, drawn under its view.
+    pub toast: Option<crate::backend::ExtensionToast>,
     /// How many views the extension has pushed; Escape pops above one.
     pub depth: u32,
     /// A detail's Markdown, parsed once per render rather than per frame.
@@ -79,12 +108,38 @@ pub struct ExtensionPage {
     /// How many times the person has edited each field, for `onChange`'s
     /// echo count (ADR-0009).
     pub form_edits: std::collections::BTreeMap<String, u64>,
+    /// Each text area's editor, by field name: a multi-line field keeps its
+    /// cursor and selection here, and its text in `form_values`.
+    pub editors: std::collections::BTreeMap<String, iced::widget::text_editor::Content>,
     /// The extension's `assets` directory, which `Image` paths are relative to.
     pub assets: Option<std::path::PathBuf>,
     /// Whether the launcher is dark, for themed images.
     pub prefers_dark: bool,
+    /// How a file icon's theme name becomes a file; `None` draws the
+    /// builtin fallback without looking in a theme.
+    pub icon_lookup: Option<crate::app::IconLookup>,
     /// Each row's icon, by `(section, item)` like the list.
     pub icons: Vec<Vec<Option<RowIcon>>>,
+    /// Rows whose icon is a remote image, and its URL.
+    pub remote_rows: std::collections::BTreeMap<(usize, usize), String>,
+    /// Rows whose image is clipped (`Image.mask`), and to what.
+    pub masks: std::collections::BTreeMap<(usize, usize), compass_core::image_url::ImageMask>,
+    /// The images a detail's Markdown shows that have been fetched, by URL.
+    pub markdown_art: std::collections::HashMap<String, RowIcon>,
+    /// For a grid, each section's column count (the section's, else the
+    /// grid's, else `SectionGridModel`'s eight); `None` for any other view.
+    pub grid_columns: Option<Vec<usize>>,
+    /// Remote images fetched so far, by URL.
+    pub remote_art: std::collections::HashMap<String, RowIcon>,
+    /// Remote images already asked for, fetched or not, so a re-render does
+    /// not ask again.
+    pub requested: std::collections::BTreeSet<String>,
+    /// Each date field's text as typed, by field name, while it is not yet
+    /// a date; a field with no draft shows its value.
+    pub date_drafts: std::collections::BTreeMap<String, String>,
+    /// Whether the view ending without a problem goes back to the root
+    /// search: a Rhai script's does, as popping its only view.
+    pub leaves_on_end: bool,
 }
 
 impl ExtensionPage {
@@ -103,13 +158,24 @@ impl ExtensionPage {
             selected: 0,
             notice: None,
             alert: None,
+            toast: None,
             depth: 1,
             markdown: Vec::new(),
             form_values: serde_json::Map::new(),
             form_edits: std::collections::BTreeMap::new(),
+            editors: std::collections::BTreeMap::new(),
             assets: None,
             prefers_dark: false,
+            icon_lookup: None,
+            masks: std::collections::BTreeMap::new(),
+            markdown_art: std::collections::HashMap::new(),
+            grid_columns: None,
             icons: Vec::new(),
+            remote_rows: std::collections::BTreeMap::new(),
+            remote_art: std::collections::HashMap::new(),
+            requested: std::collections::BTreeSet::new(),
+            date_drafts: std::collections::BTreeMap::new(),
+            leaves_on_end: false,
         }
     }
 
@@ -117,6 +183,7 @@ impl ExtensionPage {
     pub fn apply(&mut self, state: crate::backend::ExtensionViewState) {
         self.version = state.version;
         self.alert = state.alert;
+        self.toast = state.toast;
         if state.view.is_some() {
             if state.depth != self.depth {
                 // A different screen: its search starts empty, as Raycast's does.
@@ -124,6 +191,8 @@ impl ExtensionPage {
                 self.selected = 0;
                 self.form_values.clear();
                 self.form_edits.clear();
+                self.editors.clear();
+                self.date_drafts.clear();
             }
             self.depth = state.depth.max(1);
         }
@@ -132,14 +201,52 @@ impl ExtensionPage {
             // the same search, selection and actions, one cell per row.
             let view = match *view {
                 View::Grid(grid) => {
+                    let default = grid.columns.map_or(DEFAULT_GRID_COLUMNS, usize::from);
+                    self.grid_columns = Some(
+                        grid.sections
+                            .iter()
+                            .map(|section| section.columns.map_or(default, usize::from).max(1))
+                            .collect(),
+                    );
+                    self.masks = masks_of(grid.sections.iter().map(|s| {
+                        s.items.iter().map(|c| match &c.content {
+                            compass_extension_api::view::GridContent::Image(image) => image.mask,
+                            compass_extension_api::view::GridContent::Color(_) => None,
+                        })
+                    }));
                     self.icons = grid
                         .sections
                         .iter()
                         .map(|s| s.items.iter().map(|c| self.cell_icon(&c.content)).collect())
                         .collect();
+                    self.remote_rows = rows_with(grid.sections.iter().map(|s| {
+                        s.items.iter().map(|c| match &c.content {
+                            compass_extension_api::view::GridContent::Image(image) => {
+                                self.remote_url(image)
+                            }
+                            compass_extension_api::view::GridContent::Color(_) => None,
+                        })
+                    }));
                     Box::new(View::List(grid_as_list(grid)))
                 }
                 other => {
+                    self.grid_columns = None;
+                    self.masks = match &other {
+                        View::List(list) => masks_of(list.sections.iter().map(|s| {
+                            s.items
+                                .iter()
+                                .map(|item| item.icon.as_ref().and_then(|i| i.mask))
+                        })),
+                        _ => std::collections::BTreeMap::new(),
+                    };
+                    self.remote_rows = match &other {
+                        View::List(list) => rows_with(list.sections.iter().map(|s| {
+                            s.items
+                                .iter()
+                                .map(|item| item.icon.as_ref().and_then(|i| self.remote_url(i)))
+                        })),
+                        _ => std::collections::BTreeMap::new(),
+                    };
                     self.icons = match &other {
                         View::List(list) => list
                             .sections
@@ -191,7 +298,185 @@ impl ExtensionPage {
     /// The icon of the row at `(section, item)`.
     #[must_use]
     pub fn icon(&self, section: usize, item: usize) -> Option<&RowIcon> {
-        self.icons.get(section)?.get(item)?.as_ref()
+        self.icons
+            .get(section)?
+            .get(item)?
+            .as_ref()
+            .or_else(|| self.remote_art.get(self.remote_rows.get(&(section, item))?))
+    }
+
+    /// The shown cells grouped by section, in order: each section and the
+    /// positions in `shown` of its cells.
+    #[must_use]
+    pub fn grid_groups(&self) -> Vec<(usize, Vec<usize>)> {
+        let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
+        for (position, &(section, _)) in self.shown.iter().enumerate() {
+            match groups.last_mut() {
+                Some((last, cells)) if *last == section => cells.push(position),
+                _ => groups.push((section, vec![position])),
+            }
+        }
+        groups
+    }
+
+    /// How many columns the grid's `section` has.
+    #[must_use]
+    pub fn section_columns(&self, section: usize) -> usize {
+        self.grid_columns
+            .as_ref()
+            .and_then(|columns| columns.get(section).copied())
+            .unwrap_or(DEFAULT_GRID_COLUMNS)
+    }
+
+    /// Where the selection goes in a grid, as `SectionGridModel` navigates:
+    /// Left and Right through the cells in reading order across sections;
+    /// Up and Down by the section's columns, into the next section's first
+    /// row (or the previous one's last) keeping the column; wrapping only
+    /// when `wrap`.
+    #[must_use]
+    pub fn grid_step(&self, step: crate::fonts_page::GridMove, wrap: bool) -> usize {
+        use crate::fonts_page::GridMove;
+        let total = self.shown.len();
+        if total == 0 {
+            return 0;
+        }
+        let current = self.selected.min(total - 1);
+        let groups = self.grid_groups();
+        let Some((group, item)) = groups
+            .iter()
+            .enumerate()
+            .find_map(|(g, (_, cells))| cells.iter().position(|&p| p == current).map(|i| (g, i)))
+        else {
+            return current;
+        };
+        let columns = |g: usize| self.section_columns(groups[g].0);
+        let last_row_cell = |g: usize, column: usize| {
+            let count = groups[g].1.len();
+            let cols = columns(g);
+            let last_row = (count - 1) / cols;
+            groups[g].1[(last_row * cols + column.min(cols - 1)).min(count - 1)]
+        };
+        let first_row_cell = |g: usize, column: usize| {
+            let count = groups[g].1.len();
+            groups[g].1[column.min(columns(g).min(count) - 1)]
+        };
+        let cols = columns(group);
+        let column = item % cols;
+        let cells = &groups[group].1;
+        match step {
+            GridMove::Right if current + 1 < total => current + 1,
+            GridMove::Right => {
+                if wrap {
+                    0
+                } else {
+                    current
+                }
+            }
+            GridMove::Left if current > 0 => current - 1,
+            GridMove::Left => {
+                if wrap {
+                    total - 1
+                } else {
+                    current
+                }
+            }
+            GridMove::Down => {
+                let next_row = item / cols + 1;
+                if next_row <= (cells.len() - 1) / cols {
+                    cells[(next_row * cols + column).min(cells.len() - 1)]
+                } else if group + 1 < groups.len() {
+                    first_row_cell(group + 1, column)
+                } else if wrap {
+                    first_row_cell(0, column)
+                } else {
+                    current
+                }
+            }
+            GridMove::Up => {
+                let row = item / cols;
+                if row > 0 {
+                    cells[(row - 1) * cols + column]
+                } else if group > 0 {
+                    last_row_cell(group - 1, column)
+                } else if wrap {
+                    last_row_cell(groups.len() - 1, column)
+                } else {
+                    current
+                }
+            }
+        }
+    }
+
+    /// How the row at `(section, item)` clips its image.
+    #[must_use]
+    pub fn mask(&self, section: usize, item: usize) -> compass_core::image_url::ImageMask {
+        self.masks
+            .get(&(section, item))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// The remote images this view shows that nobody has asked for yet,
+    /// its rows' and its Markdown's; each is returned once.
+    pub fn wanted_images(&mut self) -> Vec<String> {
+        let markdown = crate::store_page::markdown_images(&self.markdown);
+        let wanted: Vec<String> = self
+            .remote_rows
+            .values()
+            .chain(
+                markdown
+                    .iter()
+                    .filter(|url| crate::remote_image::is_remote(url)),
+            )
+            .filter(|url| !self.requested.contains(*url))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self.requested.extend(wanted.iter().cloned());
+        wanted
+    }
+
+    /// A remote image arrived in the cache at `path`, or could not be fetched.
+    pub fn image_arrived(&mut self, url: String, fetched: Result<std::path::PathBuf, String>) {
+        match fetched.map(|path| crate::icons::classify(&path)) {
+            Ok(Some(art)) => {
+                if crate::store_page::markdown_images(&self.markdown).contains(&url) {
+                    self.markdown_art.insert(
+                        url.clone(),
+                        RowIcon::Art {
+                            art: art.clone(),
+                            monochrome: false,
+                            tint: None,
+                        },
+                    );
+                }
+                self.remote_art.insert(
+                    url,
+                    RowIcon::Art {
+                        art,
+                        monochrome: false,
+                        tint: None,
+                    },
+                );
+            }
+            Ok(None) => tracing::debug!(%url, "a fetched image the launcher cannot draw"),
+            Err(reason) => tracing::debug!(%url, %reason, "an extension image was not fetched"),
+        }
+    }
+
+    /// The URL of `image` when it is a remote one, after the theme has
+    /// picked a side.
+    fn remote_url(&self, image: &compass_extension_api::view::Image) -> Option<String> {
+        use compass_extension_api::view::ImageSource;
+        let mut source = &image.source;
+        while let ImageSource::Themed { light, dark } = source {
+            source = if self.prefers_dark { dark } else { light };
+        }
+        match source {
+            ImageSource::Url(url) if crate::remote_image::is_remote(url) => Some(url.clone()),
+            _ => None,
+        }
     }
 
     fn cell_icon(&self, content: &compass_extension_api::view::GridContent) -> Option<RowIcon> {
@@ -204,8 +489,9 @@ impl ExtensionPage {
     }
 
     /// The file an `Image` is drawn from: a builtin icon, a file in the
-    /// extension's assets, or a `file://` URL. Remote URLs and file icons are
-    /// not fetched yet, and fall back to the row's initial.
+    /// extension's assets, or a `file://` URL. A remote URL is resolved
+    /// separately, once it has been fetched ([`Self::remote_url`]); a file
+    /// icon is its file-type icon ([`crate::icons::file_glyph`]).
     fn image_icon(&self, image: &compass_extension_api::view::Image) -> Option<RowIcon> {
         use compass_extension_api::view::ImageSource;
         let tint = image.tint.as_ref().and_then(color_of);
@@ -214,7 +500,16 @@ impl ExtensionPage {
             source = if self.prefers_dark { dark } else { light };
         }
         let (path, monochrome) = match source {
-            ImageSource::Builtin(name) => (compass_core::builtin_icon::path(name)?, true),
+            ImageSource::Builtin(name) => match compass_core::builtin_icon::path(name) {
+                Some(path) => (path, true),
+                // Not a builtin: what `ImageURL(source)` makes of the string.
+                None => return self.source_icon(name, tint),
+            },
+            ImageSource::Url(url)
+                if !url.starts_with("file://") && !crate::remote_image::is_remote(url) =>
+            {
+                return self.source_icon(url, tint);
+            }
             ImageSource::Asset(relative) => {
                 let path = self.assets.as_ref()?.join(relative);
                 (path.is_file().then_some(path)?, false)
@@ -223,7 +518,46 @@ impl ExtensionPage {
                 let path = std::path::PathBuf::from(url.strip_prefix("file://")?);
                 (path.is_file().then_some(path)?, false)
             }
-            ImageSource::FileIcon(_) | ImageSource::Themed { .. } => return None,
+            ImageSource::FileIcon(file) => {
+                let find = |name: &str| self.icon_lookup.as_ref()?.find(name);
+                match crate::icons::file_glyph(std::path::Path::new(file), &find) {
+                    crate::icons::Glyph::Art(art) => {
+                        return Some(RowIcon::Art {
+                            art,
+                            monochrome: false,
+                            tint,
+                        });
+                    }
+                    crate::icons::Glyph::Builtin { name, .. } => {
+                        (compass_core::builtin_icon::path(&name)?, true)
+                    }
+                    crate::icons::Glyph::Text(glyph) => return Some(RowIcon::Text(glyph)),
+                }
+            }
+            ImageSource::Themed { .. } => return None,
+        };
+        Some(RowIcon::Art {
+            art: crate::icons::classify(&path)?,
+            monochrome,
+            tint,
+        })
+    }
+
+    /// A bare icon string read as `ImageURL(source)` reads it: an emoji or
+    /// symbol as text, a builtin, a file or asset, a theme icon.
+    fn source_icon(&self, source: &str, tint: Option<iced::Color>) -> Option<RowIcon> {
+        use compass_core::image_url::{ImageUrl, ImageUrlType};
+        let lookup = PageLookup {
+            assets: self.assets.as_deref(),
+            icon_lookup: self.icon_lookup.as_ref(),
+        };
+        let url = ImageUrl::from_source(source, &lookup);
+        let (path, monochrome) = match url.kind {
+            ImageUrlType::Emoji | ImageUrlType::Symbol => return Some(RowIcon::Text(url.name)),
+            ImageUrlType::Builtin => (compass_core::builtin_icon::path(&url.name)?, true),
+            ImageUrlType::Local => (std::path::PathBuf::from(&url.name), false),
+            ImageUrlType::System => (self.icon_lookup.as_ref()?.find(&url.name)?, false),
+            _ => return None,
         };
         Some(RowIcon::Art {
             art: crate::icons::classify(&path)?,
@@ -374,9 +708,100 @@ impl ExtensionPage {
                 None => !self.form_values.contains_key(&field.name),
             };
             if take {
+                if matches!(
+                    field.kind,
+                    compass_extension_api::view::FieldKind::TextArea { .. }
+                ) {
+                    self.editors.insert(
+                        field.name.clone(),
+                        iced::widget::text_editor::Content::with_text(
+                            value.as_str().unwrap_or_default(),
+                        ),
+                    );
+                }
                 self.form_values.insert(field.name.clone(), value);
             }
         }
+        for item in &form.items {
+            if let FormItem::Field(field) = item
+                && matches!(
+                    field.kind,
+                    compass_extension_api::view::FieldKind::TextArea { .. }
+                )
+            {
+                self.editors.entry(field.name.clone()).or_default();
+            }
+        }
+    }
+
+    /// Whether the form has a multi-line field, where Enter is a newline and
+    /// submitting takes Ctrl+Enter.
+    #[must_use]
+    pub fn has_text_area(&self) -> bool {
+        self.form().is_some_and(|form| {
+            form.items.iter().any(|item| {
+                matches!(item, compass_extension_api::view::FormItem::Field(field)
+                    if matches!(field.kind, compass_extension_api::view::FieldKind::TextArea { .. }))
+            })
+        })
+    }
+
+    /// Text typed into the date field `name`: kept as typed, and sent as
+    /// the field's value once it is a date (or as no date once it is empty).
+    pub fn edit_date(
+        &mut self,
+        name: &str,
+        typed: String,
+    ) -> Option<(HandlerId, Vec<serde_json::Value>)> {
+        use compass_extension_api::view::{FieldKind, FormItem};
+        let precision = self.form()?.items.iter().find_map(|item| match item {
+            FormItem::Field(field) if field.name == name => match field.kind {
+                FieldKind::DatePicker { precision, .. } => Some(precision),
+                _ => None,
+            },
+            _ => None,
+        })?;
+        let value = if typed.trim().is_empty() {
+            Some(serde_json::Value::Null)
+        } else {
+            crate::extension_fields::parse_date(&typed, precision).map(serde_json::Value::from)
+        };
+        self.date_drafts.insert(name.to_owned(), typed);
+        self.edit_field(name, value?)
+    }
+
+    /// What the date field `name` shows: the text being typed, else its
+    /// value in the typed format.
+    #[must_use]
+    pub fn date_shown(
+        &self,
+        name: &str,
+        precision: compass_extension_api::view::DatePrecision,
+    ) -> String {
+        self.date_drafts.get(name).cloned().unwrap_or_else(|| {
+            self.form_values
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .map(|value| crate::extension_fields::show_date(value, precision))
+                .unwrap_or_default()
+        })
+    }
+
+    /// An edit in the text area `name`: applied to its editor, and when it
+    /// changed the text, recorded like any other field's edit.
+    pub fn edit_text_area(
+        &mut self,
+        name: &str,
+        action: iced::widget::text_editor::Action,
+    ) -> Option<(HandlerId, Vec<serde_json::Value>)> {
+        let editor = self.editors.entry(name.to_owned()).or_default();
+        let changed = action.is_edit();
+        editor.perform(action);
+        if !changed {
+            return None;
+        }
+        let text = editor.text();
+        self.edit_field(name, serde_json::Value::String(text))
     }
 
     /// The handler a chord runs: the action on offer whose shortcut is
@@ -417,7 +842,8 @@ impl ExtensionPage {
 }
 
 /// A `Color` as drawn: `#rrggbb[aa]`, or one of Raycast's named colours.
-fn color_of(color: &compass_extension_api::view::Color) -> Option<iced::Color> {
+#[must_use]
+pub fn color_of(color: &compass_extension_api::view::Color) -> Option<iced::Color> {
     use compass_extension_api::view::Color;
     let rgb = |r, g, b| Some(iced::Color::from_rgb8(r, g, b));
     match color {
@@ -499,6 +925,48 @@ fn grid_as_list(
     }
 }
 
+/// A grid's columns when neither it nor its section says (`SectionGridModel`).
+pub const DEFAULT_GRID_COLUMNS: usize = 8;
+
+/// The `(section, item)` of every row whose image `masks` gives a mask.
+fn masks_of<S, I>(
+    masks: S,
+) -> std::collections::BTreeMap<(usize, usize), compass_core::image_url::ImageMask>
+where
+    S: Iterator<Item = I>,
+    I: Iterator<Item = Option<compass_extension_api::view::ImageMask>>,
+{
+    use compass_core::image_url::ImageMask;
+    use compass_extension_api::view::ImageMask as Declared;
+    masks
+        .enumerate()
+        .flat_map(|(s, items)| {
+            items.enumerate().filter_map(move |(i, mask)| {
+                let mask = match mask? {
+                    Declared::Circle => ImageMask::Circle,
+                    Declared::RoundedRectangle => ImageMask::RoundedRectangle,
+                };
+                Some(((s, i), mask))
+            })
+        })
+        .collect()
+}
+
+/// The `(section, item)` of every row `urls` gives a URL for.
+fn rows_with<S, I>(urls: S) -> std::collections::BTreeMap<(usize, usize), String>
+where
+    S: Iterator<Item = I>,
+    I: Iterator<Item = Option<String>>,
+{
+    urls.enumerate()
+        .flat_map(|(s, items)| {
+            items
+                .enumerate()
+                .filter_map(move |(i, url)| Some(((s, i), url?)))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,6 +997,7 @@ mod tests {
             ended: false,
             depth: 1,
             alert: None,
+            toast: None,
         }
     }
 
@@ -712,7 +1181,27 @@ mod tests {
             ),
             "a dark launcher takes the themed image's dark side"
         );
-        assert_eq!(page.icon(0, 2), None, "remote images are not fetched yet");
+        assert_eq!(
+            page.icon(0, 2),
+            None,
+            "a remote image is not there until fetched"
+        );
+        assert_eq!(page.wanted_images(), ["https://example.com/a.png"]);
+        assert!(page.wanted_images().is_empty(), "asked for once");
+        page.image_arrived(
+            "https://example.com/a.png".into(),
+            Ok(assets.path().join("logo.png")),
+        );
+        assert!(
+            matches!(
+                page.icon(0, 2),
+                Some(RowIcon::Art {
+                    art: crate::icons::IconArt::Raster(_),
+                    ..
+                })
+            ),
+            "once fetched, the row draws it"
+        );
 
         let cell = GridItem {
             id: compass_extension_api::id::NodeId::ROOT,
@@ -741,6 +1230,233 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept() {
+        use compass_extension_api::view::{Image, ImageMask, ImageSource};
+        let assets = tempfile::tempdir().unwrap();
+        std::fs::write(assets.path().join("avatar"), b"png").unwrap();
+        let theme = tempfile::tempdir().unwrap();
+        let firefox = theme.path().join("firefox.png");
+        std::fs::write(&firefox, b"png").unwrap();
+        let image = |source: ImageSource, mask: Option<ImageMask>| {
+            let mut image = Image::builtin(String::new());
+            image.source = source;
+            image.mask = mask;
+            image
+        };
+        let mut emoji = ListItem::new("emoji");
+        emoji.icon = Some(image(ImageSource::Builtin("🔥".into()), None));
+        let mut themed = ListItem::new("themed");
+        themed.icon = Some(image(
+            ImageSource::Builtin("firefox".into()),
+            Some(ImageMask::Circle),
+        ));
+        let mut remote = ListItem::new("remote");
+        remote.icon = Some(image(
+            ImageSource::Url("https://example.com/me.png".into()),
+            Some(ImageMask::RoundedRectangle),
+        ));
+        let mut icon_url = ListItem::new("icon url");
+        icon_url.icon = Some(image(ImageSource::Url("icon://emoji/🎉".into()), None));
+
+        let mut page = ExtensionPage::new(1, "Icons");
+        page.assets = Some(assets.path().to_owned());
+        let found = firefox.clone();
+        page.icon_lookup = Some(crate::app::IconLookup::new(move |name: &str| {
+            (name == "firefox").then(|| found.clone())
+        }));
+        page.apply(state(1, list(vec![emoji, themed, remote, icon_url], true)));
+        assert_eq!(page.icon(0, 0), Some(&RowIcon::Text("🔥".into())));
+        assert!(
+            matches!(page.icon(0, 1), Some(RowIcon::Art { art, .. }) if art.path() == firefox),
+            "a name that is no builtin is the theme's icon"
+        );
+        assert_eq!(page.icon(0, 3), Some(&RowIcon::Text("🎉".into())));
+        use compass_core::image_url::ImageMask as Mask;
+        assert_eq!(page.mask(0, 0), Mask::None);
+        assert_eq!(page.mask(0, 1), Mask::Circle);
+        assert_eq!(
+            page.mask(0, 2),
+            Mask::RoundedRectangle,
+            "a remote image keeps its row's mask"
+        );
+    }
+
+    #[test]
+    fn a_grid_moves_by_cell_and_by_its_sections_columns() {
+        use crate::fonts_page::GridMove;
+        use compass_extension_api::view::{GridContent, GridItem, GridSection, GridView};
+        let cell = |title: &str| GridItem {
+            id: compass_extension_api::id::NodeId::ROOT,
+            key: None,
+            title: title.into(),
+            subtitle: None,
+            content: GridContent::Color(compass_extension_api::view::Color::Literal(
+                "#ff0000".into(),
+            )),
+            tooltip: None,
+            keywords: Vec::new(),
+            actions: None,
+        };
+        let section = |columns: Option<u16>, titles: &[&str]| GridSection {
+            columns,
+            items: titles.iter().map(|t| cell(t)).collect(),
+            ..GridSection::default()
+        };
+        let mut page = ExtensionPage::new(1, "Grid");
+        page.apply(state(
+            1,
+            View::Grid(GridView {
+                columns: Some(3),
+                sections: vec![
+                    section(None, &["a", "b", "c", "d", "e"]),
+                    section(Some(2), &["f", "g", "h"]),
+                ],
+                ..GridView::default()
+            }),
+        ));
+        assert_eq!(page.grid_columns, Some(vec![3, 2]));
+        assert_eq!(
+            page.grid_groups(),
+            [(0, vec![0, 1, 2, 3, 4]), (1, vec![5, 6, 7])]
+        );
+        let at = |page: &mut ExtensionPage, from: usize, step: GridMove, wrap: bool| {
+            page.selected = from;
+            page.grid_step(step, wrap)
+        };
+        assert_eq!(at(&mut page, 1, GridMove::Down, false), 4, "b down to e");
+        assert_eq!(
+            at(&mut page, 2, GridMove::Down, false),
+            4,
+            "c down: the row is short"
+        );
+        assert_eq!(
+            at(&mut page, 4, GridMove::Down, false),
+            6,
+            "e down: g, same column"
+        );
+        assert_eq!(
+            at(&mut page, 5, GridMove::Up, false),
+            3,
+            "f up: d, the last row"
+        );
+        assert_eq!(
+            at(&mut page, 4, GridMove::Right, false),
+            5,
+            "reading order runs on"
+        );
+        assert_eq!(at(&mut page, 7, GridMove::Down, false), 7, "no wrap");
+        assert_eq!(at(&mut page, 7, GridMove::Down, true), 0, "wrap to the top");
+        assert_eq!(
+            at(&mut page, 1, GridMove::Up, true),
+            7,
+            "wrap to the last row, clamped"
+        );
+        assert_eq!(at(&mut page, 0, GridMove::Left, true), 7);
+
+        page.apply(state(2, list(vec![ListItem::new("x")], true)));
+        assert_eq!(page.grid_columns, None, "a list is not a grid");
+    }
+
+    #[test]
+    fn a_code_block_is_highlighted_by_its_language() {
+        use iced::widget::markdown::Item;
+        let items: Vec<Item> =
+            iced::widget::markdown::parse("```rust\nfn main() { let answer = 42; }\n```").collect();
+        let Some(Item::CodeBlock {
+            language, lines, ..
+        }) = items.first()
+        else {
+            panic!("no code block: {items:?}");
+        };
+        assert_eq!(language.as_deref(), Some("rust"));
+        let style = iced::widget::markdown::Style::from_palette(iced::Theme::Dark.palette());
+        let colors: std::collections::BTreeSet<String> = lines[0]
+            .spans(style)
+            .iter()
+            .map(|span| format!("{:?}", span.color))
+            .collect();
+        assert!(
+            colors.len() > 2,
+            "keywords, numbers and names in their own colours: {colors:?}"
+        );
+    }
+
+    #[test]
+    fn a_details_markdown_images_are_fetched_and_drawn() {
+        let assets = tempfile::tempdir().unwrap();
+        let png = assets.path().join("shot.png");
+        std::fs::write(&png, b"png").unwrap();
+        let mut page = ExtensionPage::new(1, "Readme");
+        page.apply(state(
+            1,
+            View::Detail(compass_extension_api::view::Detail {
+                markdown: Some(
+                    "# Shots\n\n![one](https://example.com/one.png)\n\n![local](file:///nowhere.png)"
+                        .into(),
+                ),
+                ..compass_extension_api::view::Detail::default()
+            }),
+        ));
+        assert_eq!(
+            page.wanted_images(),
+            ["https://example.com/one.png"],
+            "only remote images are fetched"
+        );
+        assert!(page.markdown_art.is_empty());
+        page.image_arrived("https://example.com/one.png".into(), Ok(png));
+        assert!(matches!(
+            page.markdown_art.get("https://example.com/one.png"),
+            Some(RowIcon::Art {
+                art: crate::icons::IconArt::Raster(_),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_text_area_takes_lines_and_each_edit_is_sent_with_its_count() {
+        use compass_extension_api::view::{FieldKind, FieldValue, FormField, FormItem, FormView};
+        use iced::widget::text_editor::{Action as EditorAction, Edit};
+        let mut page = ExtensionPage::new(1, "Note");
+        page.apply(state(
+            1,
+            View::Form(FormView {
+                items: vec![FormItem::Field(Box::new(FormField {
+                    id: compass_extension_api::id::NodeId::ROOT,
+                    name: "body".into(),
+                    title: None,
+                    error: None,
+                    info: None,
+                    autofocus: false,
+                    value: Some(FieldValue::Text("hi".into())),
+                    echo: None,
+                    on_change: Some(HandlerId::new("cb-body")),
+                    kind: FieldKind::TextArea {
+                        placeholder: None,
+                        markdown: false,
+                    },
+                }))],
+                ..FormView::default()
+            }),
+        ));
+        assert!(page.has_text_area());
+        assert_eq!(page.editors["body"].text(), "hi");
+
+        page.edit_text_area(
+            "body",
+            EditorAction::Move(iced::widget::text_editor::Motion::DocumentEnd),
+        );
+        page.edit_text_area("body", EditorAction::Edit(Edit::Enter));
+        let sent = page.edit_text_area("body", EditorAction::Edit(Edit::Insert('x')));
+        assert_eq!(page.form_values["body"], "hi\nx");
+        assert_eq!(
+            sent.map(|(h, args)| (h.0, args)),
+            Some(("cb-body".into(), vec!["hi\nx".into(), 2.into()])),
+            "each edit is counted; moving the cursor is not an edit"
+        );
+    }
+
+    #[test]
     fn a_problem_or_an_end_before_any_view_is_said() {
         let mut page = ExtensionPage::new(1, "Grid thing");
         page.apply(ExtensionViewState {
@@ -750,6 +1466,7 @@ mod tests {
             ended: false,
             depth: 1,
             alert: None,
+            toast: None,
         });
         assert!(matches!(&page.status, Status::Stopped(why) if why.contains("<grid>")));
 
@@ -761,6 +1478,7 @@ mod tests {
             ended: true,
             depth: 1,
             alert: None,
+            toast: None,
         });
         assert_eq!(quiet.status, Status::Stopped("Quiet finished".into()));
     }

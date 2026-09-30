@@ -295,7 +295,7 @@ mod tests {
     use crate::encode;
     use crate::rpc;
     use compass_local_storage::{LocalStorage, namespace_for};
-    use compass_sqlcipher_sys::Database;
+    use compass_sqlcipher_sys::rusqlite::Connection;
     use std::path::PathBuf;
 
     /// A service that answers one method with a fixed value, so routing can be
@@ -540,8 +540,9 @@ mod tests {
         encode(&serde_json::to_vec(&message).expect("serialises")).expect("a small frame")
     }
 
-    fn open_db(dir: &std::path::Path) -> Database {
-        let db = Database::open(&dir.join("vicinae.db"), &[]).expect("an unencrypted db");
+    fn open_db(dir: &std::path::Path) -> Connection {
+        let db =
+            compass_sqlcipher_sys::open(&dir.join("vicinae.db"), &[]).expect("an unencrypted db");
         compass_db::vicinae::run(&db).expect("the migrations apply");
         db
     }
@@ -704,6 +705,21 @@ impl SessionEvents {
             .request(
                 crate::rpc::manager::MESSAGE_EXTENSION,
                 serde_json::json!({ "session_id": self.session_id, "payload": deferral.answer(value) }),
+            )
+            .map(drop)
+    }
+
+    /// Fails a call a [`Turn::Deferred`] left owed, with `message` as the
+    /// rejection the extension's promise sees, from any thread.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's pipe is gone.
+    pub fn fail(&self, deferral: &tsapi::Deferral, message: &str) -> Result<(), WorkerError> {
+        self.writer
+            .request(
+                crate::rpc::manager::MESSAGE_EXTENSION,
+                serde_json::json!({ "session_id": self.session_id, "payload": deferral.fail(message) }),
             )
             .map(drop)
     }

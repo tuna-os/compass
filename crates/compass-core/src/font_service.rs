@@ -895,3 +895,172 @@ pub fn specimen_markdown(
     }
     markdown
 }
+
+/// Characters that only a font meant for a script covers: one per script, two
+/// where one character is shared with a neighbour (simplified and traditional
+/// Chinese differ in `们`/`們`).
+///
+/// `QFontDatabase::writingSystems` answers from fontconfig's language
+/// coverage, which is itself character coverage; asking the font's own
+/// character map for a telling character is the same question without the
+/// fontconfig library (PARITY, Font browser).
+pub const SCRIPT_SAMPLES: &[(WritingSystem, &[char])] = &[
+    (WritingSystem::Latin, &['a', 'Z']),
+    (WritingSystem::Cyrillic, &['Ж', 'я']),
+    (WritingSystem::Greek, &['Ω', 'λ']),
+    (WritingSystem::Japanese, &['あ', 'ア']),
+    (WritingSystem::Korean, &['한']),
+    (WritingSystem::SimplifiedChinese, &['们', '这']),
+    (WritingSystem::TraditionalChinese, &['們', '這']),
+    (WritingSystem::Arabic, &['ب']),
+    (WritingSystem::Hebrew, &['א']),
+    (WritingSystem::Thai, &['ก']),
+    (WritingSystem::Lao, &['ກ']),
+    (WritingSystem::Devanagari, &['क']),
+    (WritingSystem::Bengali, &['ক']),
+    (WritingSystem::Gurmukhi, &['ਕ']),
+    (WritingSystem::Gujarati, &['ક']),
+    (WritingSystem::Tamil, &['க']),
+    (WritingSystem::Telugu, &['క']),
+    (WritingSystem::Kannada, &['ಕ']),
+    (WritingSystem::Malayalam, &['ക']),
+    (WritingSystem::Sinhala, &['ක']),
+    (WritingSystem::Thaana, &['ހ']),
+    (WritingSystem::Tibetan, &['ཀ']),
+    (WritingSystem::Myanmar, &['က']),
+    (WritingSystem::Khmer, &['ក']),
+    (WritingSystem::Armenian, &['Ա']),
+    (WritingSystem::Georgian, &['ა']),
+    (WritingSystem::Syriac, &['ܐ']),
+    (WritingSystem::Ogham, &['ᚁ']),
+    (WritingSystem::Runic, &['ᚠ']),
+    (WritingSystem::Nko, &['ߊ']),
+];
+
+/// The scripts a font covers, by whether it has every telling character of
+/// each; `covers` answers from the font's character map.
+#[must_use]
+pub fn writing_systems(covers: impl Fn(char) -> bool) -> Vec<WritingSystem> {
+    SCRIPT_SAMPLES
+        .iter()
+        .filter(|(_, samples)| samples.iter().all(|&c| covers(c)))
+        .map(|(system, _)| *system)
+        .collect()
+}
+
+/// One installed family, as the font database describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledFamily {
+    /// Its name.
+    pub family: String,
+    /// Whether it is fixed-pitch.
+    pub fixed_pitch: bool,
+    /// The scripts it covers.
+    pub systems: Vec<WritingSystem>,
+}
+
+/// One entry of the font browser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowsedFamily {
+    /// The typeface's name, its members folded together.
+    pub name: String,
+    /// The member shown for it.
+    pub family: String,
+    /// How it was classified.
+    pub classified: Classified,
+    /// The scripts the shown member covers.
+    pub systems: Vec<WritingSystem>,
+}
+
+/// The browser's entries, as `FontService::fontFamilies` builds them: every
+/// family folded into its typeface (in the order typefaces first appear),
+/// represented by one member, classified, and symbol fonts left out.
+#[must_use]
+pub fn browse_families(installed: &[InstalledFamily]) -> Vec<BrowsedFamily> {
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for font in installed {
+        let family = strip_foundry(&font.family).to_owned();
+        let base = base_family(&family);
+        let members = groups.entry(base.clone()).or_default();
+        if members.is_empty() {
+            order.push(base);
+        }
+        members.push(family);
+    }
+    order
+        .into_iter()
+        .filter_map(|base| {
+            let members = &groups[&base];
+            let representative = representative_family(&base, members).to_owned();
+            let font = installed
+                .iter()
+                .find(|font| strip_foundry(&font.family) == representative)?;
+            let classified = categorize(&representative, &font.systems, font.fixed_pitch);
+            (classified.primary != FontCategory::Symbols).then(|| BrowsedFamily {
+                name: base,
+                family: representative,
+                classified,
+                systems: font.systems.clone(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod browse_tests {
+    use super::*;
+
+    #[test]
+    fn scripts_are_found_by_their_telling_characters() {
+        let latin_and_greek = |c: char| c.is_ascii() || matches!(c, 'Ω' | 'λ');
+        assert_eq!(
+            writing_systems(latin_and_greek),
+            [WritingSystem::Latin, WritingSystem::Greek]
+        );
+        let simplified = |c: char| matches!(c, '们' | '这');
+        assert_eq!(
+            writing_systems(simplified),
+            [WritingSystem::SimplifiedChinese]
+        );
+    }
+
+    #[test]
+    fn members_fold_into_their_typeface_and_symbols_are_left_out() {
+        let font = |family: &str, fixed_pitch: bool, systems: &[WritingSystem]| InstalledFamily {
+            family: family.into(),
+            fixed_pitch,
+            systems: systems.to_vec(),
+        };
+        let browsed = browse_families(&[
+            font(
+                "Inter",
+                false,
+                &[WritingSystem::Latin, WritingSystem::Cyrillic],
+            ),
+            font("Inter Display Bold", false, &[WritingSystem::Latin]),
+            font("JetBrains Mono", true, &[WritingSystem::Latin]),
+            font("Standard Symbols PS", false, &[WritingSystem::Latin]),
+            font(
+                "Noto Sans Thai",
+                false,
+                &[WritingSystem::Thai, WritingSystem::Latin],
+            ),
+        ]);
+        let names: Vec<(&str, FontCategory)> = browsed
+            .iter()
+            .map(|b| (b.name.as_str(), b.classified.primary))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Inter", FontCategory::Latin),
+                ("Inter Display", FontCategory::Latin),
+                ("JetBrains Mono", FontCategory::Monospace),
+                ("Noto Sans Thai", FontCategory::Thai),
+            ]
+        );
+        assert!(browsed[0].classified.has(FontCategory::Cyrillic));
+    }
+}

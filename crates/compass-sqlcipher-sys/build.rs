@@ -1,12 +1,13 @@
-//! Compile SQLCipher and the `fuzzy_trigram` tokenizer from `vendor/`.
+//! Compile the `fuzzy_trigram` tokenizer from `vendor/`.
+//!
+//! SQLCipher itself comes from `libsqlite3-sys`'s `bundled-sqlcipher` build,
+//! through `rusqlite`. The tokenizer is compiled here against *that* build's
+//! headers (`DEP_SQLITE3_INCLUDE`, exported by `libsqlite3-sys`), not the
+//! copy in `vendor/sqlcipher` the C++ engine uses, so that the structures it
+//! hands SQLite match the SQLite it is linked with.
 //!
 //! `spellfix1` is no longer built: the file index's typo vocabulary is a plain
 //! table with suggestions computed in Rust (`compass_db::vocabulary`, ADR-0017).
-//!
-//! The flags mirror `vendor/sqlcipher/CMakeLists.txt` exactly, because the C++
-//! engine and this crate have to produce and read the same files. A flag that
-//! differs here is not a build difference, it is a format difference, and
-//! nothing would report it until a user's history failed to open.
 
 use std::path::{Path, PathBuf};
 
@@ -21,63 +22,28 @@ fn vendor_dir() -> PathBuf {
 
 fn main() {
     let vendor = vendor_dir();
-    let sqlcipher = vendor.join("sqlcipher/sqlite3.c");
     let tokenizer = vendor.join("fuzzy-trigram/register.c");
+    assert!(
+        tokenizer.exists(),
+        "{} is missing. Every clipboard history declares this tokenizer on its FTS table, \
+         and without it no query against that table runs.",
+        tokenizer.display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        vendor.join("fuzzy-trigram").display()
+    );
 
-    for file in [&sqlcipher, &tokenizer] {
-        assert!(
-            file.exists(),
-            "{} is missing. This crate builds the vendored C that defines the clipboard file \
-             format; it cannot fall back to a system SQLite, because a system SQLite is not \
-             SQLCipher and does not have this tokenizer.",
-            file.display()
-        );
-        println!("cargo:rerun-if-changed={}", file.display());
-    }
+    let sqlite_include = std::env::var("DEP_SQLITE3_INCLUDE").expect(
+        "libsqlite3-sys exports DEP_SQLITE3_INCLUDE when it builds its bundled SQLCipher; \
+         without it the tokenizer would compile against headers of some other SQLite",
+    );
 
-    // SQLCipher. Flags from vendor/sqlcipher/CMakeLists.txt.
-    let mut build = cc::Build::new();
-    build
-        .file(&sqlcipher)
-        .include(&vendor)
-        .warnings(false)
-        .define("SQLITE_ENABLE_FTS5", None)
-        .define("SQLITE_TEMP_STORE", "2")
-        .define("SQLITE_HAS_CODEC", None)
-        .define("SQLITE_EXTRA_INIT", "sqlcipher_extra_init")
-        .define("SQLITE_EXTRA_SHUTDOWN", "sqlcipher_extra_shutdown");
-
-    // The crypto provider is chosen per platform, and choosing wrong writes a
-    // database the other engine cannot read (ADR-0014).
-    match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
-        Ok("macos") | Ok("ios") => {
-            build.define("SQLCIPHER_CRYPTO_CC", None);
-            println!("cargo:rustc-link-lib=framework=Security");
-            println!("cargo:rustc-link-lib=framework=CoreFoundation");
-        }
-        Ok("windows") => {
-            build
-                .file(vendor.join("sqlcipher/crypto_cng.c"))
-                .define("SQLCIPHER_CRYPTO_CUSTOM", "sqlcipher_cng_setup");
-            println!("cargo:rustc-link-lib=bcrypt");
-            println!("cargo:rustc-link-lib=version");
-        }
-        _ => {
-            build.define("SQLCIPHER_CRYPTO_OPENSSL", None);
-            println!("cargo:rustc-link-lib=crypto");
-        }
-    }
-    build.compile("compass_sqlcipher");
-
-    // The tokenizer, statically linked the same way the C++ engine links it.
-    // `register.c` includes `sqlite3.h` (via `fuzzy-trigram.h`), which lives
-    // in the SQLCipher amalgamation directory — not on the default search
-    // path, so without this include nothing that links this crate compiles
-    // on a fresh checkout.
+    // Statically linked the same way the C++ engine links it. `register.c`
+    // includes `sqlite3.h` (via `fuzzy-trigram.h`).
     cc::Build::new()
         .file(&tokenizer)
-        .include(&vendor)
-        .include(vendor.join("sqlcipher"))
+        .include(&sqlite_include)
         .include(vendor.join("fuzzy-trigram"))
         .warnings(false)
         .define("SQLITE_CORE", "1")

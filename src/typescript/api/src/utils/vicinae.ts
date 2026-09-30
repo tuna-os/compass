@@ -8,17 +8,24 @@ export type VicinaeClientOptions = {
 	timeoutMs?: number;
 };
 
+// The engine's socket: `$XDG_RUNTIME_DIR/compass/ipc.sock`, or
+// `/tmp/compass-$USER/ipc.sock` without a runtime directory, as
+// crates/compass-ipc/src/path.rs resolves it. `COMPASS_SOCKET` overrides it,
+// as it does for the `compass` CLI.
 const runtimeDir = (): string => {
-	if (process.platform === "darwin") {
-		return path.join(process.env.TMPDIR ?? "/tmp", "vicinae");
-	}
-	return path.join(process.env.XDG_RUNTIME_DIR ?? "/tmp", "vicinae");
+	const runtime =
+		process.platform === "darwin"
+			? process.env.TMPDIR
+			: process.env.XDG_RUNTIME_DIR;
+	if (runtime) return path.join(runtime, "compass");
+	return path.join("/tmp", `compass-${os.userInfo().username}`);
 };
 
 export const serverSocketPath = (): string => {
+	if (process.env.COMPASS_SOCKET) return process.env.COMPASS_SOCKET;
 	if (process.platform === "win32")
-		return `\\\\.\\pipe\\vicinae-${os.userInfo().username}`;
-	return path.join(runtimeDir(), "vicinae.sock");
+		return `\\\\.\\pipe\\compass-${os.userInfo().username}`;
+	return path.join(runtimeDir(), "ipc.sock");
 };
 
 export class VicinaeClient {
@@ -30,19 +37,19 @@ export class VicinaeClient {
 
 	refreshDevSession(extensionId: string): Promise<void> {
 		return this.deeplink(
-			`vicinae://api/extensions/develop/refresh?id=${extensionId}`,
+			`compass://api/extensions/develop/refresh?id=${extensionId}`,
 		);
 	}
 
 	startDevSession(extensionId: string): Promise<void> {
 		return this.deeplink(
-			`vicinae://api/extensions/develop/start?id=${extensionId}`,
+			`compass://api/extensions/develop/start?id=${extensionId}`,
 		);
 	}
 
 	stopDevSession(extensionId: string): Promise<void> {
 		return this.deeplink(
-			`vicinae://api/extensions/develop/stop?id=${extensionId}`,
+			`compass://api/extensions/develop/stop?id=${extensionId}`,
 		);
 	}
 

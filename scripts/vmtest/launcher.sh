@@ -217,8 +217,8 @@ shot "launcher-00a-bare-desktop.png"
 
 echo
 echo "=== 0b. start the engine, so the launcher has something to attach to ==="
-# ADR-0015 made the window resident and driven: `vicinae ui` connects to
-# `vicinae serve` and waits to be told to show. Order matters -- a launcher
+# ADR-0015 made the window resident and driven: `compass ui` connects to
+# `compass serve` and waits to be told to show. Order matters -- a launcher
 # started first comes up undriven, and every summon below is then refused
 # correctly and confusingly.
 guest "$checks" engine-start
@@ -502,7 +502,7 @@ echo "=== 3d2. can the engine hide and summon the window? (the ADR-0015 gate) ==
 #
 # The keypress leg is still missing and is still not this job's to fix:
 # injected input does not reach this compositor (see step 3's note), so the
-# client here is `vicinae` rather than Super+Space. What that leaves untested
+# client here is `compass` rather than Super+Space. What that leaves untested
 # is the portal delivering an activation. Everything after the activation is
 # exercised.
 guest "$checks" window-attached

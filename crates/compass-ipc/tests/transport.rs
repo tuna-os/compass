@@ -1,7 +1,7 @@
 //! End-to-end tests over real Unix domain sockets.
 //!
 //! Every test binds inside its own temporary directory, so the developer's
-//! live `$XDG_RUNTIME_DIR/vicinae/ipc.sock` is never touched.
+//! live `$XDG_RUNTIME_DIR/compass/ipc.sock` is never touched.
 //!
 //! Synchronisation is done with `tokio::sync` primitives, never sleeps. The
 //! only timeouts present are failure guards: if the code under test deadlocks,
@@ -51,7 +51,7 @@ impl TempDir {
         &self.path
     }
 
-    /// The canonical `<dir>/vicinae/ipc.sock` location inside this tempdir.
+    /// The canonical `<dir>/compass/ipc.sock` location inside this tempdir.
     fn socket(&self) -> SocketPath {
         SocketPath::in_dir(&self.path)
     }
@@ -91,7 +91,29 @@ async fn echo_handler(request: Request) -> Response {
                 }
             }
         }
-        Request::ClipboardHistory { .. } => Response::ClipboardHistory { entries: vec![] },
+        Request::ClipboardHistory { .. } | Request::ClipboardHistoryOfKind { .. } => {
+            Response::ClipboardHistory { entries: vec![] }
+        }
+        Request::ClipboardDetail { .. } => Response::ClipboardDetail {
+            detail: compass_ipc::ClipboardDetail {
+                id: String::new(),
+                mime_type: String::new(),
+                kind: compass_ipc::ClipboardKind::Text,
+                size: 0,
+                md5: String::new(),
+                updated_at: 0,
+                encrypted: false,
+                keywords: String::new(),
+                pinned: false,
+            },
+        },
+        Request::ClipboardMonitoring { .. } => Response::ClipboardMonitoring {
+            supported: false,
+            enabled: false,
+        },
+        Request::ClipboardSetKeywords { .. }
+        | Request::ClipboardRemoveAll
+        | Request::RootItemEdit { .. } => Response::Ack,
         Request::ListWindows => Response::Windows { windows: vec![] },
         Request::ActivateWindow { .. }
         | Request::CloseWindow { .. }
@@ -99,11 +121,157 @@ async fn echo_handler(request: Request) -> Response {
         | Request::ClipboardSetPinned { .. }
         | Request::ClipboardRemove { .. }
         | Request::RunExtensionCommand { .. }
+        | Request::RunPowerCommand { .. }
+        | Request::RunMediaCommand { .. }
+        | Request::RunMediaCommandWith { .. }
+        | Request::ControlMediaPlayer { .. }
+        | Request::SetFont { .. }
+        | Request::OpenDeeplink { .. }
         | Request::ExtensionEvent { .. }
         | Request::ExtensionPop { .. }
         | Request::SetExtensionPreferences { .. }
         | Request::ExtensionAlertAnswer { .. }
-        | Request::CloseExtension { .. } => Response::Ack,
+        | Request::ExtensionAlertRemember { .. }
+        | Request::CloseExtension { .. }
+        | Request::OpenFile { .. }
+        | Request::OAuthRedirect { .. }
+        | Request::OpenShortcut { .. }
+        | Request::PasteSnippet { .. }
+        | Request::StopScript { .. }
+        | Request::RunProgram { .. }
+        | Request::DmenuChoose { .. }
+        | Request::LaunchCommand { .. }
+        | Request::QuitApp { .. }
+        | Request::QuitWindowApp { .. }
+        | Request::AddCalculatorRecord { .. }
+        | Request::EditCalculatorHistory { .. }
+        | Request::TrayActivate { .. }
+        | Request::TrayTriggerMenu { .. }
+        | Request::PasteText { .. }
+        | Request::FocusWorkspace { .. }
+        | Request::ToggleWindowState { .. }
+        | Request::OpenWith { .. }
+        | Request::CopyFile { .. }
+        | Request::RunExecutable { .. }
+        | Request::SetWallpaper { .. }
+        | Request::SetSetting { .. }
+        | Request::SetProviderEnabled { .. }
+        | Request::RemoveOAuthTokenSet { .. }
+        | Request::ShortcutCapture { .. }
+        | Request::SkipUpdate { .. }
+        | Request::SetTheme { .. } => Response::Ack,
+        Request::LocalStorageNamespaces => Response::LocalStorageNamespaces { namespaces: vec![] },
+        Request::LocalStorageItems { .. } => Response::LocalStorageItems { items: vec![] },
+        Request::OAuthTokenSets => Response::OAuthTokenSets { sets: vec![] },
+        Request::UpdateStatus => Response::UpdateStatus {
+            current: "v0.1.0".into(),
+            available: None,
+        },
+        Request::ExchangeRates | Request::RefreshExchangeRates => {
+            Response::ExchangeRates { rates: None }
+        }
+        Request::ProbeShortcut { .. } => Response::ShortcutProbe { refusal: None },
+        Request::TrayItems => Response::TrayItems { items: vec![] },
+        Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
+        Request::FileActions { .. } => {
+            Response::FileActions(compass_ipc::FileActionInfo::default())
+        }
+        Request::ListOpeners { .. } => Response::Openers { apps: vec![] },
+        Request::PreviewSnippet { .. } => Response::Text {
+            text: String::new(),
+        },
+        Request::ScriptIcons => Response::ScriptIcons { icons: vec![] },
+        Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
+        Request::WindowManagerCapabilities => {
+            Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities::default())
+        }
+        Request::ListWorkspaces => Response::Workspaces { workspaces: vec![] },
+        Request::AppRuntime { .. } => Response::AppRuntime {
+            running: false,
+            frontmost: false,
+            windows: vec![],
+        },
+        Request::ListCommands => Response::Commands { commands: vec![] },
+        Request::LaunchApp { .. } => Response::AppLaunched {
+            focused_window_title: None,
+        },
+        Request::DescribeWindow => Response::WindowState { open: false },
+        Request::FsQuery { .. } => Response::Files {
+            heading: "Results".into(),
+            files: vec![],
+        },
+        Request::Dmenu { .. } => Response::DmenuOutput {
+            output: String::new(),
+        },
+        Request::DmenuFetch { .. } => Response::DmenuList {
+            spec: compass_ipc::DmenuSpec::default(),
+        },
+        Request::StoreBrowse { .. } => Response::StoreListing {
+            heading: String::new(),
+            entries: vec![],
+        },
+        Request::StoreExtension { .. } | Request::StoreInstall { .. } => Response::StoreInstalled {
+            id: String::new(),
+            title: String::new(),
+        },
+        Request::StoreUninstall { .. } | Request::OpenUrl { .. } => Response::Ack,
+        Request::InputServerStatus | Request::SetInputServerEnabled { .. } => {
+            Response::InputServerStatus(compass_ipc::InputServerStatus::default())
+        }
+        Request::ExtensionLaunchFetch { .. } => Response::ExtensionLaunch {
+            id: String::new(),
+            arguments_json: None,
+            preferences: false,
+        },
+        Request::ExtensionSubtitles => Response::ExtensionSubtitles { subtitles: vec![] },
+        Request::ExtensionPreferences { .. } => Response::ExtensionNeedsPreferences {
+            title: String::new(),
+            fields: vec![],
+        },
+        Request::ListMediaPlayers => Response::MediaPlayers { players: vec![] },
+        Request::ListScriptGrants | Request::RevokeScriptGrant { .. } => {
+            Response::ScriptGrants { grants: vec![] }
+        }
+        Request::CatalogGeneration => Response::CatalogGeneration { generation: 0 },
+        Request::ListDefaultApps { .. } => Response::DefaultApps { apps: vec![] },
+        Request::SetDefaultApp { .. } => Response::Ack,
+        Request::ListFonts => Response::Fonts {
+            fonts: vec![],
+            categories: vec![],
+        },
+        Request::FontSpecimen { .. } => Response::Text {
+            text: String::new(),
+        },
+        Request::CreateExtension { .. } => Response::ExtensionCreated {
+            path: String::new(),
+        },
+        Request::ListPrograms => Response::Programs {
+            programs: vec![],
+            terminal: None,
+            default_action: "run".into(),
+        },
+        Request::ListScripts => Response::Scripts { scripts: vec![] },
+        Request::ListRhaiScripts => Response::RhaiScripts { scripts: vec![] },
+        Request::RunScript { .. } => Response::ScriptStarted { session: None },
+        Request::ScriptOutput { .. } => Response::ScriptOutput {
+            output: String::new(),
+            finished: true,
+            exit_code: Some(0),
+            elapsed_ms: 0,
+        },
+        Request::ListSnippets | Request::SaveSnippet { .. } | Request::RemoveSnippet { .. } => {
+            Response::Snippets { snippets: vec![] }
+        }
+        Request::ListShortcuts | Request::SaveShortcut { .. } | Request::RemoveShortcut { .. } => {
+            Response::Shortcuts { shortcuts: vec![] }
+        }
+        Request::ExpandShortcut { .. } | Request::ExpandSnippet { .. } => Response::Text {
+            text: String::new(),
+        },
+        Request::SearchFiles { .. } => Response::Files {
+            heading: "Results".into(),
+            files: vec![],
+        },
         Request::ExtensionView { after, .. } => Response::ExtensionView {
             version: after,
             view_json: None,
@@ -111,6 +279,7 @@ async fn echo_handler(request: Request) -> Response {
             ended: false,
             depth: 0,
             alert: None,
+            toast: None,
         },
         Request::ClipboardContent { .. } => Response::ClipboardContent {
             mime_type: "text/plain".into(),
@@ -180,12 +349,12 @@ async fn client_connects_sends_and_receives() {
 async fn the_socket_lands_at_the_documented_path_inside_the_injected_dir() {
     let dir = TempDir::new();
     let socket = dir.socket();
-    assert_eq!(socket.as_path(), dir.path().join("vicinae/ipc.sock"));
+    assert_eq!(socket.as_path(), dir.path().join("compass/ipc.sock"));
 
     let (server, stop) = spawn_echo_server(&socket).await;
     assert!(socket.as_path().exists());
     // The parent directory is created for us, owner-only.
-    assert!(dir.path().join("vicinae").is_dir());
+    assert!(dir.path().join("compass").is_dir());
 
     stop.send(()).unwrap();
     server.await.unwrap();

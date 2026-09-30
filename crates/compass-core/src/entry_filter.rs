@@ -55,6 +55,9 @@ pub const EXCLUDED_HOME_RELATIVE_PATHS: &[&str] = &[
     ".local/share/flatpak/runtime",
     ".local/share/pnpm/store",
     ".local/share/Steam/config/htmlcache",
+    ".local/share/compass/clipboard-data",
+    // The pre-rename path, which the migration leaves as a symlink to the
+    // one above; kept in case a symlink-following walk arrives through it.
     ".local/share/vicinae/clipboard-data",
     "snap",
 ];

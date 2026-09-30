@@ -44,7 +44,7 @@ impl Listener {
     /// Behaviour when `path` already exists:
     ///
     /// * something accepts a connection there → [`Error::AlreadyRunning`]; this
-    ///   is the "vicinae is already running" case and the caller should say so
+    ///   is the "Compass is already running" case and the caller should say so
     ///   and exit,
     /// * nothing accepts (a socket left by a crashed engine, or a stray regular
     ///   file) → the path is unlinked and the bind retried once.
@@ -339,7 +339,7 @@ impl WindowClient {
     /// # Errors
     ///
     /// [`Error::Remote`] when the engine refuses — most usefully when another
-    /// window is already attached, which a second `vicinae ui` should report
+    /// window is already attached, which a second `compass ui` should report
     /// rather than sit silently unused.
     pub async fn attach(path: impl AsRef<Path>) -> Result<Self> {
         let stream = UnixStream::connect(path.as_ref())

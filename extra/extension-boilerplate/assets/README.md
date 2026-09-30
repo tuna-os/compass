@@ -1,6 +1,6 @@
-# Vicinae Extension
+# Extension
 
-Congratulations on generating your new Vicinae extension!
+Congratulations on generating your new extension!
 
 You can install the required dependencies and run your extension in development mode like so:
 

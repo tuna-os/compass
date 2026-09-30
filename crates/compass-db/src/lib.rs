@@ -60,7 +60,7 @@ pub mod vocabulary;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::{self, Connection, named_params};
 use md5::{Digest as _, Md5};
 
 /// A migration, embedded at build time.
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 pub enum Error {
     /// The database refused something.
     #[error(transparent)]
-    Database(#[from] compass_sqlcipher_sys::Error),
+    Database(#[from] rusqlite::Error),
 
     /// The database records a migration this build does not have, or records
     /// them in a different order.
@@ -140,15 +140,16 @@ pub fn checksum(sql: &str) -> String {
 }
 
 /// What `db` has already applied, in version order.
-fn applied(db: &Database) -> Result<Vec<(String, String)>, Error> {
+fn applied(db: &Connection) -> Result<Vec<(String, String)>, Error> {
     let mut stmt = db.prepare("SELECT id, checksum FROM schema_migrations ORDER BY version")?;
-    let mut rows = Vec::new();
-    while stmt.step()? {
-        rows.push((
-            stmt.column_text(0).unwrap_or_default(),
-            stmt.column_text(1).unwrap_or_default(),
-        ));
-    }
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
     Ok(rows)
 }
 
@@ -163,8 +164,8 @@ fn applied(db: &Database) -> Result<Vec<(String, String)>, Error> {
 /// does not have, [`Error::ChecksumMismatch`] if an applied migration's content
 /// has changed, and [`Error::Database`] if SQLite refuses. On any of them
 /// nothing is committed.
-pub fn run(db: &Database, migrations: &[Migration]) -> Result<(), Error> {
-    db.execute(SCHEMA_MIGRATIONS)?;
+pub fn run(db: &Connection, migrations: &[Migration]) -> Result<(), Error> {
+    db.execute_batch(SCHEMA_MIGRATIONS)?;
 
     let already = applied(db)?;
 
@@ -202,7 +203,7 @@ pub fn run(db: &Database, migrations: &[Migration]) -> Result<(), Error> {
 
     // One transaction for the whole run, as the C++ does: a half-migrated
     // schema is worse than an unmigrated one.
-    let tx = db.transaction()?;
+    let tx = db.unchecked_transaction()?;
     let now = i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -212,17 +213,17 @@ pub fn run(db: &Database, migrations: &[Migration]) -> Result<(), Error> {
     .unwrap_or(i64::MAX);
 
     for migration in &migrations[already.len()..] {
-        db.execute(migration.sql)?;
-
-        let mut stmt = db.prepare(
+        tx.execute_batch(migration.sql)?;
+        tx.execute(
             "INSERT INTO schema_migrations (id, applied_at, version, checksum) \
              VALUES (:id, :applied_at, :version, :checksum)",
+            named_params! {
+                ":id": migration.id,
+                ":applied_at": now,
+                ":version": migration.version,
+                ":checksum": checksum(migration.sql),
+            },
         )?;
-        stmt.bind_text(":id", migration.id)?;
-        stmt.bind_int64(":applied_at", now)?;
-        stmt.bind_int64(":version", migration.version)?;
-        stmt.bind_text(":checksum", &checksum(migration.sql))?;
-        stmt.step()?;
     }
 
     tx.commit()?;
@@ -296,9 +297,10 @@ mod tests {
         },
     ];
 
-    fn open() -> (tempfile::TempDir, Database) {
+    fn open() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let db = Database::open(&dir.path().join("test.db"), &[]).expect("an unencrypted database");
+        let db = compass_sqlcipher_sys::open(&dir.path().join("test.db"), &[])
+            .expect("an unencrypted database");
         (dir, db)
     }
 
@@ -308,11 +310,12 @@ mod tests {
         run(&db, TWO).expect("first run");
         run(&db, TWO).expect("second run");
 
-        let mut stmt = db
-            .prepare("SELECT count(*) FROM schema_migrations")
+        let count: i64 = db
+            .query_row("SELECT count(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
             .expect("count");
-        assert!(stmt.step().expect("a row"));
-        assert_eq!(stmt.column_int64(0), 2, "a migration was applied twice");
+        assert_eq!(count, 2, "a migration was applied twice");
     }
 
     #[test]
@@ -348,7 +351,7 @@ mod tests {
         run(&db, ONE).expect("applying one migration");
         run(&db, TWO).expect("applying the second on top");
 
-        db.execute("INSERT INTO u (b) VALUES ('x')")
+        db.execute_batch("INSERT INTO u (b) VALUES ('x')")
             .expect("the second migration's table exists");
     }
 
@@ -368,11 +371,12 @@ mod tests {
         // Not even the first migration's row survives: the C++ runs the whole
         // set in one transaction, and a half-migrated schema is worse than an
         // unmigrated one.
-        let mut stmt = db
-            .prepare("SELECT count(*) FROM schema_migrations")
+        let count: i64 = db
+            .query_row("SELECT count(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
             .expect("count");
-        assert!(stmt.step().expect("a row"));
-        assert_eq!(stmt.column_int64(0), 0, "a failed run left rows behind");
+        assert_eq!(count, 0, "a failed run left rows behind");
     }
 
     #[test]

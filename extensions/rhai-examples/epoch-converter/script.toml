@@ -1,0 +1,5 @@
+title = "Epoch Converter"
+description = "Unix timestamps to dates and back"
+icon = "clock"
+keywords = ["timestamp", "unix", "epoch", "date", "time", "iso8601", "rfc3339"]
+capabilities = ["clipboard.write"]

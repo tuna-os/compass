@@ -5,8 +5,8 @@
 //! crate, so that the extension and the engine can be reviewed against one
 //! another:
 //!
-//! - [`WINDOWS_XML`] — `dbus/org.gnome.Shell.Extensions.Vicinae.Windows.xml`
-//! - [`CLIPBOARD_XML`] — `dbus/org.gnome.Shell.Extensions.Vicinae.Clipboard.xml`
+//! - [`WINDOWS_XML`] — `dbus/org.tunaos.compass.Shell.Windows.xml`
+//! - [`CLIPBOARD_XML`] — `dbus/org.tunaos.compass.Shell.Clipboard.xml`
 //!
 //! Everything below must stay in lockstep with those files, and
 //! `tests/contract_introspection.rs` is what makes that true rather than
@@ -14,12 +14,24 @@
 //! server actually serves, and fails on a renamed method, a retyped or
 //! redirected argument, a dropped signal or a widened property.
 
-/// Contract version this build of Compass speaks.
+/// Contract version this build of Compass speaks, and the one the in-tree
+/// extension declares.
 ///
-/// An extension reporting any other value is reported as
+/// An extension reporting a version outside
+/// [`OLDEST_CONTRACT_VERSION`]`..=CONTRACT_VERSION` is reported as
 /// [`Availability::VersionMismatch`](crate::Availability::VersionMismatch) and
 /// its capability is not used.
-pub const CONTRACT_VERSION: u32 = 2;
+pub const CONTRACT_VERSION: u32 = 4;
+
+/// The oldest contract version this build still uses.
+///
+/// Each version only added to the one before, so an extension a release
+/// behind keeps everything it had; what it lacks is refused per call with
+/// [`ShellError::TooOld`](crate::ShellError::TooOld).
+pub const OLDEST_CONTRACT_VERSION: u32 = 3;
+
+/// The contract version that added `ListWorkspaces` and `ActivateWorkspace`.
+pub const WORKSPACES_SINCE: u32 = 4;
 
 /// Well-known bus name the helper extension lives behind.
 ///
@@ -28,24 +40,22 @@ pub const CONTRACT_VERSION: u32 = 2;
 pub const SHELL_SERVICE: &str = "org.gnome.Shell";
 
 /// Object path of the windows interface.
-pub const WINDOWS_PATH: &str = "/org/gnome/Shell/Extensions/Vicinae/Windows";
+pub const WINDOWS_PATH: &str = "/org/tunaos/compass/Shell/Windows";
 
 /// Name of the windows interface.
-pub const WINDOWS_INTERFACE: &str = "org.gnome.Shell.Extensions.Vicinae.Windows";
+pub const WINDOWS_INTERFACE: &str = "org.tunaos.compass.Shell.Windows";
 
 /// Object path of the clipboard interface.
-pub const CLIPBOARD_PATH: &str = "/org/gnome/Shell/Extensions/Vicinae/Clipboard";
+pub const CLIPBOARD_PATH: &str = "/org/tunaos/compass/Shell/Clipboard";
 
 /// Name of the clipboard interface.
-pub const CLIPBOARD_INTERFACE: &str = "org.gnome.Shell.Extensions.Vicinae.Clipboard";
+pub const CLIPBOARD_INTERFACE: &str = "org.tunaos.compass.Shell.Clipboard";
 
 /// Introspection XML for [`WINDOWS_INTERFACE`].
-pub const WINDOWS_XML: &str =
-    include_str!("../dbus/org.gnome.Shell.Extensions.Vicinae.Windows.xml");
+pub const WINDOWS_XML: &str = include_str!("../dbus/org.tunaos.compass.Shell.Windows.xml");
 
 /// Introspection XML for [`CLIPBOARD_INTERFACE`].
-pub const CLIPBOARD_XML: &str =
-    include_str!("../dbus/org.gnome.Shell.Extensions.Vicinae.Clipboard.xml");
+pub const CLIPBOARD_XML: &str = include_str!("../dbus/org.tunaos.compass.Shell.Clipboard.xml");
 
 /// Dictionary keys used by `ListWindows`.
 pub mod window_key {
@@ -65,4 +75,26 @@ pub mod window_key {
     pub const WORKSPACE: &str = "workspace";
     /// `b`, optional.
     pub const CAN_CLOSE: &str = "can_close";
+    /// `b`, optional (contract 3).
+    pub const FULLSCREEN: &str = "fullscreen";
+    /// `i`, optional (contract 3): the frame's left edge.
+    pub const X: &str = "x";
+    /// `i`, optional (contract 3): the frame's top edge.
+    pub const Y: &str = "y";
+    /// `i`, optional (contract 3): the frame's width.
+    pub const WIDTH: &str = "width";
+    /// `i`, optional (contract 3): the frame's height.
+    pub const HEIGHT: &str = "height";
+}
+
+/// Dictionary keys used by `ListWorkspaces` (contract 4).
+pub mod workspace_key {
+    /// `i`, required: the position, and `ActivateWorkspace`'s argument.
+    pub const INDEX: &str = "index";
+    /// `s`, optional.
+    pub const NAME: &str = "name";
+    /// `b`, optional.
+    pub const ACTIVE: &str = "active";
+    /// `b`, optional.
+    pub const HAS_FULLSCREEN: &str = "has_fullscreen";
 }

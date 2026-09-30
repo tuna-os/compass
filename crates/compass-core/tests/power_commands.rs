@@ -233,3 +233,36 @@ fn a_failing_custom_program_names_itself_in_the_toast() {
         "Failed to execute custom program systemctl poweroff"
     );
 }
+
+fn stored(json: &str) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::from_str(json).expect("a preferences object")
+}
+
+#[test]
+fn the_confirm_preference_overrides_the_default_either_way() {
+    use compass_core::power_commands::should_confirm;
+    let (reboot, lock) = (get("reboot"), get("lock"));
+    assert!(should_confirm(reboot, None));
+    assert!(!should_confirm(lock, None));
+    assert!(!should_confirm(
+        reboot,
+        Some(&stored(r#"{"confirm": false}"#))
+    ));
+    assert!(should_confirm(lock, Some(&stored(r#"{"confirm": true}"#))));
+    assert!(
+        should_confirm(reboot, Some(&stored(r#"{"confirm": "no"}"#))),
+        "a confirm that is not a boolean is not a setting"
+    );
+}
+
+#[test]
+fn the_custom_program_is_read_and_an_empty_one_is_none() {
+    use compass_core::power_commands::custom_program;
+    let set = stored(r#"{"customProgram": "systemctl poweroff"}"#);
+    assert_eq!(custom_program(Some(&set)), Some("systemctl poweroff"));
+    assert_eq!(
+        custom_program(Some(&stored(r#"{"customProgram": ""}"#))),
+        None
+    );
+    assert_eq!(custom_program(None), None);
+}

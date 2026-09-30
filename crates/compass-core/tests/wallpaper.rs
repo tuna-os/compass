@@ -328,3 +328,49 @@ fn a_good_request_names_the_backend_that_will_serve_it() {
         Ok(Backend::Gnome)
     );
 }
+
+#[test]
+fn the_kde_script_sets_the_image_plugin_image_and_fill_on_every_desktop() {
+    let script = compass_core::wallpaper::kde_script(&WallpaperRequest {
+        path: "/home/ada/Pictures/hills.jpg".into(),
+        screen: None,
+        fit: WallpaperFit::Tile,
+    });
+    assert!(script.contains(r#"d.wallpaperPlugin = "org.kde.image";"#));
+    assert!(script.contains(r#"d.writeConfig("Image", "file:///home/ada/Pictures/hills.jpg");"#));
+    assert!(script.contains(r#"d.writeConfig("FillMode", 3);"#));
+    assert!(script.contains("for (var i = 0; i < ds.length; i++)"));
+}
+
+#[test]
+fn desktops_are_recognised_as_the_cpp_environment_helpers_do() {
+    use compass_core::wallpaper::desktop_matches;
+    assert_eq!(
+        desktop_matches(Backend::Gnome, "ubuntu:GNOME", ""),
+        Some(true)
+    );
+    assert_eq!(
+        desktop_matches(Backend::Gnome, "GNOME-Classic:GNOME", ""),
+        Some(true)
+    );
+    assert_eq!(
+        desktop_matches(Backend::Gnome, "", "gnome-xorg"),
+        Some(true)
+    );
+    assert_eq!(
+        desktop_matches(Backend::Gnome, "sway:wlroots", ""),
+        Some(false)
+    );
+    assert_eq!(
+        desktop_matches(Backend::Cinnamon, "X-Cinnamon", ""),
+        Some(true)
+    );
+    assert_eq!(
+        desktop_matches(Backend::Cinnamon, "cinnamon", ""),
+        Some(true)
+    );
+    assert_eq!(desktop_matches(Backend::Mate, "MATE", ""), Some(true));
+    assert_eq!(desktop_matches(Backend::Mate, "MATEY", ""), Some(false));
+    assert_eq!(desktop_matches(Backend::Swww, "GNOME", ""), None);
+    assert_eq!(desktop_matches(Backend::Kde, "KDE", ""), None);
+}

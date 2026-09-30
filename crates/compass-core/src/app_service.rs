@@ -137,7 +137,8 @@ impl<'a> AppService<'a> {
 }
 
 /// The identity `matchesWindowClass` uses.
-fn identity(item: &AppItem) -> AppIdentity {
+#[must_use]
+pub fn identity(item: &AppItem) -> AppIdentity {
     AppIdentity {
         desktop_id: item.desktop_id().to_owned(),
         startup_wm_class: item.entry().startup_wm_class().map(str::to_owned),

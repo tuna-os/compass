@@ -1,7 +1,7 @@
 {
 	"name": "@vicinae/api",
 	"version": "0.0.0",
-	"description": "TypeScript SDK to build Vicinae extensions",
+	"description": "TypeScript SDK to build Compass and Vicinae extensions",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
 		"build": "tsc --outDir dist",
@@ -42,6 +42,6 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/vicinaehq/vicinae.git"
+		"url": "git+https://github.com/tuna-os/compass.git"
 	}
 }

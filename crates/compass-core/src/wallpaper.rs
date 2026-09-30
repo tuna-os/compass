@@ -364,3 +364,49 @@ pub fn prepare(
     }
     Ok(backend)
 }
+
+/// The Plasma script the KDE backend evaluates (`org.kde.PlasmaShell.evaluateScript`):
+/// every desktop switched to the image plugin with this image and fill mode.
+#[must_use]
+pub fn kde_script(request: &WallpaperRequest) -> String {
+    format!(
+        r#"
+    var ds = desktops();
+    for (var i = 0; i < ds.length; i++) {{
+      var d = ds[i];
+      d.wallpaperPlugin = "org.kde.image";
+      d.currentConfigGroup = Array("Wallpaper", "org.kde.image", "General");
+      d.writeConfig("Image", "{}");
+      d.writeConfig("FillMode", {});
+    }}
+  "#,
+        file_uri(&request.path),
+        kde_fill_mode(request.fit)
+    )
+}
+
+/// Whether the session is the desktop `backend` belongs to, read from
+/// `$XDG_CURRENT_DESKTOP` (colon-separated) and `$GDMSESSION` as the C++
+/// `Environment` helpers read them. `None` for the two daemons and KDE,
+/// which are found by asking them rather than by name.
+///
+/// GNOME is any desktop name *containing* `GNOME` (so `ubuntu:GNOME` and
+/// `GNOME-Classic` count), or a GDM session containing `gnome`; Cinnamon is
+/// `X-Cinnamon` (the pre-spec name Mint uses) or `Cinnamon`; MATE is `MATE`.
+#[must_use]
+pub fn desktop_matches(backend: Backend, current_desktop: &str, gdm_session: &str) -> Option<bool> {
+    let named = |wanted: &str| {
+        current_desktop
+            .split(':')
+            .any(|name| name.eq_ignore_ascii_case(wanted))
+    };
+    Some(match backend {
+        Backend::Gnome => {
+            current_desktop.to_ascii_lowercase().contains("gnome")
+                || gdm_session.to_ascii_lowercase().contains("gnome")
+        }
+        Backend::Cinnamon => named("x-cinnamon") || named("cinnamon"),
+        Backend::Mate => named("mate"),
+        Backend::Hyprpaper | Backend::Swww | Backend::Kde => return None,
+    })
+}

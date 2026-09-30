@@ -16,10 +16,15 @@
 //! It is defined by the introspection XML checked in under `dbus/` and
 //! mirrored by [`contract`] and [`proxy`]:
 //!
-//! - `org.gnome.Shell.Extensions.Vicinae.Windows`: `Version`, `ListWindows`,
-//!   `ActivateWindow`, `CloseWindow`, `WindowsChanged`.
-//! - `org.gnome.Shell.Extensions.Vicinae.Clipboard`: `Version`,
-//!   `GetClipboard`, `SetClipboard`, `ClipboardChanged`.
+//! - `org.tunaos.compass.Shell.Windows`: `Version`, `ListWindows`,
+//!   `ActivateWindow`, `CloseWindow`, `WindowsChanged`, and from contract 4
+//!   `ListWorkspaces` and `ActivateWorkspace`.
+//! - `org.tunaos.compass.Shell.Clipboard`: `Version`,
+//!   `GetClipboard`, `SetClipboard`, `Paste`, `GetPrimarySelection`,
+//!   `ClipboardChanged`.
+//!
+//! An extension one contract behind ([`OLDEST_CONTRACT_VERSION`]) is still
+//! used; a call it predates is refused with [`ShellError::TooOld`].
 //!
 //! # Degradation is the normal case
 //!
@@ -27,7 +32,7 @@
 //! at all. Capabilities are modelled explicitly as [`Availability`], which
 //! distinguishes "absent" from "present but speaking a version we do not",
 //! and [`ShellCapabilities::degraded`] enumerates exactly which product
-//! features are lost for `vicinae doctor` to report. Nothing in the critical
+//! features are lost for `compass doctor` to report. Nothing in the critical
 //! path — app search, launch, calculator, emoji, snippets, file search — may
 //! depend on this crate.
 //!
@@ -75,8 +80,8 @@ pub use client::{
     Backoff, CapabilityStream, ClipboardStream, ShellClient, ShellConfig, WindowsChangedStream,
 };
 pub use contract::{
-    CLIPBOARD_INTERFACE, CLIPBOARD_PATH, CONTRACT_VERSION, SHELL_SERVICE, WINDOWS_INTERFACE,
-    WINDOWS_PATH,
+    CLIPBOARD_INTERFACE, CLIPBOARD_PATH, CONTRACT_VERSION, OLDEST_CONTRACT_VERSION, SHELL_SERVICE,
+    WINDOWS_INTERFACE, WINDOWS_PATH, WORKSPACES_SINCE,
 };
 pub use error::{Result, ShellError};
-pub use model::{ClipboardChange, ClipboardContent, Window, WindowId};
+pub use model::{ClipboardChange, ClipboardContent, Frame, Window, WindowId, Workspace};

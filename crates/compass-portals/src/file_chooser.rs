@@ -177,21 +177,22 @@ pub(crate) fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(decoded))
 }
 
+/// Strict, unlike `percent_decode_str`: a malformed escape is refused.
 fn percent_decode(input: &str) -> Option<String> {
     let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let hex = input.get(i + 1..i + 3)?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
+    for (index, _) in input.match_indices('%') {
+        if !bytes
+            .get(index + 1..index + 3)?
+            .iter()
+            .all(u8::is_ascii_hexdigit)
+        {
+            return None;
         }
     }
-    String::from_utf8(out).ok()
+    percent_encoding::percent_decode_str(input)
+        .decode_utf8()
+        .ok()
+        .map(std::borrow::Cow::into_owned)
 }
 
 /// A path that came back from the portal, for use by callers that hold a raw

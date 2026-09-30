@@ -153,6 +153,40 @@ async fn launch_exec(exec: Vec<String>) -> Result<LaunchMethod, LaunchError> {
     launch_direct(&exec).await.map(|()| LaunchMethod::Direct)
 }
 
+/// Runs a command line on the host: through `flatpak-spawn --host` inside a
+/// Flatpak, directly outside one. For an argv that is not an application
+/// launch (a terminal running an extension's command), so the portal step
+/// [`LinuxLauncher`] tries for applications does not apply.
+///
+/// # Errors
+///
+/// When `argv` is empty or the process cannot be started.
+pub async fn run_command(argv: &[String]) -> Result<LaunchMethod, LaunchError> {
+    if argv.is_empty() {
+        return Err(LaunchError::NoExec);
+    }
+    info!(?argv, "Running a command on the host");
+    if is_flatpak() {
+        launch_via_flatpak_spawn(argv).await?;
+        return Ok(LaunchMethod::FlatpakSpawn);
+    }
+    launch_direct(argv).await.map(|()| LaunchMethod::Direct)
+}
+
+/// A command that runs `program` on the host: through `flatpak-spawn --host`
+/// inside a Flatpak, directly outside one. For a tool whose output the engine
+/// reads, such as `pactl`.
+#[must_use]
+pub fn host_command(program: &str) -> std::process::Command {
+    if is_flatpak() {
+        let mut command = std::process::Command::new("flatpak-spawn");
+        command.args(["--host", program]);
+        command
+    } else {
+        std::process::Command::new(program)
+    }
+}
+
 /// Check if we're running inside a Flatpak.
 fn is_flatpak() -> bool {
     Path::new("/.flatpak-info").exists()
@@ -273,7 +307,7 @@ mod tests {
 
     #[test]
     fn the_linux_launcher_is_an_app_launcher() {
-        // The composition in `vicinae` holds an Arc<dyn AppLauncher>; this
+        // The composition in `compass` holds an Arc<dyn AppLauncher>; this
         // fails to compile if LinuxLauncher stops satisfying it.
         let launcher: std::sync::Arc<dyn AppLauncher> = std::sync::Arc::new(LinuxLauncher);
         assert_eq!(format!("{launcher:?}"), "LinuxLauncher");

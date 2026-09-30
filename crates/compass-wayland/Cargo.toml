@@ -10,15 +10,30 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+compass-platform.workspace = true
 thiserror.workspace = true
-ashpd.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-wayland-client = { version = "0.30", features = ["calloop"] }
-wayland-protocols = { version = "0.30", features = ["client", "staging"] }
-iced = { version = "0.14", features = ["wayland"] }
-iced_winit = { version = "0.14", features = ["wayland"] }
-winit = { version = "0.30", features = ["wayland"] }
+compass-wayland-protocols = { path = "../compass-wayland-protocols" }
+# 0.31 / 0.32 are what winit, iced_layershell and wl-clipboard-rs already use,
+# so the protocol code here shares one Wayland stack with the launcher rather
+# than pulling a second, older one in beside it.
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# Writing and reading the selection over wlr/ext data-control. It has no way to
+# *watch* the selection, so `clipboard::monitor` does that part itself.
+wl-clipboard-rs = "0.9"
+# `zwp_virtual_keyboard_v1`, to press the paste chord. Already in the tree
+# through `layershellev` and smithay-client-toolkit.
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+# The virtual keyboard's keymap is handed over as a file.
+tempfile.workspace = true
 
 [dev-dependencies]
+compass-wayland-protocols = { path = "../compass-wayland-protocols", features = ["server"] }
 tempfile.workspace = true
+wayland-server = "0.31"
+# The compositor side of ext-background-effect-v1, for a fake that blurs
+# (`tests/background_effect.rs`); Sway has no such protocol.
+wayland-protocols = { version = "0.32", features = ["server", "staging"] }

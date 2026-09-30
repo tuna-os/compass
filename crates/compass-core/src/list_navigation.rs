@@ -96,27 +96,6 @@ pub fn next(from: usize, step: Step, count: usize, wrap: bool) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
-
-    const CPP_CONFIG: &str = "src/server/src/config/config.hpp";
-
-    #[test]
-    fn the_cpp_still_defaults_to_clamping() {
-        // The whole reason this module exists. If the C++ ever flips its
-        // default, this fails here rather than by the two launchers quietly
-        // behaving differently.
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("two levels below the repository root")
-            .join(CPP_CONFIG);
-        let config = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        assert!(
-            config.contains("bool wrapNavigation = false;"),
-            "{CPP_CONFIG} no longer defaults wrapNavigation to false"
-        );
-    }
 
     #[test]
     fn clamping_stops_at_both_ends() {

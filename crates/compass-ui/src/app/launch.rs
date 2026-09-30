@@ -1,0 +1,173 @@
+//! Launches an extension asked for, and the subtitles extensions set.
+//!
+//! An extension's `launchCommand` and `openCommandPreferences` reach the
+//! launcher as a token (`UiCommand::Launch`): the launch is fetched from the
+//! engine and taken as if the command had been picked in root search — its
+//! arguments form, its preferences form and its view all follow from there.
+//! The view that asked is closed first: the launcher shows one extension
+//! view at a time, where the C++ pushes the new one above it.
+
+use super::{LauncherApp, Message, Page, Task, focus_search};
+
+impl LauncherApp {
+    /// Fetches the launch under `token`.
+    pub(super) fn start_launch(&mut self, token: u64) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.fetch_launch(token).await },
+            Message::LaunchFetched,
+        )
+    }
+
+    /// Opens a shortcut, a script command or a Rhai script by its root id,
+    /// as picking its row does; `None` when the id is none of those.
+    fn open_root_item(&mut self, id: &str) -> Option<Task<Message>> {
+        let index = &self.app_index;
+        if let Some(index) = index.shortcut_by_entrypoint(id).and_then(|found| {
+            index
+                .shortcuts()
+                .iter()
+                .position(|s| std::ptr::eq(s, found))
+        }) {
+            return Some(self.open_shortcut_at(index));
+        }
+        if let Some(index) = index
+            .script_by_entrypoint(id)
+            .and_then(|found| index.scripts().iter().position(|s| std::ptr::eq(s, found)))
+        {
+            return Some(self.run_script_at(index));
+        }
+        let found = index.rhai_script_by_entrypoint(id)?;
+        let position = index
+            .rhai_scripts()
+            .iter()
+            .position(|s| std::ptr::eq(s, found))?;
+        Some(self.open_rhai_script_at(position))
+    }
+
+    /// Types `text` into whatever search field the view just opened shows,
+    /// as the C++ gives a command its launch's `fallbackText`.
+    pub(super) fn type_fallback(&mut self, text: Option<String>) -> Task<Message> {
+        let Some(text) = text.filter(|text| !text.is_empty()) else {
+            return Task::none();
+        };
+        match self.search_field().2 {
+            Some(on_input) => self.update(on_input(text)),
+            None => Task::none(),
+        }
+    }
+
+    /// Asks the engine for the subtitles extensions set.
+    pub(super) fn refresh_subtitles_task(&self) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.extension_subtitles().await },
+            Message::ExtensionSubtitlesLoaded,
+        )
+    }
+
+    /// Handles [`Message::LaunchFetched`], [`Message::ExtensionSubtitlesLoaded`]
+    /// and [`Message::PreferencesOpened`].
+    pub(super) fn launch_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::LaunchFetched(Ok(launch)) => {
+                let close = self.close_extension_view();
+                self.panel = None;
+                self.page = Page::Root;
+                let Some(backend) = self.backend.clone() else {
+                    return close;
+                };
+                if launch.preferences {
+                    let id = launch.id;
+                    let opened = id.clone();
+                    return Task::batch([
+                        close,
+                        Task::perform(
+                            async move { backend.extension_preferences(id).await },
+                            move |result| Message::PreferencesOpened {
+                                id: opened.clone(),
+                                result,
+                            },
+                        ),
+                    ]);
+                }
+                if let Some(command) = compass_core::commands::by_id(&launch.id) {
+                    let opened = self.open_command(command);
+                    let typed = self.type_fallback(launch.fallback_text);
+                    return Task::batch([close, opened, typed]);
+                }
+                if let Some(opened) = self.open_root_item(&launch.id) {
+                    return Task::batch([close, opened]);
+                }
+                let run = match self
+                    .app_index
+                    .extensions()
+                    .iter()
+                    .position(|command| command.id == launch.id)
+                {
+                    Some(index) => self.run_extension_command_with(index, launch.arguments),
+                    // The engine knows a command this window's index does
+                    // not yet: run it by id, titled by it until its view
+                    // names itself.
+                    None => {
+                        let (id, title) = (launch.id.clone(), launch.id);
+                        let arguments = launch.arguments;
+                        let started = id.clone();
+                        Task::perform(
+                            async move { backend.run_extension_command(id, arguments).await },
+                            move |result| Message::ExtensionCommandStarted {
+                                id: started.clone(),
+                                title: title.clone(),
+                                result,
+                            },
+                        )
+                    }
+                };
+                Task::batch([close, run])
+            }
+            Message::LaunchFetched(Err(reason)) => {
+                self.error = Some(reason);
+                Task::none()
+            }
+            Message::ExtensionSubtitlesLoaded(Ok(subtitles)) => {
+                self.extension_subtitles = subtitles.into_iter().collect();
+                Task::none()
+            }
+            Message::ExtensionSubtitlesLoaded(Err(reason)) => {
+                tracing::debug!(%reason, "no extension subtitles");
+                Task::none()
+            }
+            Message::PreferencesOpened { id, result } => match result {
+                Ok(crate::backend::ExtensionStart::NeedsPreferences { title, fields }) => {
+                    self.page =
+                        Page::Preferences(Box::new(crate::preferences_page::PreferencesPage::new(
+                            crate::preferences_page::Purpose::CommandPreferences,
+                            id,
+                            title,
+                            fields,
+                        )));
+                    focus_search()
+                }
+                Ok(other) => {
+                    tracing::debug!(?other, "a preferences request answered something else");
+                    Task::none()
+                }
+                Err(reason) => {
+                    // Opened from the settings: back to them, saying why.
+                    if let Some(mut settings) = self.parked_settings.take() {
+                        settings.notice = Some(reason);
+                        self.page = Page::Settings(settings);
+                        return focus_search();
+                    }
+                    self.error = Some(reason);
+                    Task::none()
+                }
+            },
+            _ => Task::none(),
+        }
+    }
+}

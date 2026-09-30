@@ -1,9 +1,9 @@
 import { spawnSync } from "child_process";
 
-const notifyVicinae = () => {
-	spawnSync("vicinae", ["vicinae://internal/restart-extension-runtime"]);
+const notifyCompass = () => {
+	spawnSync("compass", ["compass://internal/restart-extension-runtime"]);
 };
 
 import "./build.mjs";
 
-notifyVicinae();
+notifyCompass();

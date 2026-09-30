@@ -6,7 +6,8 @@
 //! refusals fire.
 
 use compass_clipboard::schema::{self, Error, MIGRATIONS};
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::open;
+use compass_sqlcipher_sys::rusqlite::{Connection, named_params};
 
 const KEY: &[u8] = &[0x21; 32];
 
@@ -16,23 +17,20 @@ fn scratch() -> (tempfile::TempDir, std::path::PathBuf) {
     (dir, path)
 }
 
-fn tables(db: &Database) -> Vec<String> {
+fn tables(db: &Connection) -> Vec<String> {
     let mut stmt = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         .expect("prepare");
-    let mut names = Vec::new();
-    while stmt.step().expect("step") {
-        if let Some(name) = stmt.column_text(0) {
-            names.push(name);
-        }
-    }
-    names
+    stmt.query_map([], |row| row.get(0))
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("step")
 }
 
 #[test]
 fn a_fresh_database_gets_the_whole_schema() {
     let (_dir, path) = scratch();
-    let db = Database::open(&path, KEY).expect("open");
+    let db = open(&path, KEY).expect("open");
     schema::run(&db).expect("migrations");
 
     let names = tables(&db);
@@ -52,9 +50,12 @@ fn a_fresh_database_gets_the_whole_schema() {
     // fuzzy_trigram one. If only 001 ran, this query still works but the
     // tokenizer is wrong, so assert on the schema text rather than on the
     // table merely existing.
-    let sql = db
-        .query_one_text("SELECT sql FROM sqlite_master WHERE name = 'selection_fts'")
-        .expect("query")
+    let sql: String = db
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'selection_fts'",
+            [],
+            |row| row.get(0),
+        )
         .expect("a row");
     assert!(
         sql.contains("fuzzy_trigram"),
@@ -69,21 +70,19 @@ fn a_fresh_database_gets_the_whole_schema() {
 #[test]
 fn every_migration_is_recorded_once() {
     let (_dir, path) = scratch();
-    let db = Database::open(&path, KEY).expect("open");
+    let db = open(&path, KEY).expect("open");
     schema::run(&db).expect("migrations");
 
     let mut stmt = db
         .prepare("SELECT id, version, checksum, applied_at FROM schema_migrations ORDER BY version")
         .expect("prepare");
-    let mut rows = Vec::new();
-    while stmt.step().expect("step") {
-        rows.push((
-            stmt.column_text(0).unwrap_or_default(),
-            stmt.column_int64(1),
-            stmt.column_text(2).unwrap_or_default(),
-            stmt.column_int64(3),
-        ));
-    }
+    let rows: Vec<(String, i64, String, i64)> = stmt
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("step");
 
     assert_eq!(rows.len(), MIGRATIONS.len());
     for (row, migration) in rows.iter().zip(MIGRATIONS) {
@@ -97,20 +96,21 @@ fn every_migration_is_recorded_once() {
 #[test]
 fn running_twice_changes_nothing() {
     let (_dir, path) = scratch();
-    let db = Database::open(&path, KEY).expect("open");
+    let db = open(&path, KEY).expect("open");
     schema::run(&db).expect("first run");
 
     let before = tables(&db);
     schema::run(&db).expect("second run must be a no-op, not an error");
     assert_eq!(tables(&db), before);
 
-    let count = db
-        .query_one_text("SELECT count(*) FROM schema_migrations")
-        .expect("query")
+    let count: i64 = db
+        .query_row("SELECT count(*) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
         .expect("a row");
     assert_eq!(
         count,
-        MIGRATIONS.len().to_string(),
+        i64::try_from(MIGRATIONS.len()).expect("a handful"),
         "the second run recorded the migrations again"
     );
 }
@@ -121,29 +121,30 @@ fn the_schema_survives_being_closed_and_reopened() {
     // schema would be present in this connection and gone from the file.
     let (_dir, path) = scratch();
     {
-        let db = Database::open(&path, KEY).expect("open");
+        let db = open(&path, KEY).expect("open");
         schema::run(&db).expect("migrations");
     }
-    let db = Database::open(&path, KEY).expect("reopen");
+    let db = open(&path, KEY).expect("reopen");
     assert!(tables(&db).iter().any(|n| n == "selection"));
 }
 
 #[test]
 fn an_edited_migration_is_refused() {
     let (_dir, path) = scratch();
-    let db = Database::open(&path, KEY).expect("open");
+    let db = open(&path, KEY).expect("open");
     schema::run(&db).expect("migrations");
 
     // Rewrite a recorded checksum to stand for "the file changed after it was
     // applied". The C++ engine stores this column and never reads it, so this
     // is the divergence made visible.
-    let mut stmt = db
-        .prepare("UPDATE schema_migrations SET checksum = :c WHERE id = :id")
-        .expect("prepare");
-    stmt.bind_text(":c", "00000000000000000000000000000000")
-        .expect("bind");
-    stmt.bind_text(":id", MIGRATIONS[0].id).expect("bind");
-    stmt.step().expect("update");
+    db.execute(
+        "UPDATE schema_migrations SET checksum = :c WHERE id = :id",
+        named_params! {
+            ":c": "00000000000000000000000000000000",
+            ":id": MIGRATIONS[0].id,
+        },
+    )
+    .expect("update");
 
     let err = schema::run(&db).expect_err("a changed migration must be refused");
     match err {
@@ -159,19 +160,17 @@ fn an_edited_migration_is_refused() {
 #[test]
 fn a_database_from_a_newer_build_is_refused() {
     let (_dir, path) = scratch();
-    let db = Database::open(&path, KEY).expect("open");
+    let db = open(&path, KEY).expect("open");
     schema::run(&db).expect("migrations");
 
     // A migration this build has never heard of, as a newer Compass would
     // leave behind. Applying ours on top would produce a schema neither build
     // expects, so the answer is to refuse rather than to migrate.
-    let mut stmt = db
-        .prepare(
-            "INSERT INTO schema_migrations (id, applied_at, version, checksum) \
-             VALUES ('003_from_the_future.sql', 1, 3, 'deadbeef')",
-        )
-        .expect("prepare");
-    stmt.step().expect("insert");
+    db.execute_batch(
+        "INSERT INTO schema_migrations (id, applied_at, version, checksum) \
+         VALUES ('003_from_the_future.sql', 1, 3, 'deadbeef')",
+    )
+    .expect("insert");
 
     let err = schema::run(&db).expect_err("a newer database must be refused");
     match err {
@@ -191,41 +190,40 @@ fn the_migrated_schema_accepts_what_the_clipboard_writes() {
     // it. A migration that created the wrong columns would pass every test
     // above and fail here.
     let (_dir, path) = scratch();
-    let db = Database::open(&path, KEY).expect("open");
+    let db = open(&path, KEY).expect("open");
     schema::run(&db).expect("migrations");
 
-    db.execute(
+    db.execute_batch(
         "INSERT INTO selection (id, hash_md5, preferred_mime_type, offer_count, created_at, \
          updated_at, kind) VALUES ('s1', 'abc', 'text/plain', 1, 100, 100, 1)",
     )
     .expect("insert a selection");
-    db.execute(
+    db.execute_batch(
         "INSERT INTO data_offer (id, selection_id, mime_type, text_preview, content_hash_md5, \
          size, encryption_type, kind) \
          VALUES ('o1', 's1', 'text/plain', 'hello', 'abc', 5, 0, 1)",
     )
     .expect("insert an offer");
-    db.execute("INSERT INTO selection_fts (selection_id, content) VALUES ('s1', 'hello world')")
-        .expect("index the content");
+    db.execute_batch(
+        "INSERT INTO selection_fts (selection_id, content) VALUES ('s1', 'hello world')",
+    )
+    .expect("index the content");
 
-    let hit = db
-        .query_one_text(
+    let hit: String = db
+        .query_row(
             "SELECT selection_id FROM selection_fts WHERE selection_fts MATCH '\"wor\"'",
+            [],
+            |row| row.get(0),
         )
-        .expect("query")
         .expect("a row");
     assert_eq!(hit, "s1");
 
     // The foreign key with ON DELETE CASCADE, which PRAGMA foreign_keys = ON
     // makes live. Without the pragma the offer would survive its selection.
-    db.execute("DELETE FROM selection WHERE id = 's1'")
+    db.execute_batch("DELETE FROM selection WHERE id = 's1'")
         .expect("delete");
-    let offers = db
-        .query_one_text("SELECT count(*) FROM data_offer")
-        .expect("query")
+    let offers: i64 = db
+        .query_row("SELECT count(*) FROM data_offer", [], |row| row.get(0))
         .expect("a row");
-    assert_eq!(
-        offers, "0",
-        "deleting a selection must cascade to its offers"
-    );
+    assert_eq!(offers, 0, "deleting a selection must cascade to its offers");
 }

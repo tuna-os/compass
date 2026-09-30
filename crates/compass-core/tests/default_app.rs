@@ -31,10 +31,10 @@ fn ids(items: &[compass_core::default_app::PickerItem]) -> Vec<&str> {
 
 #[test]
 fn the_browser_list_is_whatever_opens_an_https_url() {
-    // `appDb->findOpeners(PROBE_URL)` with `PROBE_URL = "https://vicinae.com"`.
+    // `appDb->findOpeners(PROBE_URL)`; the C++ probes `https://vicinae.com`.
     // The list is not "things that look like browsers": an application
     // registered for https shows up whether or not it is one.
-    assert_eq!(BROWSER_PROBE_URL, "https://vicinae.com");
+    assert_eq!(BROWSER_PROBE_URL, "https://tunaos.org/compass");
 
     let openers = [
         app("firefox.desktop", "Firefox"),

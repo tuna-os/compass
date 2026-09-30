@@ -1,5 +1,5 @@
 The extension manager is a node process that can load and unload extensions at will.
-It is spawned by the `vicinae server` command.
+It is spawned by the Compass engine (`compass serve`).
 
 Communication is done through standard file descriptors:
 
@@ -11,4 +11,4 @@ Note that since standard output is already assigned to the message scheme you sh
 
 ## About versioning
 
-The `version` field of the `package.json` file is not meaningful. The manager is bundled with every vicinae release and thus shares the same version as the release it's built in.
+The `version` field of the `package.json` file is not meaningful. The manager is bundled with every Compass release and thus shares the same version as the release it's built in.

@@ -392,6 +392,131 @@ impl ScriptMetadataStore {
     }
 }
 
+/// The provider id script commands are listed under in root search, and the
+/// prefix of their entrypoint ids: `scripts:<id>`.
+pub const SCRIPTS_PROVIDER_ID: &str = "scripts";
+
+/// A script command as root search and the launcher hold it: what its row
+/// shows and what running it asks for, without the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptItem {
+    /// The dotted id from the scan.
+    pub id: String,
+    /// `@raycast.title`.
+    pub title: String,
+    /// The package name, or an inline script's last line of output.
+    pub subtitle: String,
+    /// `@vicinae.keywords`.
+    pub keywords: Vec<String>,
+    /// What happens to its output.
+    pub mode: OutputMode,
+    /// Whether it asks before running.
+    pub needs_confirmation: bool,
+    /// What it asks for, in order.
+    pub arguments: Vec<crate::script_command::ScriptArgument>,
+    /// Where the file is.
+    pub path: String,
+}
+
+impl ScriptItem {
+    /// The item for a scanned file; `last_run` is an inline script's last
+    /// output line.
+    #[must_use]
+    pub fn new(file: &ScriptCommandFile, last_run: Option<&str>) -> Self {
+        Self {
+            id: file.id.clone(),
+            title: file.data.title.clone(),
+            subtitle: file.package_name(last_run),
+            keywords: file.data.keywords.clone(),
+            mode: file.data.mode,
+            needs_confirmation: file.data.needs_confirmation,
+            arguments: file.data.arguments.clone(),
+            path: file.path.to_string_lossy().into_owned(),
+        }
+    }
+
+    /// Its root-search row, as `ScriptRootItem` describes it: the title, the
+    /// package name as the subtitle, the keywords.
+    #[must_use]
+    pub fn root_item(&self) -> crate::root_items::RootItem {
+        crate::root_items::RootItem {
+            id: crate::root_items::entrypoint_id(SCRIPTS_PROVIDER_ID, &self.id),
+            title: self.title.clone(),
+            unlocalized_title: None,
+            subtitle: self.subtitle.clone(),
+            keywords: self.keywords.clone(),
+            meta: crate::root_items::RootItemMeta {
+                provider_id: SCRIPTS_PROVIDER_ID.to_owned(),
+                enabled: true,
+                ..crate::root_items::RootItemMeta::default()
+            },
+        }
+    }
+}
+
+/// Walks `dirs` for script commands, as `ScriptScanner::scan` does: hidden
+/// and `.template` names skipped, at most [`MAX_DEPTH`] deep, the first file
+/// to claim an id keeping it, and files that are not text or do not parse
+/// left out (with a warning for the latter).
+///
+/// The roots are walked in the order given, so a custom directory's script
+/// shadows a packaged one with the same id, as the preference promises. The
+/// C++ pushes every root on one stack and so walks the *last* first, letting
+/// the packaged script win (PARITY, Script commands).
+#[must_use]
+pub fn scan(dirs: &[PathBuf]) -> Vec<ScriptCommandFile> {
+    let mut scripts = Vec::new();
+    let mut ids_seen: HashSet<String> = HashSet::new();
+    let mut stack: Vec<ScannedDirectory> = dirs
+        .iter()
+        .rev()
+        .map(|dir| ScannedDirectory {
+            id: String::new(),
+            path: dir.clone(),
+            depth: 0,
+        })
+        .collect();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir.path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let info = DirEntryInfo {
+                name: last_path_component(&path),
+                is_dir: path.is_dir(),
+                path,
+            };
+            let is_text = |path: &Path| {
+                use std::io::Read as _;
+                let mut head = Vec::with_capacity(SNIFF_BYTES);
+                std::fs::File::open(path)
+                    .and_then(|file| file.take(SNIFF_BYTES as u64).read_to_end(&mut head))
+                    .is_ok_and(|_| head_looks_like_text(&head))
+            };
+            match classify(&dir, &info, &ids_seen, is_text) {
+                EntryOutcome::Descend(sub) => stack.push(sub),
+                EntryOutcome::Candidate(id) => {
+                    let parsed = std::fs::read_to_string(&info.path)
+                        .map_err(|error| error.to_string())
+                        .and_then(|text| ScriptCommandFile::parse(&info.path, &id, &text));
+                    match parsed {
+                        Ok(script) => {
+                            ids_seen.insert(id);
+                            scripts.push(script);
+                        }
+                        Err(error) => {
+                            tracing::warn!(path = %info.path.display(), %error, "failed to parse script");
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    scripts
+}
+
 /// The directories a scan walks: the caller's custom paths first, then the
 /// defaults. Order decides which of two same-id scripts wins, and a custom
 /// directory is meant to shadow a packaged one.
@@ -399,4 +524,50 @@ pub fn scan_directories(custom: &[PathBuf], defaults: &[PathBuf]) -> Vec<PathBuf
     let mut out = custom.to_vec();
     out.extend_from_slice(defaults);
     out
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    const HEADER: &str = "#!/bin/sh\n# @raycast.schemaVersion 1\n# @raycast.mode compact\n";
+
+    fn script(dir: &Path, name: &str, title: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(name),
+            format!("{HEADER}# @raycast.title {title}\necho hi\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_scan_finds_scripts_ids_them_by_path_and_lets_custom_dirs_win() {
+        let custom = tempfile::tempdir().unwrap();
+        let packaged = tempfile::tempdir().unwrap();
+        script(custom.path(), "hello.sh", "Custom Hello");
+        script(packaged.path(), "hello.sh", "Packaged Hello");
+        script(&packaged.path().join("tools"), "uptime.sh", "Uptime");
+        script(packaged.path(), ".hidden.sh", "Hidden");
+        script(packaged.path(), "x.template.sh", "Template");
+        std::fs::write(packaged.path().join("notes.md"), "# @raycast.title No").unwrap();
+        std::fs::write(packaged.path().join("blob"), [0u8, 1, 2]).unwrap();
+        std::fs::write(packaged.path().join("plain.sh"), "echo no header\n").unwrap();
+
+        let found = scan(&[custom.path().to_owned(), packaged.path().to_owned()]);
+        let mut titles: Vec<(&str, &str)> = found
+            .iter()
+            .map(|s| (s.id.as_str(), s.data.title.as_str()))
+            .collect();
+        titles.sort_unstable();
+        assert_eq!(
+            titles,
+            [("hello.sh", "Custom Hello"), ("tools.uptime.sh", "Uptime")]
+        );
+
+        let item = ScriptItem::new(&found[0], None);
+        let root = item.root_item();
+        assert!(root.id.starts_with("scripts:"));
+        assert_eq!(root.meta.provider_id, SCRIPTS_PROVIDER_ID);
+    }
 }

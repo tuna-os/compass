@@ -11,7 +11,7 @@ const INTROSPECTION_KEYS = new Set([
 export const unsupported = (symbol: string): any => {
 	const fail = () => {
 		throw new Error(
-			`'${symbol}' from @raycast/api is not supported by Vicinae`,
+			`'${symbol}' from @raycast/api is not supported by Compass`,
 		);
 	};
 

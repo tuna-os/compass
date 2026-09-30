@@ -3,7 +3,7 @@
 //! #88: `Listener::bind` creates the socket's parent with
 //! `DirBuilder::recursive(true).mode(0o700)`, and `recursive(true)` **succeeds
 //! on a directory that already exists, leaving its mode alone**. On the `/tmp`
-//! fallback that means another local user can create `/tmp/vicinae-$USER`
+//! fallback that means another local user can create `/tmp/compass-$USER`
 //! first, at permissive modes, and the engine will happily bind its socket
 //! inside a directory that user can write to.
 //!
@@ -69,7 +69,7 @@ fn our_own_private_directory_is_accepted() {
 
 #[test]
 fn a_world_writable_directory_is_refused() {
-    // THE ATTACK. Another user creates /tmp/vicinae-victim first, permissively,
+    // THE ATTACK. Another user creates /tmp/compass-victim first, permissively,
     // and waits for the victim to bind a socket inside it.
     let tmp = TempDir::new();
     let dir = dir_with_mode(tmp.path(), "hijacked", 0o777);
@@ -141,7 +141,7 @@ fn an_explicit_directory_is_never_second_guessed() {
     let dir = dir_with_mode(tmp.path(), "explicit", 0o777);
     let socket = SocketPath::in_dir(&dir);
 
-    // The socket's parent is `<dir>/vicinae`, not `<dir>` -- and it has to be
+    // The socket's parent is `<dir>/compass`, not `<dir>` -- and it has to be
     // made, permissively, or this passes because the parent does not exist
     // rather than because the path is not a fallback. A control caught exactly
     // that: removing the `is_fallback` guard left this test green.

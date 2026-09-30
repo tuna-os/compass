@@ -1,6 +1,6 @@
 # ADR-0012: Compass is the public brand; legacy identifiers migrate at cutover
 
-**Status:** Accepted · **Date:** 2026-09-14 · Supersedes: ADR-0007 decision 2
+**Status:** Accepted; its compatibility list is superseded by [ADR-0020](./0020-phase-7-rebrand.md) · **Date:** 2026-09-14 · Supersedes: ADR-0007 decision 2
 
 ## Context
 

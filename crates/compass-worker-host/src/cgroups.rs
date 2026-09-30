@@ -27,6 +27,15 @@ pub const HEAP_LIMIT_MIB: u64 = 160;
 
 const _: () = assert!(HEAP_LIMIT_MIB * 1024 * 1024 < MEMORY_LIMIT_BYTES);
 
+/// The worker's `RLIMIT_DATA`: the third cap, and the one that holds where
+/// no systemd is reachable (a Flatpak). It counts committed private address
+/// space rather than resident pages, so it sits at twice the cgroup cap:
+/// measured over Suite 1's 120 real extensions the worker's `VmData` peaks at
+/// 340 MiB (one that fills its heap) and sits near 180 MiB for most, while a
+/// single 512 MiB `Buffer` on top of either is refused with a `RangeError`
+/// the extension can catch, rather than granted.
+pub const DATA_LIMIT_BYTES: u64 = 2 * MEMORY_LIMIT_BYTES;
+
 /// The Node flag that caps the heaps.
 #[must_use]
 pub fn node_heap_flag() -> String {
