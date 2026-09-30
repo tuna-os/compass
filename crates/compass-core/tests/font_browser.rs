@@ -228,7 +228,7 @@ fn preview_is_the_primary_action_not_copy_or_apply() {
     assert_eq!(actions[1].keybind, Some(COPY_KEYBIND));
     assert_eq!(COPY_KEYBIND, "action.copy");
     assert_eq!(PREVIEW_TITLE, "Preview font");
-    assert_eq!(SET_APP_FONT_TITLE, "Set as vicinae font");
+    assert_eq!(SET_APP_FONT_TITLE, "Set as Compass font");
 }
 
 #[test]

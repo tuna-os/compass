@@ -341,3 +341,147 @@ fn a_command_with_arguments_keeps_them_in_order() {
         cmd(&["xfce4-terminal", "-x", "sh", "-c", "echo one two"])
     );
 }
+
+// --- xdg-terminals.list -------------------------------------------------
+
+#[test]
+fn a_flag_ending_in_equals_takes_its_value_in_the_same_argument() {
+    let args = TerminalArgs {
+        exec: Some("--".to_owned()),
+        dir: Some("--working-directory=".to_owned()),
+        title: Some("--title".to_owned()),
+        ..TerminalArgs::default()
+    };
+    assert_eq!(
+        terminal_command(
+            "ptyxis",
+            &args,
+            &cmd(&["htop"]),
+            Some("Top"),
+            Some("/home/u"),
+            None,
+            false
+        ),
+        cmd(&[
+            "ptyxis",
+            "--title",
+            "Top",
+            "--working-directory=/home/u",
+            "--",
+            "htop"
+        ])
+    );
+}
+
+#[test]
+fn a_terminals_list_is_read_as_the_c_plus_plus_reads_it() {
+    use compass_xdg::terminal::{ListEntry, ListState, parse_terminals_list};
+    let entries = parse_terminals_list(
+        "# Configured by hand\n\n\
+         org.gnome.Ptyxis.desktop\n\
+         -xterm.desktop\n\
+         +foot.desktop:server\n\
+         not-a-terminal\n",
+    );
+    assert_eq!(
+        entries,
+        [
+            ListEntry {
+                id: "org.gnome.Ptyxis.desktop".into(),
+                action: None,
+                state: ListState::Selected
+            },
+            ListEntry {
+                id: "xterm.desktop".into(),
+                action: None,
+                state: ListState::Excluded
+            },
+            ListEntry {
+                id: "foot.desktop".into(),
+                action: Some("server".into()),
+                state: ListState::Protected
+            },
+        ]
+    );
+}
+
+#[test]
+fn the_lists_are_looked_for_in_config_then_data_fallbacks() {
+    use compass_xdg::terminal::terminals_list_paths;
+    use std::path::{Path, PathBuf};
+    let paths = terminals_list_paths(
+        Some(Path::new("/home/u/.config")),
+        &[PathBuf::from("/etc/xdg")],
+        &[PathBuf::from("/usr/share")],
+        &["GNOME".to_owned()],
+    );
+    let paths: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    assert_eq!(
+        paths,
+        [
+            "/home/u/.config/gnome-xdg-terminals.list",
+            "/home/u/.config/xdg-terminals.list",
+            "/etc/xdg/gnome-xdg-terminals.list",
+            "/etc/xdg/xdg-terminals.list",
+            "/usr/share/xdg-terminal-exec/gnome-xdg-terminals.list",
+            "/usr/share/xdg-terminal-exec/xdg-terminals.list",
+        ]
+    );
+}
+
+// --- choosing the terminal: `src/lib/xdgpp/tests/xdg-terminal-exec.cpp` --
+
+#[test]
+fn a_chosen_terminal_is_written_to_an_empty_file() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("xdg-terminals.list");
+    compass_xdg::terminal::set_default_terminal(&path, "test", None).expect("written");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read back"),
+        "# Configured by the Compass launcher\ntest\n"
+    );
+}
+
+#[test]
+fn a_chosen_terminal_goes_above_every_existing_entry() {
+    assert_eq!(
+        compass_xdg::terminal::with_default_terminal("org.someone.something\n", "test", None),
+        "# Configured by the Compass launcher\ntest\norg.someone.something\n"
+    );
+}
+
+#[test]
+fn choosing_again_replaces_the_previous_choice_and_keeps_comments() {
+    assert_eq!(
+        compass_xdg::terminal::with_default_terminal(
+            "# Configured by the Compass launcher\n# This is some comment\n\
+             org.someone.something\norg.somethingelse.unrelated\n",
+            "test",
+            None
+        ),
+        "# Configured by the Compass launcher\n# This is some comment\n\
+         test\norg.somethingelse.unrelated\n"
+    );
+}
+
+#[test]
+fn the_pre_rename_header_is_recognised_and_rewritten() {
+    assert_eq!(
+        compass_xdg::terminal::with_default_terminal(
+            "# Configured by the Vicinae launcher\norg.someone.something\nother\n",
+            "test",
+            None
+        ),
+        "# Configured by the Compass launcher\ntest\nother\n"
+    );
+}
+
+#[test]
+fn a_chosen_action_is_written_after_a_colon_and_reads_back() {
+    let written =
+        compass_xdg::terminal::with_default_terminal("", "kitty.desktop", Some("new-window"));
+    let entries = compass_xdg::terminal::parse_terminals_list(&written);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, "kitty.desktop");
+    assert_eq!(entries[0].action.as_deref(), Some("new-window"));
+}

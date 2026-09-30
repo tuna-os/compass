@@ -319,17 +319,76 @@ fn the_json_key_is_emoji_for_backward_compatibility() {
     let json: serde_json::Value =
         serde_json::from_str(&service.to_json().expect("serialises")).expect("JSON");
     assert_eq!(json[0]["emoji"], "😀");
-    assert_eq!(json[0]["visit_count"], 1);
-    assert_eq!(json[0]["pinned_at"], 1000);
+    assert_eq!(json[0]["visitCount"], 1);
+    assert_eq!(json[0]["pinnedAt"], 1000);
+}
+
+#[test]
+fn the_cpp_file_is_read_with_its_camel_case_keys() {
+    // What glaze writes for `SerializedEmojiMetadata`: the members as they
+    // are declared.
+    let service = GlyphService::from_json(
+        r#"[{"emoji":"👍","visitCount":4,"pinnedAt":1700000000,"lastVisitedAt":1700000100,"skinTone":"medium","keyword":"yes ok"}]"#,
+    );
+    let entry = service.find("👍").expect("loaded");
+    assert_eq!(entry.visit_count, 4);
+    assert_eq!(entry.pinned_at, Some(1_700_000_000));
+    assert_eq!(entry.last_visited_at, Some(1_700_000_100));
+    assert_eq!(entry.skin_tone.as_deref(), Some("medium"));
+    assert_eq!(entry.keyword.as_deref(), Some("yes ok"));
+
+    let text = service.to_json().expect("serialises");
+    for key in ["visitCount", "pinnedAt", "lastVisitedAt", "skinTone"] {
+        assert!(text.contains(key), "{key} missing from {text}");
+    }
+    assert!(!text.contains("visit_count"), "{text}");
 }
 
 #[test]
 fn a_file_from_an_older_build_still_loads() {
+    // This port's first files were snake_case.
     let service = GlyphService::from_json(r#"[{"emoji":"😀","visit_count":3}]"#);
     let entry = service.find("😀").expect("loaded");
     assert_eq!(entry.visit_count, 3);
     assert_eq!(entry.pinned_at, None);
     assert_eq!(entry.skin_tone, None);
+}
+
+#[test]
+fn the_file_is_written_and_read_back_and_a_missing_one_is_empty() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("emojis").join("emojis.json");
+    assert!(GlyphService::load_file(&path).entries().is_empty());
+
+    let mut service = GlyphService::new();
+    service.pin("🍕", 10);
+    service.save_file(&path).expect("saved");
+    assert_eq!(GlyphService::load_file(&path), service);
+    assert!(!path.with_extension("json.partial").exists());
+}
+
+#[test]
+fn a_visit_raises_a_glyph_among_matches_and_a_keyword_makes_it_match() {
+    use compass_core::glyph::lookup;
+    use compass_core::glyph_service::score;
+    use compass_search::Query;
+
+    let now = 1_000_000;
+    let heart = lookup("❤️").expect("in the table");
+    let query = Query::new("heart");
+    let cold = score(heart, None, &query, now).expect("matches");
+    let mut service = GlyphService::new();
+    for _ in 0..5 {
+        service.register_visit(heart.character, u64::try_from(now).unwrap());
+    }
+    let warm = score(heart, service.find(heart.character), &query, now).expect("matches");
+    assert!(warm > cold, "{warm} should beat {cold}");
+
+    let pizza = lookup("🍕").expect("in the table");
+    let mine = Query::new("zzlunch");
+    assert!(score(pizza, None, &mine, now).is_none());
+    service.set_keywords(pizza.character, "zzlunch");
+    assert!(score(pizza, service.find(pizza.character), &mine, now).is_some());
 }
 
 #[test]
@@ -363,6 +422,6 @@ fn absent_optional_fields_are_left_out_of_the_file() {
     service.register_visit("😀", 1000);
 
     let text = service.to_json().expect("serialises");
-    assert!(!text.contains("pinned_at"), "{text}");
-    assert!(!text.contains("skin_tone"), "{text}");
+    assert!(!text.contains("pinnedAt"), "{text}");
+    assert!(!text.contains("skinTone"), "{text}");
 }

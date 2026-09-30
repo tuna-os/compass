@@ -18,7 +18,6 @@
 use std::path::{Path, PathBuf};
 
 use compass_local_storage::{LocalStorage, namespace_for};
-use compass_sqlcipher_sys::Database;
 use compass_worker_host::extension_manager::ManagerClient;
 use compass_worker_host::session::{Router, Session, Turn};
 use compass_worker_host::storage_service::StorageService;
@@ -101,7 +100,8 @@ fn a_node_worker_loads_stores_and_reads_back_through_the_host() {
         .ready(&session_id)
         .expect("sending ready");
 
-    let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+    let db = compass_sqlcipher_sys::open(&dir.path().join("vicinae.db"), &[])
+        .expect("an unencrypted db");
     compass_db::vicinae::run(&db).expect("the migrations apply");
     let storage = LocalStorage::new(&db);
     let service = StorageService::new(storage.scoped(&namespace_for("hn")));

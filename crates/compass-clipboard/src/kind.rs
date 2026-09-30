@@ -6,9 +6,8 @@
 //! implementation detail. Renumbering them does not break a build; it silently
 //! reinterprets every row already on disk — an image becomes a link, an
 //! encrypted offer becomes a plaintext one. The discriminants below are
-//! therefore written out explicitly rather than left implicit, and
-//! `tests/cpp_enum_values.rs` reads them back out of the C++ header so that
-//! changing one side alone fails.
+//! therefore written out explicitly rather than left implicit, and the tests
+//! below pin them to the values upstream Vicinae's C++ header assigns.
 
 /// Whether an offer's payload on disk is encrypted.
 ///

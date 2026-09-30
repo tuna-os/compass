@@ -6,7 +6,7 @@
 //! * [`apps`] — scan the XDG application directories and turn `.desktop` files into
 //!   [`AppItem`]s that [`compass_search`] can rank.
 //! * [`frecency`] — remember what was launched and when, so ranking can prefer it.
-//! * [`config`] — the `vicinae.json` user configuration.
+//! * [`config`] — the `compass.json` user configuration.
 //!
 //! ```
 //! use compass_core::{AppIndex, Config};
@@ -43,18 +43,22 @@ pub mod boilerplate;
 pub mod browse_apps;
 pub mod bug_report;
 pub mod builtin_icon;
+pub mod calculator;
 pub mod calculator_history;
 pub mod clipboard_history;
 pub mod commands;
 pub mod config;
+pub mod config_migration;
 pub mod contrast;
 pub mod create_extension;
 pub mod default_app;
 pub mod emoji_grid;
 pub mod entry_filter;
+pub mod exchange_rates;
 pub mod extension_commands;
 pub mod extension_install;
 pub mod extension_store;
+pub mod favicon;
 pub mod fetch_queue;
 pub mod file_category;
 pub mod file_chooser;
@@ -63,6 +67,7 @@ pub mod file_walk;
 pub mod font_browser;
 pub mod font_service;
 pub mod frecency;
+pub mod global_shortcuts;
 pub mod glyph;
 pub mod glyph_service;
 pub mod image_url;
@@ -71,18 +76,24 @@ pub mod index_reconcile;
 pub mod input_server;
 pub mod internal_commands;
 pub mod io_pacer;
+pub mod key_combo;
 pub mod keybinding;
 pub mod list_navigation;
 pub mod manifest;
 pub mod media_commands;
 pub mod news;
+pub mod onboarding;
 pub mod paste;
+pub mod placeholder;
 pub mod power_commands;
+pub mod qt_date;
 pub mod query_policy;
 pub mod query_ranking;
 pub mod rank;
+pub mod raycast_overrides;
 pub mod raycast_store;
 pub mod raycast_store_view;
+pub mod rhai_scripts;
 pub mod root_items;
 pub mod root_view;
 pub mod scan_dispatch;
@@ -90,8 +101,10 @@ pub mod scan_roots;
 pub mod script_command;
 pub mod script_output;
 pub mod script_scan;
+pub mod script_template;
 pub mod selection;
 pub mod semver;
+pub mod settings_catalog;
 pub mod shortcut;
 pub mod shortcut_form;
 pub mod shortcut_service;
@@ -100,13 +113,18 @@ pub mod slug;
 pub mod snippet;
 pub mod snippet_expander;
 pub mod snippet_form;
+pub mod snippet_store;
+pub mod store_bundle;
+pub mod store_listing;
 pub mod system_run;
 pub mod telemetry;
+pub mod theme_file;
 pub mod theme_picker;
 pub mod toast;
 pub mod tray;
 pub mod tray_host;
 pub mod update;
+pub mod uri;
 pub mod vocabulary;
 pub mod wallpaper;
 pub mod watch_events;
@@ -117,7 +135,7 @@ pub mod window_switcher;
 pub mod xdg_dirs;
 
 pub use apps::{AppIndex, AppIndexBuilder, AppItem, RootHit, SkipReason, SkippedEntry};
-pub use config::{Config, ConfigError, ExtensionsConfig, LauncherConfig};
+pub use config::{Config, ConfigError, ExtensionsConfig, GlobalShortcutsConfig, LauncherConfig};
 pub use frecency::{
     Clock, FrecencyError, FrecencyRecord, FrecencyStore, JsonFrecencyStore, ManualClock,
     SystemClock,

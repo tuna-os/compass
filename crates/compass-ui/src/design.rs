@@ -296,6 +296,58 @@ pub fn theme(appearance: Appearance) -> iced::Theme {
     )
 }
 
+/// A dropdown that reads as part of the card (#239).
+///
+/// Iced's default pick-list chrome — near-square corners, a full-contrast
+/// border, and colors off the generic ramp — sits visibly apart from the
+/// launcher's rows. A filter instead takes the search field's fill and the
+/// rows' corner radius, with no border, in every status: the launcher's rows
+/// do not glow on hover either. The font is set at the call site, because a
+/// pick list carries its own.
+#[must_use]
+pub fn dropdown(
+    palette: Palette,
+    _status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
+    iced::widget::pick_list::Style {
+        text_color: palette.text.to_iced(),
+        placeholder_color: palette.muted.to_iced(),
+        handle_color: palette.muted.to_iced(),
+        background: iced::Background::Color(palette.field.to_iced()),
+        border: iced::Border {
+            radius: f32::from(GEOMETRY.row_radius).into(),
+            ..iced::Border::default()
+        },
+    }
+}
+
+/// An open dropdown's menu: the card's fill, row-radius corners, and the
+/// selection colors the results list uses, so an open filter looks like the
+/// list it filters. The hairline and soft shadow are the popover's own, the
+/// way GNOME draws one over a window.
+#[must_use]
+pub fn dropdown_menu(palette: Palette) -> iced::widget::overlay::menu::Style {
+    iced::widget::overlay::menu::Style {
+        background: iced::Background::Color(palette.surface.to_iced()),
+        border: iced::Border {
+            color: palette.border.to_iced(),
+            width: 1.0,
+            radius: f32::from(GEOMETRY.row_radius).into(),
+        },
+        text_color: palette.text.to_iced(),
+        selected_text_color: palette.selection_text.to_iced(),
+        selected_background: iced::Background::Color(palette.selection.to_iced()),
+        shadow: iced::Shadow {
+            color: iced::Color {
+                a: 0.25,
+                ..iced::Color::BLACK
+            },
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
+    }
+}
+
 /// The shadow around the card, in logical pixels.
 ///
 /// Enough to lift the card off the wallpaper without dominating the palette.

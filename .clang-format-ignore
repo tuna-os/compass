@@ -1,5 +1,0 @@
-src/lib/common/include/common/CLI11.hpp
-src/lib/emoji/include/emoji/generated/*
-src/lib/emoji/include/generated/*
-src/lib/emoji/src/generated/*
-src/server/src/lib/toml.hpp

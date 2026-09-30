@@ -1,0 +1,5 @@
+title = "Quick Notes"
+description = "Jot something down, find it again later"
+icon = "notes"
+keywords = ["note", "notes", "memo", "jot", "scratch"]
+capabilities = ["storage.read", "storage.write", "clipboard.write"]

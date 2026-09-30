@@ -4,11 +4,12 @@
 //! (`src/server/src/services/builtin-icon/`). An extension writes
 //! `Icon.AlarmRinging` and the host has to turn that into a picture; the name
 //! in between is `"alarm-ringing"`, and the file is
-//! `src/server/icons/alarm-ringing.svg`.
+//! `extra/builtin-icons/alarm-ringing.svg`.
 //!
 //! As with [`crate::glyph`], the table is not written down twice: `build.rs`
-//! parses the 852 mappings out of `builtin-icon.cpp`, so the two engines
-//! cannot disagree about which icons exist or what they are called.
+//! parses the 852 names out of the `Icon` enum in `@vicinae/api`
+//! (`src/typescript/api/src/api/icon.ts`), so the host and the API extensions
+//! import cannot disagree about which icons exist or what they are called.
 //!
 //! # Where the C++ looks, and why this cannot
 //!
@@ -48,7 +49,7 @@ pub fn file_name(name: &str) -> Option<String> {
 }
 
 /// Where the icon files are: `$COMPASS_BUILTIN_ICONS`, else the first
-/// `vicinae/builtin-icons` under `$XDG_DATA_HOME` or `$XDG_DATA_DIRS` (the
+/// `compass/builtin-icons` under `$XDG_DATA_HOME` or `$XDG_DATA_DIRS` (the
 /// Flatpak installs them under `/app/share`).
 #[must_use]
 pub fn directory() -> Option<std::path::PathBuf> {
@@ -75,7 +76,7 @@ pub fn directory_in(
     data_home
         .into_iter()
         .chain(data_dirs.split(':').map(std::path::PathBuf::from))
-        .map(|dir| dir.join("vicinae/builtin-icons"))
+        .map(|dir| dir.join("compass/builtin-icons"))
         .find(|dir| dir.is_dir())
 }
 
@@ -94,11 +95,11 @@ mod tests {
     fn the_icons_are_found_under_the_first_data_dir_that_has_them() {
         let none = tempfile::tempdir().unwrap();
         let app = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(app.path().join("vicinae/builtin-icons")).unwrap();
+        std::fs::create_dir_all(app.path().join("compass/builtin-icons")).unwrap();
         let dirs = format!("{}:{}", none.path().display(), app.path().display());
         assert_eq!(
             directory_in(None, None, Some(&dirs)),
-            Some(app.path().join("vicinae/builtin-icons")),
+            Some(app.path().join("compass/builtin-icons")),
             "the Flatpak's /app/share is one of $XDG_DATA_DIRS"
         );
         assert_eq!(
@@ -121,7 +122,7 @@ mod tests {
     fn every_name_has_an_svg_and_every_svg_has_a_name() {
         // The check that matters: a name with no file is a blank icon, and a
         // file with no name is an asset nobody can ask for. Both are silent.
-        let dir = repo().join("src/server/icons");
+        let dir = repo().join("extra/builtin-icons");
         let files: BTreeSet<String> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
             .filter_map(Result::ok)
@@ -171,7 +172,7 @@ mod tests {
         assert!(is_builtin(UNKNOWN), "{UNKNOWN} is not in the table");
         assert!(
             repo()
-                .join("src/server/icons")
+                .join("extra/builtin-icons")
                 .join("question-mark-circle.svg")
                 .exists(),
             "the fallback icon has no file"
@@ -189,17 +190,15 @@ mod tests {
     }
 
     #[test]
-    fn the_table_is_as_long_as_the_cpp_map() {
-        // `builtin-icon.cpp` has one `{BuiltinIcon::X, "x"}` line per icon.
-        let source = std::fs::read_to_string(
-            repo().join("src/server/src/services/builtin-icon/builtin-icon.cpp"),
-        )
-        .expect("read the C++ mapping");
-        let lines = source.matches("{BuiltinIcon::").count();
+    fn the_table_is_as_long_as_the_api_enum() {
+        // `icon.ts` has one `Name = "name",` line per icon.
+        let source = std::fs::read_to_string(repo().join("src/typescript/api/src/api/icon.ts"))
+            .expect("read the API's Icon enum");
+        let lines = source.matches(" = \"").count();
         assert_eq!(
             names().len(),
             lines,
-            "the parser found {} of the C++'s {lines} mappings",
+            "the parser found {} of the enum's {lines} members",
             names().len()
         );
     }

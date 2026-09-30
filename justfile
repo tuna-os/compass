@@ -9,11 +9,33 @@ default:
 bench-head-to-head output="target/head-to-head":
     python3 scripts/bench/run.py --output "$1"
 
+# Compass against the pinned upstream AppImage on this machine, on headless Sway:
+# cold start, first frame, typing, memory, threads, scorer throughput and size.
+# See docs/rust-engine/BENCHMARKS.md. Needs sway, grim, wtype and dbus-daemon.
+bench-compare output="" runs="5":
+    scripts/bench/compare.sh "$1" "$2"
+
 # Fast checks for the benchmark orchestration, without downloading/building engines.
 bench-check:
     python3 -m unittest discover -s scripts/bench -p 'test_*.py'
-    python3 -m py_compile scripts/bench/run.py scripts/bench/session.py
+    python3 -m py_compile scripts/bench/run.py scripts/bench/session.py scripts/bench/compare.py
 
 # Drive already-running engines with a hand-written advanced workload.
 bench-attached config report:
     cargo run --release --locked -p compass-testkit --bin head-to-head -- "$1" "$2"
+
+# Run the VM tier on this branch's pushed head (needs `gh`). `jobs` is all,
+# control, compass, launcher or spike-a; `checks` picks the compass job's
+# packaging/vmtest/checks.sh subcommands, space-separated (empty: the default set).
+vm-tier jobs="all" checks="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    branch="$(git branch --show-current)"
+    args=(-f jobs="$1")
+    if [ -n "$2" ]; then args+=(-f checks="$2"); fi
+    gh workflow run vm-tier.yaml --ref "$branch" "${args[@]}"
+    echo "Dispatched the VM tier on $branch; follow it with: gh run watch \$(gh run list --workflow vm-tier.yaml --branch $branch --limit 1 --json databaseId --jq '.[0].databaseId')"
+
+# Render the store-listing screenshots into packaging/screenshots/ through the paint tier.
+screenshots:
+    cargo test -p compass-ui --test screenshots -- --ignored

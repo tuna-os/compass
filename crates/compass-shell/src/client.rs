@@ -11,7 +11,7 @@ use zbus::{Connection, proxy::CacheProperties};
 use crate::capability::{Availability, ShellCapabilities};
 use crate::contract;
 use crate::error::{Result, ShellError};
-use crate::model::{ClipboardChange, ClipboardContent, Window, WindowId};
+use crate::model::{ClipboardChange, ClipboardContent, Window, WindowId, Workspace};
 use crate::proxy::{ClipboardProxy, WindowsProxy};
 
 /// Retry policy used when re-probing after `gnome-shell` reappears.
@@ -365,6 +365,43 @@ impl ShellClient {
             .await
     }
 
+    /// Refuse `method` unless the windows interface speaks at least `since`.
+    async fn require_since(&self, method: &'static str, since: u32) -> Result<()> {
+        self.require(true).await?;
+        let availability = self.shared.snapshot().windows;
+        match availability.version() {
+            Some(found) if found < since => Err(ShellError::TooOld {
+                method,
+                found,
+                needed: since,
+            }),
+            Some(_) => Ok(()),
+            None => Err(ShellError::Unavailable(availability)),
+        }
+    }
+
+    /// The workspaces, in order (contract 4).
+    pub async fn list_workspaces(&self) -> Result<Vec<Workspace>> {
+        self.require_since("ListWorkspaces", contract::WORKSPACES_SINCE)
+            .await?;
+        let proxy = self.shared.windows_proxy().await?;
+        let raw = self
+            .shared
+            .bounded("ListWorkspaces", proxy.list_workspaces())
+            .await?;
+        raw.iter().map(Workspace::from_dict).collect()
+    }
+
+    /// Switch to the workspace at `index` (contract 4).
+    pub async fn activate_workspace(&self, index: i32) -> Result<()> {
+        self.require_since("ActivateWorkspace", contract::WORKSPACES_SINCE)
+            .await?;
+        let proxy = self.shared.windows_proxy().await?;
+        self.shared
+            .bounded("ActivateWorkspace", proxy.activate_workspace(index))
+            .await
+    }
+
     /// Subscribe to `WindowsChanged`.
     ///
     /// The match rule is installed before this returns, so a caller that
@@ -414,6 +451,18 @@ impl ShellClient {
         self.shared
             .bounded("Paste", proxy.paste(shift_wm_classes))
             .await
+    }
+
+    /// The primary selection's text — what the user last selected, in any
+    /// window — or `None` when nothing is selected or it is not text.
+    pub async fn primary_selection(&self) -> Result<Option<String>> {
+        self.require(false).await?;
+        let proxy = self.shared.clipboard_proxy().await?;
+        let text = self
+            .shared
+            .bounded("GetPrimarySelection", proxy.get_primary_selection())
+            .await?;
+        Ok((!text.is_empty()).then_some(text))
     }
 
     /// Subscribe to `ClipboardChanged`.

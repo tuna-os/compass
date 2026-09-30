@@ -189,6 +189,38 @@ pub const CATEGORY_FILTER_KEYS: &[&str] = &[
     "Applications",
 ];
 
+/// The names `compass fs query --category` takes and prints, in the C++
+/// CLI's order (`fileCategoryToString`), each with the filter key above
+/// that selects it.
+pub const CLI_CATEGORY_NAMES: [(&str, &str); 8] = [
+    ("image", "Images"),
+    ("video", "Videos"),
+    ("audio", "Audio"),
+    ("document", "Documents"),
+    ("archive", "Archives"),
+    ("application", "Applications"),
+    ("directory", "Directories"),
+    ("other", "Other"),
+];
+
+/// The filter key a `--category` name selects.
+#[must_use]
+pub fn filter_key_for_cli_name(name: &str) -> Option<&'static str> {
+    CLI_CATEGORY_NAMES
+        .iter()
+        .find(|(cli, _)| *cli == name)
+        .map(|(_, key)| *key)
+}
+
+/// The `--category` name a filter key is printed as.
+#[must_use]
+pub fn cli_name_for_filter_key(key: &str) -> Option<&'static str> {
+    CLI_CATEGORY_NAMES
+        .iter()
+        .find(|(_, filter)| *filter == key)
+        .map(|(cli, _)| *cli)
+}
+
 /// The key the chosen filter is stored under.
 pub const CATEGORY_STORAGE_KEY: &str = "fileCategory";
 
@@ -278,10 +310,108 @@ pub fn registered_commands() -> Vec<&'static str> {
 /// searches the filesystem instead of coming back empty.
 pub const SEARCH_IS_FALLBACK: bool = true;
 
+/// How many rows an indexed search asks for, `IndexerQueryParams::limit`.
+pub const INDEXED_QUERY_LIMIT: i32 = 100;
+
+/// The indexer's query debounce, `DEFAULT_QUERY_DEBOUNCE`.
+pub const QUERY_DEBOUNCE_MS: u64 = 100;
+
+/// The provider id the file extension's preferences live under in
+/// `compass.json`: `providers.files.preferences`.
+pub const PREFERENCES_PROVIDER_ID: &str = "files";
+
+/// The file extension's Linux preferences, read the way
+/// `FileIndexer::preferenceValuesChanged` reads them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexingSettings {
+    /// `autoIndexing`: whether the indexer runs at all.
+    pub enabled: bool,
+    /// `indexingPaths`: the directories to index.
+    pub paths: Vec<String>,
+    /// `excludedIndexingPaths`: subtrees never indexed.
+    pub excluded_paths: Vec<String>,
+}
+
+impl IndexingSettings {
+    /// Settings from the stored preference values, with the C++ defaults for
+    /// whatever is missing: indexing on, the home directory, nothing excluded.
+    ///
+    /// Like the C++'s `toArray` walk, a non-string entry in a path list is
+    /// skipped rather than failing the whole list. A value of the wrong type
+    /// falls back to its default, the way the merged default would.
+    #[must_use]
+    pub fn from_preferences(
+        preferences: Option<&serde_json::Map<String, serde_json::Value>>,
+        home: Option<&std::path::Path>,
+    ) -> Self {
+        let get = |key: &str| preferences.and_then(|map| map.get(key));
+        let strings = |key: &str| {
+            get(key)
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+        };
+        Self {
+            enabled: get("autoIndexing")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true),
+            paths: strings("indexingPaths").unwrap_or_else(|| {
+                home.map(|home| vec![home.to_string_lossy().into_owned()])
+                    .unwrap_or_default()
+            }),
+            excluded_paths: strings("excludedIndexingPaths").unwrap_or_default(),
+        }
+    }
+}
+
+/// The filter key for a category: the stable, untranslated name the filter
+/// stores, which the wire also carries.
+#[must_use]
+pub fn category_key(category: FileCategory) -> &'static str {
+    match category {
+        FileCategory::Other => "Other",
+        FileCategory::Directory => "Directories",
+        FileCategory::Image => "Images",
+        FileCategory::Video => "Videos",
+        FileCategory::Audio => "Audio",
+        FileCategory::Document => "Documents",
+        FileCategory::Archive => "Archives",
+        FileCategory::Application => "Applications",
+    }
+}
+
+/// The category a filter key names; `None` for `All` and anything unknown,
+/// which filters nothing.
+#[must_use]
+pub fn category_for_key(key: &str) -> Option<FileCategory> {
+    let index = CATEGORY_FILTER_KEYS.iter().position(|k| *k == key)?;
+    category_for_index(index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::file_category::FileCategory;
+
+    #[test]
+    fn every_cli_category_selects_a_distinct_real_category_and_prints_back() {
+        let mut seen = Vec::new();
+        for (name, key) in CLI_CATEGORY_NAMES {
+            assert_eq!(filter_key_for_cli_name(name), Some(key));
+            assert_eq!(cli_name_for_filter_key(key), Some(name));
+            let category = category_for_key(key).expect("a real category, not All");
+            assert!(!seen.contains(&category), "{name} repeats a category");
+            seen.push(category);
+        }
+        assert_eq!(seen.len(), CATEGORY_FILTER_KEYS.len() - 1, "all but All");
+        assert_eq!(filter_key_for_cli_name("Images"), None, "exact names only");
+        assert_eq!(cli_name_for_filter_key("All"), None);
+    }
 
     #[test]
     fn explicit_path_query_unix_anchored() {
@@ -416,5 +546,42 @@ mod tests {
         assert!(!should_debounce(0));
         assert_eq!(registered_commands(), vec!["search"]);
         const { assert!(SEARCH_IS_FALLBACK) };
+    }
+
+    #[test]
+    fn category_keys_round_trip_through_the_filter() {
+        for (index, key) in CATEGORY_FILTER_KEYS.iter().enumerate().skip(1) {
+            let category = category_for_index(index).expect("a category");
+            assert_eq!(category_key(category), *key);
+            assert_eq!(category_for_key(category_key(category)), Some(category));
+        }
+        assert_eq!(category_for_key("All"), None);
+        assert_eq!(category_for_key("Nonsense"), None);
+    }
+
+    #[test]
+    fn indexing_settings_default_to_the_home_directory() {
+        let home = std::path::Path::new("/home/me");
+        assert_eq!(
+            IndexingSettings::from_preferences(None, Some(home)),
+            IndexingSettings {
+                enabled: true,
+                paths: vec!["/home/me".to_owned()],
+                excluded_paths: Vec::new(),
+            }
+        );
+        let stored = serde_json::json!({
+            "autoIndexing": false,
+            "indexingPaths": ["/data", 3, "/srv"],
+            "excludedIndexingPaths": ["/data/tmp"],
+        });
+        let settings = IndexingSettings::from_preferences(stored.as_object(), Some(home));
+        assert!(!settings.enabled);
+        assert_eq!(settings.paths, ["/data", "/srv"]);
+        assert_eq!(settings.excluded_paths, ["/data/tmp"]);
+        let wrong = serde_json::json!({"autoIndexing": "yes", "indexingPaths": "/x"});
+        let settings = IndexingSettings::from_preferences(wrong.as_object(), None);
+        assert!(settings.enabled);
+        assert!(settings.paths.is_empty());
     }
 }

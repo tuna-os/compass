@@ -207,6 +207,51 @@ impl Action {
     }
 }
 
+/// `org.freedesktop.login1.Manager`: the methods this crate calls.
+#[allow(missing_docs)]
+#[zbus::proxy(
+    interface = "org.freedesktop.login1.Manager",
+    default_service = "org.freedesktop.login1",
+    default_path = "/org/freedesktop/login1"
+)]
+trait Manager {
+    fn power_off(&self, interactive: bool) -> zbus::Result<()>;
+    fn reboot(&self, interactive: bool) -> zbus::Result<()>;
+    fn suspend(&self, interactive: bool) -> zbus::Result<()>;
+    fn hibernate(&self, interactive: bool) -> zbus::Result<()>;
+    fn can_power_off(&self) -> zbus::Result<String>;
+    fn can_reboot(&self) -> zbus::Result<String>;
+    fn can_suspend(&self) -> zbus::Result<String>;
+    fn can_hibernate(&self) -> zbus::Result<String>;
+    fn reboot_with_flags(&self, flags: u64) -> zbus::Result<()>;
+    fn sleep(&self, flags: u64) -> zbus::Result<()>;
+    fn list_sessions(&self) -> zbus::Result<Vec<(String, u32, String, String, OwnedObjectPath)>>;
+    fn lock_session(&self, session_id: &str) -> zbus::Result<()>;
+    fn terminate_session(&self, session_id: &str) -> zbus::Result<()>;
+}
+
+/// `org.gnome.SessionManager`, for GNOME's logout.
+#[allow(missing_docs)]
+#[zbus::proxy(
+    interface = "org.gnome.SessionManager",
+    default_service = "org.gnome.SessionManager",
+    default_path = "/org/gnome/SessionManager"
+)]
+trait GnomeSession {
+    fn logout(&self, mode: u32) -> zbus::Result<()>;
+}
+
+/// `org.kde.Shutdown`, for Plasma's logout.
+#[allow(missing_docs)]
+#[zbus::proxy(
+    interface = "org.kde.Shutdown",
+    default_service = "org.kde.Shutdown",
+    default_path = "/Shutdown"
+)]
+trait PlasmaShutdown {
+    fn logout(&self) -> zbus::Result<()>;
+}
+
 /// A logind client.
 #[derive(Debug)]
 pub struct PowerManager {
@@ -223,14 +268,8 @@ impl PowerManager {
         Self { connection }
     }
 
-    async fn call<B>(&self, method: &str, body: &B) -> Result<zbus::Message, Error>
-    where
-        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
-    {
-        Ok(self
-            .connection
-            .call_method(Some(SERVICE), PATH, Some(INTERFACE), method, body)
-            .await?)
+    async fn manager(&self) -> Result<ManagerProxy<'_>, Error> {
+        Ok(ManagerProxy::new(&self.connection).await?)
     }
 
     /// Performs `action`. `interactive` is logind's own flag.
@@ -239,7 +278,13 @@ impl PowerManager {
     ///
     /// [`Error::Bus`] if logind refuses.
     pub async fn perform(&self, action: Action, interactive: bool) -> Result<(), Error> {
-        self.call(action.method(), &(interactive,)).await?;
+        let manager = self.manager().await?;
+        match action {
+            Action::PowerOff => manager.power_off(interactive).await?,
+            Action::Reboot => manager.reboot(interactive).await?,
+            Action::Suspend => manager.suspend(interactive).await?,
+            Action::Hibernate => manager.hibernate(interactive).await?,
+        }
         Ok(())
     }
 
@@ -249,8 +294,13 @@ impl PowerManager {
     ///
     /// [`Error::Bus`] if logind refuses.
     pub async fn can(&self, action: Action) -> Result<Capability, Error> {
-        let reply = self.call(action.query(), &()).await?;
-        let answer: String = reply.body().deserialize()?;
+        let manager = self.manager().await?;
+        let answer = match action {
+            Action::PowerOff => manager.can_power_off().await?,
+            Action::Reboot => manager.can_reboot().await?,
+            Action::Suspend => manager.can_suspend().await?,
+            Action::Hibernate => manager.can_hibernate().await?,
+        };
         Ok(Capability::parse(&answer))
     }
 
@@ -260,7 +310,10 @@ impl PowerManager {
     ///
     /// [`Error::Bus`] if logind refuses.
     pub async fn soft_reboot(&self) -> Result<(), Error> {
-        self.call("RebootWithFlags", &(SOFT_REBOOT_FLAG,)).await?;
+        self.manager()
+            .await?
+            .reboot_with_flags(SOFT_REBOOT_FLAG)
+            .await?;
         Ok(())
     }
 
@@ -270,7 +323,7 @@ impl PowerManager {
     ///
     /// [`Error::Bus`] if logind refuses.
     pub async fn sleep(&self) -> Result<(), Error> {
-        self.call("Sleep", &(0u64,)).await?;
+        self.manager().await?.sleep(0).await?;
         Ok(())
     }
 
@@ -280,10 +333,7 @@ impl PowerManager {
     ///
     /// [`Error::Bus`] if logind refuses or answers something else.
     pub async fn sessions(&self) -> Result<Vec<Session>, Error> {
-        let reply = self.call("ListSessions", &()).await?;
-        let raw: Vec<(String, u32, String, String, OwnedObjectPath)> =
-            reply.body().deserialize()?;
-
+        let raw = self.manager().await?.list_sessions().await?;
         Ok(raw
             .into_iter()
             .map(|(id, uid, user, seat, path)| Session {
@@ -305,7 +355,7 @@ impl PowerManager {
     pub async fn lock(&self, uid: u32) -> Result<(), Error> {
         let sessions = self.sessions().await?;
         let session = current_session(&sessions, uid).ok_or(Error::NoSession)?;
-        self.call("LockSession", &(session.id.as_str(),)).await?;
+        self.manager().await?.lock_session(&session.id).await?;
         Ok(())
     }
 
@@ -317,8 +367,34 @@ impl PowerManager {
     pub async fn terminate_session(&self, uid: u32) -> Result<(), Error> {
         let sessions = self.sessions().await?;
         let session = current_session(&sessions, uid).ok_or(Error::NoSession)?;
-        self.call("TerminateSession", &(session.id.as_str(),))
-            .await?;
+        self.manager().await?.terminate_session(&session.id).await?;
+        Ok(())
+    }
+
+    /// Logs this user out the way their desktop does: GNOME's and Plasma's
+    /// session managers on `session_bus`, else logind ending the session.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Bus`] if the session manager or logind refuses, and
+    /// [`Error::NoSession`] for logind with no seated session.
+    pub async fn logout(
+        &self,
+        target: LogoutTarget,
+        session_bus: &zbus::Connection,
+        uid: u32,
+    ) -> Result<(), Error> {
+        match target {
+            // 1: log out without asking again, as the C++ does.
+            LogoutTarget::Gnome => GnomeSessionProxy::new(session_bus).await?.logout(1).await?,
+            LogoutTarget::Plasma => {
+                PlasmaShutdownProxy::new(session_bus)
+                    .await?
+                    .logout()
+                    .await?
+            }
+            LogoutTarget::Logind => self.terminate_session(uid).await?,
+        }
         Ok(())
     }
 }
@@ -326,7 +402,6 @@ impl PowerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn session(id: &str, uid: u32, seat: &str) -> Session {
         Session {
@@ -356,34 +431,6 @@ mod tests {
         assert!(
             !Capability::Unknown.is_offerable(),
             "a reply this build cannot read is not a promise"
-        );
-    }
-
-    #[test]
-    fn the_cpp_still_has_the_bug_this_port_declines_to_copy() {
-        // If the C++ is ever fixed, this fails and the divergence note in the
-        // module docs and in PARITY.md should go.
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("two levels below the repository root")
-            .join("src/server/src/services/power-manager/systemd/systemd-power-manager.cpp");
-        let cpp = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        let body = cpp
-            .split("bool SystemdPowerManager::can(")
-            .nth(1)
-            .expect("`can` is still there")
-            .split("\n}")
-            .next()
-            .expect("its body");
-        assert!(
-            body.contains("if (args.isEmpty()) return false;") && body.contains("return true;"),
-            "the C++ `can` no longer ignores logind's answer: {body}"
-        );
-        assert!(
-            !body.contains("\"yes\""),
-            "the C++ now reads the reply string; this port's divergence is over"
         );
     }
 

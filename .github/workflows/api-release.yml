@@ -41,8 +41,13 @@ jobs:
         run: npm install -g npm@latest && npm --version
 
       - name: Set version from tag
+        # Same shell-injection shape as #227: keep the input in the
+        # environment even though this workflow only receives the
+        # already-validated tag from release.yml.
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          TAG_NAME="${{ inputs.tag }}"
+          TAG_NAME="$INPUT_TAG"
 
           if [ -z "$TAG_NAME" ]; then
             echo "Error: No tag specified."

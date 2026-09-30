@@ -160,18 +160,25 @@ pub fn terminal_command(
     hold: bool,
 ) -> Vec<String> {
     let mut out = vec![terminal.to_owned()];
+    // Per the xdg-terminal-exec spec, a flag ending in `=` takes its value in
+    // the same argument (`--working-directory=/home`), as the C++ does.
+    let mut flag = |flag: &str, value: &str| {
+        if flag.ends_with('=') {
+            out.push(format!("{flag}{value}"));
+        } else {
+            out.push(flag.to_owned());
+            out.push(value.to_owned());
+        }
+    };
 
-    if let (Some(flag), Some(value)) = (&args.app_id, app_id) {
-        out.push(flag.clone());
-        out.push(value.to_owned());
+    if let (Some(name), Some(value)) = (&args.app_id, app_id) {
+        flag(name, value);
     }
-    if let (Some(flag), Some(value)) = (&args.title, title) {
-        out.push(flag.clone());
-        out.push(value.to_owned());
+    if let (Some(name), Some(value)) = (&args.title, title) {
+        flag(name, value);
     }
-    if let (Some(flag), Some(value)) = (&args.dir, dir) {
-        out.push(flag.clone());
-        out.push(value.to_owned());
+    if let (Some(name), Some(value)) = (&args.dir, dir) {
+        flag(name, value);
     }
     if hold && let Some(flag) = &args.hold {
         out.push(flag.clone());
@@ -181,4 +188,176 @@ pub fn terminal_command(
     }
     out.extend(command.iter().cloned());
     out
+}
+
+/// How an `xdg-terminals.list` line ranks its terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListState {
+    /// Chosen: the first one that is installed is the terminal.
+    Selected,
+    /// `+id`: kept out of the fallback's exclusions, not chosen.
+    Protected,
+    /// `-id`: never the fallback.
+    Excluded,
+}
+
+/// One `xdg-terminals.list` entry: a desktop-file id, an optional action,
+/// and its state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListEntry {
+    /// The desktop-file id, e.g. `org.gnome.Ptyxis.desktop`.
+    pub id: String,
+    /// The `:action`, if the line names one.
+    pub action: Option<String>,
+    /// Chosen, protected or excluded.
+    pub state: ListState,
+}
+
+/// The entries of one `xdg-terminals.list`, in order. Ports
+/// `parseXdgTerminalsList`: blank lines, comments and anything that does not
+/// name a `.desktop` are skipped.
+#[must_use]
+pub fn parse_terminals_list(text: &str) -> Vec<ListEntry> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && line.contains(".desktop"))
+        .map(|line| {
+            let (state, raw) = if let Some(raw) = line.strip_prefix('+') {
+                (ListState::Protected, raw)
+            } else if let Some(raw) = line.strip_prefix('-') {
+                (ListState::Excluded, raw)
+            } else {
+                (ListState::Selected, line)
+            };
+            let (id, action) = match raw.split_once(':') {
+                Some((id, action)) => (id, Some(action.to_owned())),
+                None => (raw, None),
+            };
+            ListEntry {
+                id: id.to_owned(),
+                action,
+                state,
+            }
+        })
+        .collect()
+}
+
+/// Where `xdg-terminals.list` files are read, first wins: each config
+/// directory's desktop-prefixed then plain list, then each data directory's
+/// `xdg-terminal-exec/` fallbacks. Ports `xdgTerminalsListPaths`.
+#[must_use]
+pub fn terminals_list_paths(
+    config_home: Option<&std::path::Path>,
+    config_dirs: &[std::path::PathBuf],
+    data_dirs: &[std::path::PathBuf],
+    desktops: &[String],
+) -> Vec<std::path::PathBuf> {
+    let desktops: Vec<String> = desktops.iter().map(|d| d.to_lowercase()).collect();
+    let mut paths = Vec::new();
+    for dir in config_home
+        .into_iter()
+        .chain(config_dirs.iter().map(std::path::PathBuf::as_path))
+    {
+        for desktop in &desktops {
+            paths.push(dir.join(format!("{desktop}-xdg-terminals.list")));
+        }
+        paths.push(dir.join("xdg-terminals.list"));
+    }
+    for dir in data_dirs {
+        for desktop in &desktops {
+            paths.push(
+                dir.join("xdg-terminal-exec")
+                    .join(format!("{desktop}-xdg-terminals.list")),
+            );
+        }
+        paths.push(dir.join("xdg-terminal-exec/xdg-terminals.list"));
+    }
+    paths
+}
+
+/// The comment `set_default_terminal` puts above the terminal it chose, and
+/// looks for to replace that choice next time.
+pub const TERMINALS_LIST_HEADER: &str = "# Configured by the Compass launcher";
+
+/// The header written before the rename (and by the C++ engine), treated as
+/// [`TERMINALS_LIST_HEADER`] and rewritten to it.
+pub const LEGACY_TERMINALS_LIST_HEADER: &str = "# Configured by the Vicinae launcher";
+
+/// `existing` with `app_id` (and its `:action`) made the chosen terminal.
+///
+/// Ports `xdgpp::setDefaultTerminal`. The first entry is what
+/// `xdg-terminal-exec` runs, so the choice goes above every other entry,
+/// under [`TERMINALS_LIST_HEADER`]. When the header is already there, the
+/// entry after it — the previous choice — is replaced rather than kept below,
+/// so choosing twice does not leave the old terminal as the next fallback.
+/// Every other line is kept as written, comments included.
+#[must_use]
+pub fn with_default_terminal(existing: &str, app_id: &str, action: Option<&str>) -> String {
+    let entry = match action {
+        Some(action) => format!("{app_id}:{action}\n"),
+        None => format!("{app_id}\n"),
+    };
+    let header = |buf: &mut String| {
+        if !buf.is_empty() {
+            buf.push('\n');
+        }
+        buf.push_str(TERMINALS_LIST_HEADER);
+        buf.push('\n');
+    };
+    let mut buf = String::new();
+    let mut inserted = false;
+    let mut replace_next = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        let is_header = trimmed == TERMINALS_LIST_HEADER || trimmed == LEGACY_TERMINALS_LIST_HEADER;
+        let line = if is_header {
+            TERMINALS_LIST_HEADER
+        } else {
+            line
+        };
+        if replace_next && !trimmed.is_empty() && !trimmed.starts_with('#') {
+            replace_next = false;
+            inserted = true;
+            buf.push_str(&entry);
+            continue;
+        }
+        if !inserted && !trimmed.is_empty() && (!trimmed.starts_with('#') || is_header) {
+            if is_header {
+                replace_next = true;
+            } else {
+                header(&mut buf);
+                buf.push_str(&entry);
+                inserted = true;
+            }
+        }
+        buf.push_str(line);
+        buf.push('\n');
+    }
+    if !inserted {
+        header(&mut buf);
+        buf.push_str(&entry);
+    }
+    buf
+}
+
+/// Makes `app_id` the chosen terminal in the `xdg-terminals.list` at `path`,
+/// creating the file (and its directory) when missing.
+///
+/// # Errors
+///
+/// Whatever reading or writing the file reports.
+pub fn set_default_terminal(
+    path: &std::path::Path,
+    app_id: &str,
+    action: Option<&str>,
+) -> std::io::Result<()> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, with_default_terminal(&existing, app_id, action))
 }

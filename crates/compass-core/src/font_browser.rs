@@ -25,7 +25,7 @@ pub const PREVIEW_TITLE: &str = "Preview font";
 /// The action that copies the family name.
 pub const COPY_FAMILY_TITLE: &str = "Copy font family";
 /// The action that makes this the launcher's own font.
-pub const SET_APP_FONT_TITLE: &str = "Set as vicinae font";
+pub const SET_APP_FONT_TITLE: &str = "Set as Compass font";
 /// `Keybind::CopyAction`'s config id, which "Copy font family" uses.
 pub const COPY_KEYBIND: &str = "action.copy";
 

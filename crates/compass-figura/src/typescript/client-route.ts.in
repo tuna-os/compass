@@ -1,0 +1,3 @@
+
+  	route(msg: string): void { this.transport.dispatchMessage(msg); }
+  

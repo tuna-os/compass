@@ -21,6 +21,7 @@
 //! [spec]: https://specifications.freedesktop.org/desktop-entry-spec/latest/
 
 pub mod bookmarks;
+pub mod brand;
 pub mod desktop_file;
 pub mod entry;
 pub mod exec;
@@ -28,6 +29,7 @@ pub mod icon;
 pub mod locale;
 pub mod mime_subclasses;
 pub mod mimeapps;
+pub mod mimeapps_writer;
 pub mod reader;
 pub mod scan;
 pub mod terminal;

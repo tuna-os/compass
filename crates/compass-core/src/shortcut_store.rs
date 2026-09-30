@@ -247,6 +247,12 @@ impl ShortcutStore {
 /// `generatePrefixedId("sct")`: the prefix, a dash, and twelve hex characters.
 #[must_use]
 pub fn generate_id() -> String {
+    generate_prefixed_id(ID_PREFIX)
+}
+
+/// `generatePrefixedId(prefix)`: `prefix`, a dash, and twelve hex characters.
+#[must_use]
+pub fn generate_prefixed_id(prefix: &str) -> String {
     let mut bytes = [0u8; ID_LENGTH];
     // A failure here would mean the OS has no entropy source at all. The C++
     // uses a `std::random_device`-seeded mt19937 and cannot report one either;
@@ -260,8 +266,8 @@ pub fn generate_id() -> String {
         }
     }
 
-    let mut id = String::with_capacity(ID_PREFIX.len() + 1 + ID_LENGTH);
-    id.push_str(ID_PREFIX);
+    let mut id = String::with_capacity(prefix.len() + 1 + ID_LENGTH);
+    id.push_str(prefix);
     id.push('-');
     for byte in bytes {
         id.push(char::from_digit(u32::from(byte % 16), 16).unwrap_or('0'));

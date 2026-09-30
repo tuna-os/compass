@@ -247,6 +247,34 @@ pub fn plan(command: &PowerCommand, confirm: bool, custom_program: Option<&str>)
     steps
 }
 
+/// Whether `command` asks first, given its stored preferences
+/// (`providers.power.entrypoints.<id>.preferences`): the `confirm` checkbox
+/// when it is set, else the command's own default. A value that is not a
+/// boolean is not a setting, as `QVariant::toBool` would read a string as
+/// false where the person meant nothing at all.
+#[must_use]
+pub fn should_confirm(
+    command: &PowerCommand,
+    preferences: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> bool {
+    preferences
+        .and_then(|preferences| preferences.get(CONFIRM_PREFERENCE))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(command.confirm_by_default)
+}
+
+/// The `customProgram` preference, when it names a program: an empty or
+/// missing one means the command does its own thing.
+#[must_use]
+pub fn custom_program(
+    preferences: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Option<&str> {
+    preferences
+        .and_then(|preferences| preferences.get(CUSTOM_PROGRAM_PREFERENCE))
+        .and_then(serde_json::Value::as_str)
+        .filter(|program| !program.is_empty())
+}
+
 /// What the toast says when a custom program fails.
 #[must_use]
 pub fn custom_program_failure(program: &str) -> String {

@@ -14,6 +14,9 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 compass-xdg.workspace = true
+# A window's native handles, for `WindowMaterial` (the 0.6 iced and winit lend;
+# every platform has them, so the seam holds).
+raw-window-handle = "0.6"
 
 [dev-dependencies]
 tempfile.workspace = true

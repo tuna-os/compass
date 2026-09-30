@@ -28,7 +28,7 @@
 //!   than we can use.
 //! - [`Availability::NotQueryable`] — we could not ask: no session bus, the
 //!   probe timed out, or the answer was malformed. This says nothing about
-//!   whether a backend exists, and `vicinae doctor` must not claim otherwise.
+//!   whether a backend exists, and `compass doctor` must not claim otherwise.
 //!
 //! [`PortalCapabilities::degraded`] turns that into the list of product
 //! features the user actually loses.
@@ -107,8 +107,8 @@ pub use file_chooser::{FileChooserOutcome, FileChooserPortal, FileChooserRequest
 pub use open_uri::{OpenOutcome, OpenUriPortal};
 pub use settings::{ColorScheme, SettingsPortal};
 pub use shortcuts::{
-    BoundShortcut, GlobalShortcutsSession, Modifiers, ShortcutDescriptor, ShortcutEvent,
-    ShortcutEvents, ShortcutsOutcome, Trigger, TriggerParseError,
+    BoundShortcut, GlobalShortcutsSession, Modifiers, ShortcutBinder, ShortcutDescriptor,
+    ShortcutEvent, ShortcutEvents, ShortcutsOutcome, Trigger, TriggerParseError,
 };
 
 /// Where to find the bus, and how long to wait.

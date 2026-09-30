@@ -7,19 +7,19 @@
 use compass_clipboard::kind::{EncryptionType, OfferKind};
 use compass_clipboard::schema;
 use compass_clipboard::store::{self, Error, ListSettings};
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::{Connection, named_params};
 
 const KEY: &[u8] = &[0x33; 32];
 
 struct Seeded {
     _dir: tempfile::TempDir,
-    db: Database,
+    db: Connection,
 }
 
 /// A database with the schema applied and nothing in it.
 fn empty() -> Seeded {
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let db = Database::open(&dir.path().join("clip.db"), KEY).expect("open");
+    let db = compass_sqlcipher_sys::open(&dir.path().join("clip.db"), KEY).expect("open");
     schema::run(&db).expect("migrations");
     Seeded { _dir: dir, db }
 }
@@ -27,7 +27,7 @@ fn empty() -> Seeded {
 /// Insert one selection with one offer, and index `content` for search.
 #[allow(clippy::too_many_arguments)]
 fn insert(
-    db: &Database,
+    db: &Connection,
     id: &str,
     preview: &str,
     content: &str,
@@ -36,47 +36,42 @@ fn insert(
     pinned_at: Option<i64>,
     keywords: &str,
 ) {
-    let mut stmt = db
-        .prepare(
-            "INSERT INTO selection (id, hash_md5, preferred_mime_type, offer_count, created_at, \
-             updated_at, pinned_at, kind, keywords) \
-             VALUES (:id, :hash, 'text/plain', 1, :t, :t, :pinned, :kind, :kw)",
-        )
-        .expect("prepare");
-    stmt.bind_text(":id", id).expect("bind");
-    stmt.bind_text(":hash", &format!("hash-{id}"))
-        .expect("bind");
-    stmt.bind_int64(":t", updated_at).expect("bind");
-    stmt.bind_int64(":pinned", pinned_at.unwrap_or(0))
-        .expect("bind");
-    stmt.bind_int64(":kind", kind.to_stored()).expect("bind");
-    stmt.bind_text(":kw", keywords).expect("bind");
-    stmt.step().expect("insert selection");
+    let hash = format!("hash-{id}");
+    db.execute(
+        "INSERT INTO selection (id, hash_md5, preferred_mime_type, offer_count, created_at, \
+         updated_at, pinned_at, kind, keywords) \
+         VALUES (:id, :hash, 'text/plain', 1, :t, :t, :pinned, :kind, :kw)",
+        named_params! {
+            ":id": id,
+            ":hash": hash,
+            ":t": updated_at,
+            ":pinned": pinned_at.unwrap_or(0),
+            ":kind": kind.to_stored(),
+            ":kw": keywords,
+        },
+    )
+    .expect("insert selection");
 
-    let mut stmt = db
-        .prepare(
-            "INSERT INTO data_offer (id, selection_id, mime_type, text_preview, \
-             content_hash_md5, size, encryption_type, kind, url_host) \
-             VALUES (:oid, :id, 'text/plain', :preview, :hash, :size, 0, :kind, NULL)",
-        )
-        .expect("prepare");
-    stmt.bind_text(":oid", &format!("offer-{id}"))
-        .expect("bind");
-    stmt.bind_text(":id", id).expect("bind");
-    stmt.bind_text(":preview", preview).expect("bind");
-    stmt.bind_text(":hash", &format!("hash-{id}"))
-        .expect("bind");
-    stmt.bind_int64(":size", preview.len() as i64)
-        .expect("bind");
-    stmt.bind_int64(":kind", kind.to_stored()).expect("bind");
-    stmt.step().expect("insert offer");
+    db.execute(
+        "INSERT INTO data_offer (id, selection_id, mime_type, text_preview, \
+         content_hash_md5, size, encryption_type, kind, url_host) \
+         VALUES (:oid, :id, 'text/plain', :preview, :hash, :size, 0, :kind, NULL)",
+        named_params! {
+            ":oid": format!("offer-{id}"),
+            ":id": id,
+            ":preview": preview,
+            ":hash": hash,
+            ":size": preview.len() as i64,
+            ":kind": kind.to_stored(),
+        },
+    )
+    .expect("insert offer");
 
-    let mut stmt = db
-        .prepare("INSERT INTO selection_fts (selection_id, content) VALUES (:id, :c)")
-        .expect("prepare");
-    stmt.bind_text(":id", id).expect("bind");
-    stmt.bind_text(":c", content).expect("bind");
-    stmt.step().expect("index content");
+    db.execute(
+        "INSERT INTO selection_fts (selection_id, content) VALUES (:id, :c)",
+        named_params! { ":id": id, ":c": content },
+    )
+    .expect("index content");
 }
 
 fn ids(page: &store::Page) -> Vec<&str> {
@@ -474,11 +469,10 @@ fn a_selection_indexed_twice_appears_once() {
         None,
         "",
     );
-    let mut stmt = s
-        .db
-        .prepare("INSERT INTO selection_fts (selection_id, content) VALUES ('dup', 'hello again')")
-        .expect("prepare");
-    stmt.step().expect("index a second row");
+    s.db.execute_batch(
+        "INSERT INTO selection_fts (selection_id, content) VALUES ('dup', 'hello again')",
+    )
+    .expect("index a second row");
 
     let page = store::query(
         &s.db,

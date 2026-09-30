@@ -333,3 +333,79 @@ fn an_invalid_icon_is_not_builtin() {
     assert!(!url.is_valid());
     assert!(!url.is_builtin());
 }
+
+/// A disk with one builtin icon, one file, one asset and one theme icon.
+struct Probe;
+
+impl compass_core::image_url::SourceLookup for Probe {
+    fn builtin(&self, name: &str) -> bool {
+        name == "star"
+    }
+    fn file(&self, path: &str) -> bool {
+        path == "/opt/logo.png"
+    }
+    fn asset(&self, relative: &str) -> Option<String> {
+        (relative == "icon").then(|| "/ext/assets/icon.png".to_owned())
+    }
+    fn themed(&self, name: &str) -> bool {
+        name == "firefox"
+    }
+}
+
+#[test]
+fn a_bare_source_is_read_as_image_url_reads_one() {
+    let read = |source: &str| {
+        let url = ImageUrl::from_source(source, &Probe);
+        (url.kind, url.name)
+    };
+    assert_eq!(read("🔥"), (ImageUrlType::Emoji, "🔥".into()));
+    let symbol = compass_core::glyph::glyphs()
+        .iter()
+        .find(|g| g.kind == compass_core::glyph::Kind::Symbol)
+        .expect("a symbol in the table")
+        .character;
+    assert_eq!(read(symbol), (ImageUrlType::Symbol, symbol.into()));
+    assert_eq!(read("star"), (ImageUrlType::Builtin, "star".into()));
+    assert_eq!(
+        ImageUrl::from_source("star", &Probe).fill,
+        Some(ColorLike::Semantic("Foreground".into())),
+        "a builtin is filled in the text colour"
+    );
+    assert_eq!(
+        read("/opt/logo.png"),
+        (ImageUrlType::Local, "/opt/logo.png".into())
+    );
+    assert_eq!(
+        read("icon"),
+        (ImageUrlType::Local, "/ext/assets/icon.png".into())
+    );
+    assert_eq!(read("firefox"), (ImageUrlType::System, "firefox".into()));
+    assert_eq!(
+        read("file:///tmp/a%20b.png"),
+        (ImageUrlType::Local, "/tmp/a b.png".into())
+    );
+    assert_eq!(
+        read("https://example.com/a.png"),
+        (ImageUrlType::Http, "https://example.com/a.png".into())
+    );
+    assert_eq!(read("data:image/png;base64,AA").0, ImageUrlType::DataUri);
+    assert_eq!(
+        read("icon://omnicast/link?fill=red").0,
+        ImageUrlType::Builtin,
+        "an icon URL is itself"
+    );
+    assert!(!ImageUrl::from_source("nothing-at-all", &Probe).is_valid());
+}
+
+#[test]
+fn a_remote_images_own_query_survives_the_round_trip() {
+    let url = ImageUrl::http("https://example.com/a.png?size=64#top");
+    let printed = url.to_url();
+    assert!(!printed.contains("a.png?size"), "{printed}");
+    assert_eq!(ImageUrl::parse(&printed).name, url.name);
+    assert_eq!(
+        ImageUrl::new(ImageUrlType::Emoji, "🎉").to_url(),
+        "icon://emoji/🎉",
+        "Unicode is printed as written"
+    );
+}

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use zbus::zvariant::{OwnedValue, Value};
 
-use crate::contract::window_key;
+use crate::contract::{window_key, workspace_key};
 use crate::error::{Result, ShellError};
 
 /// Opaque handle for a window, as minted by the shell extension.
@@ -45,6 +45,51 @@ pub struct Window {
     pub workspace: Option<i32>,
     /// Whether the window advertises that it can be closed.
     pub can_close: bool,
+    /// Whether the window is full-screen (contract 3; `false` before).
+    pub fullscreen: bool,
+    /// Its frame, when the extension reports one (contract 3).
+    pub frame: Option<Frame>,
+}
+
+/// A window's frame in stage coordinates, as `Meta.Window.get_frame_rect`
+/// gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct Frame {
+    /// Left edge.
+    pub x: i32,
+    /// Top edge.
+    pub y: i32,
+    /// Width.
+    pub width: i32,
+    /// Height.
+    pub height: i32,
+}
+
+/// One workspace as reported by `ListWorkspaces` (contract 4).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct Workspace {
+    /// Its position from 0, and what `ActivateWorkspace` takes.
+    pub index: i32,
+    /// What GNOME calls it; empty when unnamed.
+    pub name: String,
+    /// Whether it is the one shown.
+    pub active: bool,
+    /// Whether a window on it is full-screen.
+    pub has_fullscreen: bool,
+}
+
+impl Workspace {
+    /// Decode one `a{sv}` entry, on [`Window::from_dict`]'s rules.
+    pub fn from_dict(dict: &WindowDict) -> Result<Self> {
+        Ok(Self {
+            index: as_i32(dict, workspace_key::INDEX)?
+                .ok_or_else(|| missing(workspace_key::INDEX))?,
+            name: as_string(dict, workspace_key::NAME)?.unwrap_or_default(),
+            active: as_bool(dict, workspace_key::ACTIVE)?.unwrap_or(false),
+            has_fullscreen: as_bool(dict, workspace_key::HAS_FULLSCREEN)?.unwrap_or(false),
+        })
+    }
 }
 
 /// A clipboard selection: one blob plus the mime type describing it.
@@ -102,14 +147,12 @@ pub struct ClipboardChange {
 pub(crate) type WindowDict = HashMap<String, OwnedValue>;
 
 fn missing(key: &str) -> ShellError {
-    ShellError::Protocol(format!(
-        "window entry is missing the required `{key}` field"
-    ))
+    ShellError::Protocol(format!("an entry is missing the required `{key}` field"))
 }
 
 fn wrong_type(key: &str, want: &str, got: &Value<'_>) -> ShellError {
     ShellError::Protocol(format!(
-        "window field `{key}` should be {want} but the extension sent signature `{}`",
+        "field `{key}` should be {want} but the extension sent signature `{}`",
         got.value_signature()
     ))
 }
@@ -171,6 +214,22 @@ impl Window {
             focused: as_bool(dict, window_key::FOCUSED)?.unwrap_or(false),
             workspace: as_i32(dict, window_key::WORKSPACE)?.filter(|w| *w >= 0),
             can_close: as_bool(dict, window_key::CAN_CLOSE)?.unwrap_or(true),
+            fullscreen: as_bool(dict, window_key::FULLSCREEN)?.unwrap_or(false),
+            // All four or none: a partial frame is not a frame.
+            frame: match (
+                as_i32(dict, window_key::X)?,
+                as_i32(dict, window_key::Y)?,
+                as_i32(dict, window_key::WIDTH)?,
+                as_i32(dict, window_key::HEIGHT)?,
+            ) {
+                (Some(x), Some(y), Some(width), Some(height)) => Some(Frame {
+                    x,
+                    y,
+                    width,
+                    height,
+                }),
+                _ => None,
+            },
         })
     }
 }
@@ -202,6 +261,30 @@ mod tests {
         assert!(!window.focused);
         assert_eq!(window.workspace, None);
         assert!(window.can_close, "can_close defaults to true");
+        assert!(!window.fullscreen);
+        assert_eq!(window.frame, None);
+    }
+
+    #[test]
+    fn a_frame_needs_all_four_edges() {
+        let mut dict = base();
+        for (key, value) in [("x", 10), ("y", 20), ("width", 800)] {
+            dict.insert(key.to_owned(), OwnedValue::from(value));
+        }
+        assert_eq!(Window::from_dict(&dict).expect("decodes").frame, None);
+        dict.insert("height".to_owned(), OwnedValue::from(600i32));
+        dict.insert("fullscreen".to_owned(), OwnedValue::from(true));
+        let window = Window::from_dict(&dict).expect("decodes");
+        assert_eq!(
+            window.frame,
+            Some(Frame {
+                x: 10,
+                y: 20,
+                width: 800,
+                height: 600
+            })
+        );
+        assert!(window.fullscreen);
     }
 
     #[test]
@@ -231,6 +314,25 @@ mod tests {
         );
         let err = Window::from_dict(&dict).expect_err("must not decode");
         assert!(err.to_string().contains("should be u"), "{err}");
+    }
+
+    #[test]
+    fn a_workspace_needs_its_index_and_defaults_the_rest() {
+        let dict = HashMap::from([("index".to_owned(), OwnedValue::from(2i32))]);
+        let workspace = Workspace::from_dict(&dict).expect("decodes");
+        assert_eq!(
+            (
+                workspace.index,
+                workspace.name.as_str(),
+                workspace.active,
+                workspace.has_fullscreen
+            ),
+            (2, "", false, false)
+        );
+        let err = Workspace::from_dict(&HashMap::new()).expect_err("no index");
+        assert!(err.to_string().contains("index"), "{err}");
+        let mistyped = HashMap::from([("index".to_owned(), OwnedValue::from(2u32))]);
+        assert!(Workspace::from_dict(&mistyped).is_err());
     }
 
     #[test]

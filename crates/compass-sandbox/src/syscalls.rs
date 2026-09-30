@@ -184,7 +184,56 @@ pub fn number_for(name: &str) -> Result<i64, Error> {
         .ok_or_else(|| Error::UnknownSyscall(name.to_owned()))
 }
 
-/// Installs a filter denying `numbers` on the calling thread, for good.
+/// The socket types a worker may not open, by the low bits of `socket`'s
+/// second argument (the rest are `SOCK_NONBLOCK` and `SOCK_CLOEXEC`).
+///
+/// A raw socket reads and forges traffic for every process on the machine.
+/// An unprivileged process is refused one by the kernel already, but only for
+/// want of `CAP_NET_RAW`, which is a property of how the engine was started
+/// rather than of the sandbox: run as root, or with the capability, it would
+/// be granted. `socket` itself cannot go on the denylist, since every
+/// connection Node makes starts with one, so these are argument rules.
+pub const DENIED_SOCKET_TYPES: &[(&str, i32)] = &[
+    ("SOCK_RAW", libc::SOCK_RAW),
+    // `libc` deprecates the constant (it is obsolete in favour of AF_PACKET),
+    // which is exactly why an old program might still ask for it.
+    ("SOCK_PACKET", 10),
+];
+
+/// The address families a worker may not open a socket in, whatever the type:
+/// `AF_PACKET` is link-layer access, raw in every type it offers.
+pub const DENIED_SOCKET_FAMILIES: &[(&str, i32)] = &[("AF_PACKET", libc::AF_PACKET)];
+
+/// The low bits of `socket`'s type argument that name the type.
+const SOCKET_TYPE_MASK: u64 = 0xf;
+
+fn socket_rules() -> Result<Vec<seccompiler::SeccompRule>, Error> {
+    use seccompiler::{SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompRule};
+    let by_type = DENIED_SOCKET_TYPES.iter().map(|&(_, kind)| {
+        SeccompCondition::new(
+            1,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::MaskedEq(SOCKET_TYPE_MASK),
+            u64::from(kind.unsigned_abs()),
+        )
+    });
+    let by_family = DENIED_SOCKET_FAMILIES.iter().map(|&(_, family)| {
+        SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Eq,
+            u64::from(family.unsigned_abs()),
+        )
+    });
+    by_type
+        .chain(by_family)
+        .map(|condition| Ok(SeccompRule::new(vec![condition?])?))
+        .collect()
+}
+
+/// Installs a filter denying `numbers` on the calling thread, for good, and
+/// the raw sockets [`DENIED_SOCKET_TYPES`] and [`DENIED_SOCKET_FAMILIES`]
+/// name.
 ///
 /// Everything unnamed stays allowed — see the module docs.
 ///
@@ -199,8 +248,13 @@ pub fn deny(numbers: &[i64]) -> Result<(), Error> {
         other => return Err(Error::UnsupportedArch(other.to_owned())),
     };
 
-    let rules: BTreeMap<i64, Vec<seccompiler::SeccompRule>> =
+    let mut rules: BTreeMap<i64, Vec<seccompiler::SeccompRule>> =
         numbers.iter().map(|number| (*number, Vec::new())).collect();
+    // An empty rule list denies the call outright; a socket is only denied
+    // when one of its rules matches, so it must not already be listed bare.
+    if let std::collections::btree_map::Entry::Vacant(socket) = rules.entry(libc::SYS_socket) {
+        socket.insert(socket_rules()?);
+    }
 
     let program: BpfProgram = SeccompFilter::new(
         rules,

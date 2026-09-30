@@ -218,3 +218,138 @@ fn insert_placeholder(parsed: &mut Link, placeholder: &Placeholder) {
 
     parsed.placeholders.push(placeholder.clone());
 }
+
+/// The provider id quicklinks are listed under in root search, and the prefix
+/// of their entrypoint ids: `shortcuts:<id>`.
+pub const SHORTCUTS_PROVIDER_ID: &str = "shortcuts";
+
+/// What the reserved placeholders stand for when a link is expanded.
+///
+/// Each is asked for only when the link has that placeholder, so reading the
+/// clipboard or the selection costs nothing for a link that does not use it.
+pub trait Reserved {
+    /// The clipboard's text, `{clipboard}`.
+    fn clipboard(&self) -> Option<String>;
+    /// The selected text, `{selection}` and `{selected}`.
+    fn selection(&self) -> Option<String>;
+    /// A fresh UUID, `{uuid}`, without braces.
+    fn uuid(&self) -> String;
+}
+
+/// Expands a parsed link with `arguments`, in the order its argument
+/// placeholders appear, as `expandShortcut` does.
+///
+/// Text is kept, reserved placeholders take their value from `reserved` (an
+/// unavailable clipboard or selection expands to nothing, as the C++'s does),
+/// and every other placeholder takes the next argument.
+///
+/// Two differences from the C++, both in PARITY (Shortcuts): an argument left
+/// empty takes its `default=` (the C++ drops the default on the floor, so an
+/// optional argument could only ever expand to nothing), and `{date}`, which
+/// is reserved and so is not an argument, expands to nothing instead of
+/// falling into the argument branch and eating the next argument's value.
+#[must_use]
+pub fn expand(link: &Link, arguments: &[String], reserved: &dyn Reserved) -> String {
+    let mut expanded = String::with_capacity(link.raw.len());
+    let mut next_argument = 0usize;
+    for part in &link.parts {
+        match part {
+            UrlPart::Text(text) => expanded.push_str(text),
+            UrlPart::Placeholder(placeholder) => match placeholder.id.as_str() {
+                "clipboard" => expanded.push_str(&reserved.clipboard().unwrap_or_default()),
+                "selected" | "selection" => {
+                    expanded.push_str(&reserved.selection().unwrap_or_default());
+                }
+                "uuid" => expanded.push_str(&reserved.uuid()),
+                id if RESERVED_PLACEHOLDER_IDS.contains(&id) => {}
+                _ => {
+                    match arguments.get(next_argument) {
+                        Some(value) if !value.is_empty() => expanded.push_str(value),
+                        _ => {
+                            if let Some(argument) = link.arguments.get(next_argument) {
+                                expanded.push_str(&argument.default_value);
+                            }
+                        }
+                    }
+                    next_argument += 1;
+                }
+            },
+        }
+    }
+    expanded
+}
+
+/// A quicklink's root-search row: its name as the title and its link as a
+/// keyword (`RootShortcutItem::keywords`), under the `shortcuts` provider.
+#[must_use]
+pub fn root_item(id: &str, name: &str, url: &str) -> crate::root_items::RootItem {
+    crate::root_items::RootItem {
+        id: crate::root_items::entrypoint_id(SHORTCUTS_PROVIDER_ID, id),
+        title: name.to_owned(),
+        unlocalized_title: None,
+        subtitle: String::new(),
+        keywords: vec![url.to_owned()],
+        meta: crate::root_items::RootItemMeta {
+            provider_id: SHORTCUTS_PROVIDER_ID.to_owned(),
+            enabled: true,
+            ..crate::root_items::RootItemMeta::default()
+        },
+    }
+}
+
+#[cfg(test)]
+mod expand_tests {
+    use super::*;
+
+    struct Fixed;
+
+    impl Reserved for Fixed {
+        fn clipboard(&self) -> Option<String> {
+            Some("copied".to_owned())
+        }
+        fn selection(&self) -> Option<String> {
+            None
+        }
+        fn uuid(&self) -> String {
+            "00000000-0000-4000-8000-000000000000".to_owned()
+        }
+    }
+
+    #[test]
+    fn arguments_fill_their_placeholders_in_order() {
+        let link =
+            parse_link("https://x.test/?q={query}&lang={argument name=\"lang\" default=\"en\"}");
+        assert_eq!(
+            expand(&link, &["rust".into(), "fr".into()], &Fixed),
+            "https://x.test/?q=rust&lang=fr"
+        );
+        assert_eq!(
+            expand(&link, &["rust".into()], &Fixed),
+            "https://x.test/?q=rust&lang=en",
+            "a missing argument takes its default"
+        );
+        assert_eq!(
+            expand(&link, &["rust".into(), String::new()], &Fixed),
+            "https://x.test/?q=rust&lang=en",
+            "so does an empty one"
+        );
+    }
+
+    #[test]
+    fn reserved_placeholders_take_their_values() {
+        let link = parse_link("a{clipboard}b{selection}c{uuid}d{date}e{x}");
+        assert_eq!(
+            expand(&link, &["arg".into()], &Fixed),
+            "acopiedbc00000000-0000-4000-8000-000000000000dearg",
+            "{{date}} does not eat the argument meant for {{x}}"
+        );
+    }
+
+    #[test]
+    fn a_link_is_found_by_its_name_and_its_url() {
+        let item = root_item("sct-1", "Search GitHub", "https://github.com/search?q={q}");
+        assert_eq!(item.id, "shortcuts:sct-1");
+        assert_eq!(item.meta.provider_id, SHORTCUTS_PROVIDER_ID);
+        assert_eq!(item.keywords, ["https://github.com/search?q={q}"]);
+    }
+}

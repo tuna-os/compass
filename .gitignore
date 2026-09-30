@@ -4,25 +4,18 @@
 /build-*
 /.build
 .vscode
-CMakeUserPresets.json
 .tmp
 extension-manager/runtime/node_modules
-/cmake-build-debug
-/CMakeFiles
 /.idea
 /vgcore*
 .env
 .direnv
 
 *.tar.gz
-!extra/icons/vicinae-icon-theme.tar.gz
 /dist
 
-__cmake*
 *.tgz
 
-/qt6
-**/.qmlls.ini
 
 /AppDir
 *AppImage

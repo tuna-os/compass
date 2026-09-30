@@ -6,9 +6,10 @@
 //! claimed.
 
 /// Where an issue about the launcher is filed.
-pub const CREATE_ISSUE_URL: &str = "https://github.com/vicinaehq/vicinae/issues/new";
+pub const CREATE_ISSUE_URL: &str = "https://github.com/tuna-os/compass/issues/new";
 
-/// Where an issue about an extension is filed.
+/// Where an issue about an extension is filed: the Vicinae store's
+/// extensions repository, which is where store extensions live.
 ///
 /// A different repository *and* a different path — `/issues/new/choose`
 /// rather than `/issues/new` — because that repository offers templates and
@@ -90,6 +91,42 @@ pub fn os_description(
         Some((pretty_name, version)) => format!("{pretty_name} - {version}"),
         None => format!("{product_name} ({architecture})"),
     }
+}
+
+/// `OsRelease`'s `prettyName()` and `version()`: `PRETTY_NAME` and `VERSION`
+/// from an `os-release` file's text, unquoted; `None` without a pretty name,
+/// which is when the C++ calls the file invalid.
+///
+/// Hand-read rather than through a crate: two `KEY=value` lines, and the
+/// crates for it bring a file reader and error types this does not need
+/// (`CRATE-AUDIT.md`).
+#[must_use]
+pub fn parse_os_release(text: &str) -> Option<(String, String)> {
+    let value = |key: &str| {
+        text.lines().find_map(|line| {
+            let rest = line.trim().strip_prefix(key)?.strip_prefix('=')?;
+            let unquoted = rest
+                .strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+                .or_else(|| {
+                    rest.strip_prefix('\'')
+                        .and_then(|inner| inner.strip_suffix('\''))
+                })
+                .unwrap_or(rest);
+            Some(unquoted.to_owned())
+        })
+    };
+    let pretty = value("PRETTY_NAME").filter(|name| !name.is_empty())?;
+    Some((pretty, value("VERSION").unwrap_or_default()))
+}
+
+/// The whole bug-report link: [`CREATE_ISSUE_URL`] with [`issue_query`]'s
+/// parameters, as `makeVicinaeBugReportUrl`.
+#[must_use]
+pub fn report_url(title: Option<&str>, info: &SystemInfo) -> String {
+    let body = issue_body(info);
+    url::Url::parse_with_params(CREATE_ISSUE_URL, issue_query(title, &body))
+        .map_or_else(|_| CREATE_ISSUE_URL.to_owned(), |url| url.to_string())
 }
 
 /// Fill the issue template in.

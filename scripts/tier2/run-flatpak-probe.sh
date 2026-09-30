@@ -53,7 +53,7 @@ log "running it"
 # --version rather than the launcher: see the header. It still exercises the
 # whole sandbox path — bwrap, the runtime, the app's entrypoint — which is what
 # is actually in question.
-flatpak --user run --command=vicinae com.vicinae.Vicinae --version \
+flatpak --user run --command=compass org.tunaos.compass --version \
   || fail "the Flatpak installed but would not run"
 
 log "PROBE PASSED"

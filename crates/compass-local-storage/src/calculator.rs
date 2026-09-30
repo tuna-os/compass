@@ -21,7 +21,7 @@
 //! and it is the kind of thing that looks like an accident until it is
 //! written down.
 
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::{Connection, named_params};
 
 use crate::Error;
 
@@ -73,13 +73,13 @@ pub struct Record {
 /// The history table.
 #[derive(Debug)]
 pub struct History<'a> {
-    db: &'a Database,
+    db: &'a Connection,
 }
 
 impl<'a> History<'a> {
     /// Wraps an already-migrated `vicinae` database.
     #[must_use]
-    pub fn new(db: &'a Database) -> Self {
+    pub fn new(db: &'a Connection) -> Self {
         Self { db }
     }
 
@@ -100,16 +100,18 @@ impl<'a> History<'a> {
         answer: &str,
         created_at: i64,
     ) -> Result<(), Error> {
-        let mut stmt = self.db.prepare(
-            "INSERT INTO calculator_history (id, type_hint, question, answer, created_at) \
-             VALUES (:id, :type_hint, :question, :answer, :epoch)",
-        )?;
-        stmt.bind_text(":id", id)?;
-        stmt.bind_int64(":type_hint", answer_type as i64)?;
-        stmt.bind_text(":question", question)?;
-        stmt.bind_text(":answer", answer)?;
-        stmt.bind_int64(":epoch", created_at)?;
-        stmt.step()?;
+        self.db
+            .prepare_cached(
+                "INSERT INTO calculator_history (id, type_hint, question, answer, created_at) \
+                 VALUES (:id, :type_hint, :question, :answer, :epoch)",
+            )?
+            .execute(named_params! {
+                ":id": id,
+                ":type_hint": answer_type as i64,
+                ":question": question,
+                ":answer": answer,
+                ":epoch": created_at,
+            })?;
         Ok(())
     }
 
@@ -120,15 +122,16 @@ impl<'a> History<'a> {
     /// [`Error::Database`] if the query fails, [`Error::UnknownValueType`] if
     /// a row carries a `type_hint` this build does not know.
     pub fn list(&self) -> Result<Vec<Record>, Error> {
-        let mut stmt = self.db.prepare(
+        let mut stmt = self.db.prepare_cached(
             "SELECT id, type_hint, question, answer, created_at, pinned_at \
              FROM calculator_history ORDER BY pinned_at DESC, created_at DESC",
         )?;
+        let mut rows = stmt.query([])?;
 
         let mut out = Vec::new();
-        while stmt.step()? {
-            let id = stmt.column_text(0).unwrap_or_default();
-            let raw = stmt.column_int64(1);
+        while let Some(row) = rows.next()? {
+            let id = row.get::<_, Option<String>>(0)?.unwrap_or_default();
+            let raw = row.get::<_, Option<i64>>(1)?.unwrap_or(0);
             let answer_type = AnswerType::from_i64(raw).ok_or_else(|| Error::UnknownValueType {
                 namespace: "calculator_history".to_owned(),
                 key: id.clone(),
@@ -138,10 +141,10 @@ impl<'a> History<'a> {
             out.push(Record {
                 id,
                 answer_type,
-                question: stmt.column_text(2).unwrap_or_default(),
-                answer: stmt.column_text(3).unwrap_or_default(),
-                created_at: stmt.column_int64(4),
-                pinned_at: (!stmt.is_null(5)).then(|| stmt.column_int64(5)),
+                question: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                answer: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                created_at: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                pinned_at: row.get(5)?,
             });
         }
         Ok(out)
@@ -153,12 +156,9 @@ impl<'a> History<'a> {
     ///
     /// [`Error::Database`] if the write fails.
     pub fn pin(&self, id: &str, now: i64) -> Result<(), Error> {
-        let mut stmt = self
-            .db
-            .prepare("UPDATE calculator_history SET pinned_at = :epoch WHERE id = :id")?;
-        stmt.bind_text(":id", id)?;
-        stmt.bind_int64(":epoch", now)?;
-        stmt.step()?;
+        self.db
+            .prepare_cached("UPDATE calculator_history SET pinned_at = :epoch WHERE id = :id")?
+            .execute(named_params! { ":id": id, ":epoch": now })?;
         Ok(())
     }
 
@@ -168,11 +168,9 @@ impl<'a> History<'a> {
     ///
     /// [`Error::Database`] if the write fails.
     pub fn unpin(&self, id: &str) -> Result<(), Error> {
-        let mut stmt = self
-            .db
-            .prepare("UPDATE calculator_history SET pinned_at = NULL WHERE id = :id")?;
-        stmt.bind_text(":id", id)?;
-        stmt.step()?;
+        self.db
+            .prepare_cached("UPDATE calculator_history SET pinned_at = NULL WHERE id = :id")?
+            .execute(named_params! { ":id": id })?;
         Ok(())
     }
 
@@ -182,11 +180,9 @@ impl<'a> History<'a> {
     ///
     /// [`Error::Database`] if the delete fails.
     pub fn remove(&self, id: &str) -> Result<(), Error> {
-        let mut stmt = self
-            .db
-            .prepare("DELETE FROM calculator_history WHERE id = :id")?;
-        stmt.bind_text(":id", id)?;
-        stmt.step()?;
+        self.db
+            .prepare_cached("DELETE FROM calculator_history WHERE id = :id")?
+            .execute(named_params! { ":id": id })?;
         Ok(())
     }
 
@@ -196,7 +192,7 @@ impl<'a> History<'a> {
     ///
     /// [`Error::Database`] if the delete fails.
     pub fn clear(&self) -> Result<(), Error> {
-        self.db.execute("DELETE FROM calculator_history")?;
+        self.db.execute_batch("DELETE FROM calculator_history")?;
         Ok(())
     }
 }
@@ -336,9 +332,10 @@ pub fn query_records(records: &[Record], query: &str) -> Vec<Record> {
 mod tests {
     use super::*;
 
-    fn open() -> (tempfile::TempDir, Database) {
+    fn open() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+        let db = compass_sqlcipher_sys::open(&dir.path().join("vicinae.db"), &[])
+            .expect("an unencrypted db");
         compass_db::vicinae::run(&db).expect("the migrations apply");
         (dir, db)
     }
@@ -465,7 +462,7 @@ mod tests {
     #[test]
     fn a_row_with_an_unknown_type_hint_is_refused_rather_than_guessed_at() {
         let (_dir, db) = open();
-        db.execute(
+        db.execute_batch(
             "INSERT INTO calculator_history (id, type_hint, question, answer, created_at) \
              VALUES ('x', 9, 'q', 'a', 1)",
         )

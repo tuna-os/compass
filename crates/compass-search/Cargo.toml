@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+deunicode = "1"
 nucleo-matcher.workspace = true
 rayon = "1"
 strsim = "0.11"

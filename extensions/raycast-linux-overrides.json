@@ -1,0 +1,10 @@
+{
+	"version": 1,
+	"hostPrograms": ["brew"],
+	"extensions": {
+		"store.raycast.brew": {
+			"why": "Runs Homebrew at /opt/homebrew or /usr/local. The runtime's shim sends every `brew` it runs to the engine, which runs Linuxbrew on the host once the person allows it; nothing else is needed.",
+			"hostPrograms": ["brew"]
+		}
+	}
+}

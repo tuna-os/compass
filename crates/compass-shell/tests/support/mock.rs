@@ -1,7 +1,7 @@
 //! A mock GNOME Shell serving the versioned Compass contract.
 //!
 //! This is Suite 3a from `PLAN.md` §8.4: a fake
-//! `org.gnome.Shell.Extensions.Vicinae.{Windows,Clipboard}` on a private bus,
+//! `org.tunaos.compass.Shell.{Windows,Clipboard}` on a private bus,
 //! with no display server involved. `zbus` serves as well as it consumes, so
 //! the mock implements the very interfaces the client's proxies were generated
 //! from — if the two drift, the tests stop compiling or stop passing.
@@ -96,6 +96,46 @@ impl MockWindow {
     }
 }
 
+/// A workspace as the mock will report it (contract 4).
+#[derive(Debug, Clone)]
+pub struct MockWorkspace {
+    pub index: i32,
+    pub name: String,
+    pub active: bool,
+}
+
+impl MockWorkspace {
+    pub fn new(index: i32, name: &str) -> Self {
+        Self {
+            index,
+            name: name.to_owned(),
+            active: false,
+        }
+    }
+
+    pub fn active(mut self) -> Self {
+        self.active = true;
+        self
+    }
+
+    fn to_dict(&self) -> HashMap<String, OwnedValue> {
+        HashMap::from([
+            (
+                contract::workspace_key::INDEX.to_owned(),
+                OwnedValue::from(self.index),
+            ),
+            (
+                contract::workspace_key::NAME.to_owned(),
+                OwnedValue::try_from(Value::from(self.name.clone())).expect("string"),
+            ),
+            (
+                contract::workspace_key::ACTIVE.to_owned(),
+                OwnedValue::from(self.active),
+            ),
+        ])
+    }
+}
+
 /// Everything a test wants to inspect or steer about the mock.
 #[derive(Debug, Default)]
 pub struct MockState {
@@ -105,6 +145,10 @@ pub struct MockState {
     pub calls: Vec<(&'static str, u32)>,
     /// The `shift_wm_classes` of every `Paste`, in order.
     pub pastes: Vec<Vec<String>>,
+    /// What `GetPrimarySelection` answers.
+    pub primary: String,
+    /// What `ListWorkspaces` answers.
+    pub workspaces: Vec<MockWorkspace>,
 }
 
 pub type SharedState = Arc<Mutex<MockState>>;
@@ -114,7 +158,7 @@ pub struct WindowsService {
     pub state: SharedState,
 }
 
-#[interface(name = "org.gnome.Shell.Extensions.Vicinae.Windows")]
+#[interface(name = "org.tunaos.compass.Shell.Windows")]
 impl WindowsService {
     #[zbus(property)]
     fn version(&self) -> u32 {
@@ -142,6 +186,26 @@ impl WindowsService {
 
     #[zbus(signal)]
     async fn windows_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+
+    fn list_workspaces(&self) -> Vec<HashMap<String, OwnedValue>> {
+        let state = self.state.lock().expect("mock state");
+        state
+            .workspaces
+            .iter()
+            .map(MockWorkspace::to_dict)
+            .collect()
+    }
+
+    fn activate_workspace(&self, index: i32) {
+        let mut state = self.state.lock().expect("mock state");
+        state.calls.push((
+            "ActivateWorkspace",
+            u32::try_from(index).unwrap_or(u32::MAX),
+        ));
+        for workspace in &mut state.workspaces {
+            workspace.active = workspace.index == index;
+        }
+    }
 }
 
 /// A placeholder object so that a mock with neither contract interface still
@@ -162,7 +226,7 @@ pub struct ClipboardService {
     pub state: SharedState,
 }
 
-#[interface(name = "org.gnome.Shell.Extensions.Vicinae.Clipboard")]
+#[interface(name = "org.tunaos.compass.Shell.Clipboard")]
 impl ClipboardService {
     #[zbus(property)]
     fn version(&self) -> u32 {
@@ -180,6 +244,10 @@ impl ClipboardService {
     fn paste(&self, shift_wm_classes: Vec<String>) {
         let mut state = self.state.lock().expect("mock state");
         state.pastes.push(shift_wm_classes);
+    }
+
+    fn get_primary_selection(&self) -> String {
+        self.state.lock().expect("mock state").primary.clone()
     }
 
     #[zbus(signal)]
@@ -273,6 +341,14 @@ impl MockShell {
         self.state.lock().expect("mock state").clipboard = (data.to_vec(), mime_type.to_owned());
     }
 
+    pub fn set_workspaces(&self, workspaces: Vec<MockWorkspace>) {
+        self.state.lock().expect("mock state").workspaces = workspaces;
+    }
+
+    pub fn set_primary_selection(&self, text: &str) {
+        text.clone_into(&mut self.state.lock().expect("mock state").primary);
+    }
+
     pub fn calls(&self) -> Vec<(&'static str, u32)> {
         self.state.lock().expect("mock state").calls.clone()
     }
@@ -313,7 +389,7 @@ impl MockShell {
 /// unversioned reply shape: a single JSON string instead of `aa{sv}`.
 pub struct WrongSignatureWindows;
 
-#[interface(name = "org.gnome.Shell.Extensions.Vicinae.Windows")]
+#[interface(name = "org.tunaos.compass.Shell.Windows")]
 impl WrongSignatureWindows {
     #[zbus(property)]
     fn version(&self) -> u32 {

@@ -43,7 +43,7 @@
 # Covers: a real Mutter compositor advertising the globals that matter
 # (`xdg_activation_v1` among them), the shipped Flatpak installed from its own
 # bundle, and a desktop entry found through exactly the permissions
-# `com.vicinae.Vicinae.yaml` grants — which is the sandbox seam Tier 1 cannot
+# `org.tunaos.compass.yaml` grants — which is the sandbox seam Tier 1 cannot
 # reach by construction.
 #
 # Cannot: the Shell, per (2). The VM tier stays the only tier that boots what

@@ -40,6 +40,9 @@ struct LaunchEventData {
   capabilities: Capabilities;
   fallbackText?: string;
   cwd?: string;
+  // The installed id (`store.raycast.brew`), which the overrides manifest
+  // and the engine's host-program grants are keyed by.
+  extension_id?: string;
 };
 
 service Lifecycle {

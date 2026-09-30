@@ -41,7 +41,11 @@ pub const STATE_FILE: &str = "telemetry.json";
 pub const DEFAULT_API_BASE_URL: &str = "https://api.vicinae.com/v1";
 
 /// The environment variable that overrides [`DEFAULT_API_BASE_URL`].
-pub const API_URL_ENV: &str = "VICINAE_API_URL";
+pub const API_URL_ENV: &str = "COMPASS_VICINAE_API_URL";
+
+/// What [`API_URL_ENV`] was called before the rename, still read as a
+/// fallback.
+pub const LEGACY_API_URL_ENV: &str = "VICINAE_API_URL";
 
 /// The system-info endpoint, relative to the base URL.
 pub const SYSTEM_INFO_PATH: &str = "/telemetry/system-info";

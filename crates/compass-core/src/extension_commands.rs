@@ -15,6 +15,7 @@
 
 use std::path::PathBuf;
 
+use crate::image_url::{ColorLike, ImageUrl};
 use crate::manifest::{CommandArgument, CommandMode, ExtensionManifest, Preference, Provenance};
 use crate::root_items::{RootItem, RootItemMeta, entrypoint_id};
 
@@ -53,6 +54,10 @@ pub struct ExtensionCommand {
     pub preferences: Vec<Preference>,
     /// The arguments it is launched with, in the manifest's order.
     pub arguments: Vec<CommandArgument>,
+    /// The command's own `icon`, relative to the extension's assets.
+    pub icon: Option<String>,
+    /// The extension's `icon`, relative to its assets.
+    pub extension_icon: String,
 }
 
 impl ExtensionCommand {
@@ -85,9 +90,33 @@ impl ExtensionCommand {
                         .cloned()
                         .collect(),
                     arguments: command.arguments.clone(),
+                    icon: command.icon.clone(),
+                    extension_icon: manifest.icon.clone(),
                 })
             })
             .collect()
+    }
+
+    /// The row's icon, as `ExtensionCommand::iconUrl`: the command's own
+    /// icon among the extension's assets, else the extension's, else the
+    /// builtin hammer on a cyan tile. `exists` answers whether a file is
+    /// there.
+    #[must_use]
+    pub fn icon_url(&self, exists: impl Fn(&std::path::Path) -> bool) -> ImageUrl {
+        let assets = self.extension_dir.join("assets");
+        if let Some(icon) = &self.icon {
+            let path = assets.join(icon);
+            if exists(&path) {
+                return ImageUrl::local(path.to_string_lossy().into_owned());
+            }
+        }
+        if !self.extension_icon.is_empty() {
+            let path = assets.join(&self.extension_icon);
+            if exists(&path) {
+                return ImageUrl::local(path.to_string_lossy().into_owned());
+            }
+        }
+        ImageUrl::builtin("hammer").with_background_tint(ColorLike::Semantic("Cyan".into()))
     }
 
     /// The preference values a launch passes: what the user stored, else each
@@ -218,6 +247,62 @@ impl ExtensionCommand {
     }
 }
 
+/// `compass cmd launch <id> [args…]`'s positional values as the command's
+/// arguments, by name: the C++ `buildLaunchArguments`. Too many values, a
+/// dropdown value that is not one of its options, and a required argument
+/// left out are each refused with the C++'s sentence and a usage line.
+///
+/// # Errors
+///
+/// That sentence, then `Usage: compass cmd launch <id> <required> [optional]`.
+pub fn launch_arguments(
+    id: &str,
+    declared: &[CommandArgument],
+    values: &[String],
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let fail = |message: String| {
+        let mut usage = format!("{message}\nUsage: compass cmd launch {id}");
+        for argument in declared {
+            let (open, close) = if argument.required {
+                ('<', '>')
+            } else {
+                ('[', ']')
+            };
+            usage.push_str(&format!(" {open}{}{close}", argument.name));
+        }
+        usage
+    };
+    if values.len() > declared.len() {
+        return Err(fail(format!(
+            "Too many arguments: expected at most {}, got {}",
+            declared.len(),
+            values.len()
+        )));
+    }
+    let mut arguments = serde_json::Map::new();
+    for (argument, value) in declared.iter().zip(values) {
+        if let Some(options) = &argument.data
+            && !options.iter().any(|option| option.value == *value)
+        {
+            return Err(fail(format!(
+                "Invalid value '{value}' for argument '{}'",
+                argument.name
+            )));
+        }
+        arguments.insert(
+            argument.name.clone(),
+            serde_json::Value::String(value.clone()),
+        );
+    }
+    if let Some(missing) = declared[values.len()..].iter().find(|a| a.required) {
+        return Err(fail(format!(
+            "Missing required argument '{}'",
+            missing.name
+        )));
+    }
+    Ok(arguments)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +318,28 @@ mod tests {
         ExtensionCommand::from_manifests(&[manifest])
             .pop()
             .expect("a command")
+    }
+
+    #[test]
+    fn the_icon_is_the_commands_then_the_extensions_then_the_hammer() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"name": "x", "author": "a", "icon": "ext.png", "commands": [
+                {"name": "c", "mode": "view", "icon": "cmd.svg"}
+            ]}"#,
+        )
+        .expect("json");
+        let manifest = ExtensionManifest::from_json(&json, std::path::Path::new("/ext/x"));
+        let command = ExtensionCommand::from_manifests(&[manifest])
+            .pop()
+            .expect("a command");
+        let both = command.icon_url(|_| true);
+        assert_eq!(both.kind, crate::image_url::ImageUrlType::Local);
+        assert_eq!(both.name, "/ext/x/assets/cmd.svg");
+        let extension_only =
+            command.icon_url(|path| path == std::path::Path::new("/ext/x/assets/ext.png"));
+        assert_eq!(extension_only.name, "/ext/x/assets/ext.png");
+        let neither = command.icon_url(|_| false);
+        assert_eq!(neither.to_url(), "icon://omnicast/hammer?bg_tint=cyan");
     }
 
     #[test]
@@ -260,6 +367,53 @@ mod tests {
             search.arguments_with(given.as_object()),
             Ok(serde_json::json!({"query": "compass"})),
             "an empty optional one and an undeclared one are left out"
+        );
+    }
+
+    #[test]
+    fn positional_launch_arguments_are_checked_as_the_cpp_checks_them() {
+        let search = command(
+            r#"[{"name": "query", "type": "text", "placeholder": "Query", "required": true},
+                {"name": "sort", "type": "dropdown", "data": [{"title": "Stars", "value": "stars"}]}]"#,
+        );
+        let args = |values: &[&str]| {
+            launch_arguments(
+                "@a/x:c",
+                &search.arguments,
+                &values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            args(&["compass"]).map(serde_json::Value::Object),
+            Ok(serde_json::json!({"query": "compass"}))
+        );
+        assert_eq!(
+            args(&["compass", "stars"]).map(serde_json::Value::Object),
+            Ok(serde_json::json!({"query": "compass", "sort": "stars"}))
+        );
+        assert_eq!(
+            args(&[]),
+            Err("Missing required argument 'query'\n\
+                 Usage: compass cmd launch @a/x:c <query> [sort]"
+                .to_owned())
+        );
+        assert_eq!(
+            args(&["compass", "forks"]).unwrap_err().lines().next(),
+            Some("Invalid value 'forks' for argument 'sort'")
+        );
+        assert_eq!(
+            args(&["a", "stars", "b"]).unwrap_err().lines().next(),
+            Some("Too many arguments: expected at most 2, got 3")
+        );
+        assert_eq!(
+            launch_arguments("commands:x", &[], &["a".to_owned()])
+                .unwrap_err()
+                .lines()
+                .collect::<Vec<_>>(),
+            [
+                "Too many arguments: expected at most 0, got 1",
+                "Usage: compass cmd launch commands:x"
+            ]
         );
     }
 }
