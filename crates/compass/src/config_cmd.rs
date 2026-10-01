@@ -1,11 +1,13 @@
-//! `compass config`: the path of `compass.json`, its schema, and migrating the C++ settings.
+//! `compass config`: the path of `compass.json`, its schema, and migrating Vicinae's settings.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use compass_core::config::{self, default_config_path, json_schema_pretty};
-use compass_core::config_migration::{Migration, legacy_config_path, migrate_file};
+use compass_core::config_migration::{
+    Migration, find_legacy_config, legacy_config_path, migrate_file,
+};
 
 use crate::cli::ConfigCommand;
 use crate::{EXIT_FAILURE, EXIT_OK};
@@ -20,7 +22,7 @@ pub fn run(command: ConfigCommand) -> Result<ExitCode> {
     match command {
         ConfigCommand::Path => {
             println!("{}", default_config_path()?.display());
-            println!("{} (C++ engine)", legacy_config_path()?.display());
+            println!("{} (Vicinae)", legacy_config_path()?.display());
             Ok(ExitCode::from(EXIT_OK))
         }
         ConfigCommand::Schema => {
@@ -41,9 +43,22 @@ pub fn run(command: ConfigCommand) -> Result<ExitCode> {
             force,
             json,
         } => {
-            let from = match from {
+            let from = match from.or_else(find_legacy_config) {
                 Some(from) => from,
-                None => legacy_config_path()?,
+                None => {
+                    eprintln!(
+                        "no Vicinae settings to migrate: neither {} nor {} exists",
+                        legacy_config_path()?.display(),
+                        legacy_config_path()?
+                            .parent()
+                            .and_then(std::path::Path::parent)
+                            .map(|home| home
+                                .join(compass_core::config_migration::UNMOVED_RELATIVE_PATH))
+                            .unwrap_or_default()
+                            .display()
+                    );
+                    return Ok(ExitCode::from(EXIT_FAILURE));
+                }
             };
             if !from.is_file() {
                 eprintln!("no settings to migrate at {}", from.display());

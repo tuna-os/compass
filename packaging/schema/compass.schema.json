@@ -229,6 +229,14 @@
             "null"
           ]
         },
+        "pop_to_root_on_close": {
+          "default": false,
+          "description": "Whether hiding the launcher clears the search, so it always opens empty.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "quick_launch": {
           "default": true,
           "description": "Whether Ctrl+1..9 launches the first through ninth result.",

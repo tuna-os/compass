@@ -29,14 +29,120 @@ use crate::config::{Config, ConfigError, SCHEMA_URL};
 /// the same file either way.
 pub const LEGACY_RELATIVE_PATH: &str = "compass/settings.json";
 
+/// Where Vicinae keeps it before Compass's engine has run once and moved its
+/// directory, relative to `$XDG_CONFIG_HOME`.
+pub const UNMOVED_RELATIVE_PATH: &str = "vicinae/settings.json";
+
 /// `$XDG_CONFIG_HOME/compass/settings.json`, falling back to `~/.config`.
 ///
 /// # Errors
 ///
 /// [`ConfigError::NoConfigDir`] when neither `$XDG_CONFIG_HOME` nor `$HOME` is usable.
 pub fn legacy_config_path() -> Result<PathBuf, ConfigError> {
-    let dir = dirs::config_dir().ok_or(ConfigError::NoConfigDir)?;
+    let dir = crate::xdg_dirs::config_home().ok_or(ConfigError::NoConfigDir)?;
     Ok(dir.join(LEGACY_RELATIVE_PATH))
+}
+
+/// The Vicinae `settings.json` to migrate: the one in Compass's directory
+/// (where the engine moves it), else the one still in `vicinae/` when the
+/// engine has not run yet. `None` when neither exists.
+#[must_use]
+pub fn find_legacy_config() -> Option<PathBuf> {
+    let dir = crate::xdg_dirs::config_home()?;
+    [LEGACY_RELATIVE_PATH, UNMOVED_RELATIVE_PATH]
+        .into_iter()
+        .map(|relative| dir.join(relative))
+        .find(|path| path.is_file())
+}
+
+/// Keys only a Vicinae settings file has at its top level. A `compass.json`
+/// holding any of them was carried over from Vicinae verbatim (the move of
+/// `vicinae.json`), and is translated by [`translate_vicinae_keys`].
+const VICINAE_ONLY_KEYS: &[&str] = &[
+    "launcher_window",
+    "theme",
+    "close_on_focus_loss",
+    "wrap_navigation",
+    "keybinding",
+    "pop_to_root_on_close",
+    "imports",
+    "telemetry",
+    "search_files_in_root",
+    "escape_key_behavior",
+    "pop_on_backspace",
+    "activate_on_single_click",
+    "consider_preedit",
+];
+
+/// The top-level keys of `compass.json` that are Compass's own and that a
+/// Vicinae file never has.
+const COMPASS_ONLY_KEYS: &[&str] = &["launcher", "extensions"];
+
+/// Translates the Vicinae keys in a `compass.json` object, as [`migrate_value`]
+/// translates `settings.json`, keeping every key that is already Compass's
+/// (`launcher`, `extensions`, and anything both files share), which win over
+/// a translated value. `None` when the object has no Vicinae key.
+#[must_use]
+pub fn translate_vicinae_keys(document: &Map<String, Value>) -> Option<Migration> {
+    let vicinae = document.iter().any(|(key, value)| {
+        VICINAE_ONLY_KEYS.contains(&key.as_str())
+            || (key == "global_shortcuts" && value.get("toggle").is_some())
+    });
+    if !vicinae {
+        return None;
+    }
+    let mut upstream = document.clone();
+    let mut own = Map::new();
+    for key in COMPASS_ONLY_KEYS {
+        if let Some(value) = upstream.remove(*key) {
+            own.insert((*key).to_owned(), value);
+        }
+    }
+    let mut migration = migrate_value(upstream);
+    if !own.is_empty() {
+        let mut merged = serde_json::to_value(&migration.config)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        merge(&mut merged, own);
+        migration.config = crate::config_issues::parse_value(Value::Object(merged)).0;
+    }
+    Some(migration)
+}
+
+/// Translates the Vicinae keys of the `compass.json` at `path` in place, keeping
+/// the file as it was in `<path>.vicinae.bak`. `Ok(None)` when there is no
+/// file, it is not a JSON object, or it has no Vicinae key.
+///
+/// # Errors
+///
+/// When the file cannot be read, the backup made or the result written.
+pub fn translate_file_in_place(path: &Path) -> Result<Option<Migration>, MigrationError> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let document = read_object(path)?;
+    let Some(migration) = translate_vicinae_keys(&document) else {
+        return Ok(None);
+    };
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(".vicinae.bak");
+    std::fs::copy(path, PathBuf::from(&backup)).map_err(|source| MigrationError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let text = migration
+        .config
+        .to_json_pretty()
+        .map_err(|error| MigrationError::Parse {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    crate::atomic_write(path, text.as_bytes()).map_err(|source| MigrationError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(Some(migration))
 }
 
 /// Everything that can stop a migration.
@@ -257,7 +363,15 @@ impl Kind {
 /// `providers` is copied whole: the C++ and Rust shapes agree on `enabled` and on `entrypoints`
 /// with `enabled`, `alias` and `shortcut`, and the per-provider `preferences` the Rust root
 /// manager does not read yet survive as unknown fields rather than being lost.
-const DIRECT: [(&str, &str, Kind); 13] = [
+const DIRECT: [(&str, &str, Kind); 16] = [
+    (
+        "pop_to_root_on_close",
+        "launcher.pop_to_root_on_close",
+        Kind::Bool,
+    ),
+    // Read by Compass as Vicinae writes them.
+    ("font", "font", Kind::Object),
+    ("favicon_service", "favicon_service", Kind::String),
     (
         "launcher_window.clock.enabled",
         "launcher.clock.enabled",
@@ -327,15 +441,18 @@ fn theme_family(name: &str) -> Option<&'static str> {
 
 /// `theme.dark.name` and `theme.light.name` become `launcher.appearance.theme`.
 ///
-/// Dark is preferred when both are set and disagree, since it is the C++ default variant; the
-/// light one is then reported, not silently dropped.
+/// Vicinae names a theme per variant; Compass names one family and picks its light or dark
+/// variant from the colour scheme. A chosen theme wins over a default one (`vicinae-light`,
+/// `libadwaita-dark`), whichever variant it was set for. When both variants name different
+/// chosen themes, the dark one is kept and the light one is reported by its own name.
 fn migrate_theme(
     settings: &mut Map<String, Value>,
     out: &mut Map<String, Value>,
     mapped: &mut Vec<Mapped>,
     skipped: &mut Vec<Skipped>,
 ) {
-    let mut chosen: Option<&'static str> = None;
+    const KEY: &str = "launcher.appearance.theme";
+    let mut named: Vec<(String, String, &'static str)> = Vec::new();
     for variant in ["dark", "light"] {
         let key = format!("theme.{variant}.name");
         let Some(value) = remove_path(settings, &key) else {
@@ -350,33 +467,37 @@ fn migrate_theme(
             }
             continue;
         };
-        match (theme_family(name), chosen) {
-            (None, _) => skipped.push(Skipped {
+        match theme_family(name) {
+            Some(family) => named.push((key, name.to_owned(), family)),
+            None => skipped.push(Skipped {
                 key,
-                reason: format!("theme {name:?} has no Rust engine equivalent"),
+                reason: format!("Compass has no theme like {name:?}"),
             }),
-            (Some(family), None) => {
-                chosen = Some(family);
-                insert_path(
-                    out,
-                    "launcher.appearance.theme",
-                    Value::String(family.to_owned()),
-                );
-                mapped.push(Mapped {
-                    from: key,
-                    to: "launcher.appearance.theme".to_owned(),
-                });
-            }
-            (Some(family), Some(already)) if family == already => mapped.push(Mapped {
+        }
+    }
+    let Some((_, chosen_name, chosen)) = named
+        .iter()
+        .find(|(_, _, family)| *family != "system")
+        .or_else(|| named.first())
+        .cloned()
+    else {
+        return;
+    };
+    insert_path(out, KEY, Value::String(chosen.to_owned()));
+    for (key, name, family) in named {
+        if family == chosen || family == "system" {
+            mapped.push(Mapped {
                 from: key,
-                to: "launcher.appearance.theme".to_owned(),
-            }),
-            (Some(family), Some(already)) => skipped.push(Skipped {
+                to: KEY.to_owned(),
+            });
+        } else {
+            skipped.push(Skipped {
                 key,
                 reason: format!(
-                    "the {variant} theme is {family:?} but the dark one, {already:?}, was used"
+                    "Compass uses one theme for light and dark, so {name:?} was not carried over; \
+                     {chosen_name:?} was, as {chosen:?}"
                 ),
-            }),
+            });
         }
     }
 }

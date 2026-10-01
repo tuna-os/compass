@@ -83,6 +83,14 @@ pub const DEFAULT_QUICK_LAUNCH: bool = true;
 /// the person who does not want the request a way to refuse it.
 pub const DEFAULT_CHECK_FOR_UPDATES: bool = true;
 
+/// Default for `launcher.pop_to_root_on_close`.
+///
+/// Off, as Vicinae's `pop_to_root_on_close` (v0.29.0's default file): the
+/// search text is still there when the launcher is opened again. On, every
+/// summon starts with an empty search. A view opened from the search closes
+/// on hide either way (PARITY.md).
+pub const DEFAULT_POP_TO_ROOT_ON_CLOSE: bool = false;
+
 /// Default for `launcher.appearance.preset`.
 ///
 /// The GNOME preset, per #83: Spotlight-simple, and recognisably the desktop
@@ -267,6 +275,10 @@ pub struct LauncherConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = DEFAULT_CHECK_FOR_UPDATES))]
     check_for_updates: Option<bool>,
+    /// Whether hiding the launcher clears the search, so it always opens empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_POP_TO_ROOT_ON_CLOSE))]
+    pop_to_root_on_close: Option<bool>,
     /// Colour mode and row presentation.
     #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
     appearance: AppearanceConfig,
@@ -549,6 +561,15 @@ impl LauncherConfig {
         self.check_for_updates.unwrap_or(DEFAULT_CHECK_FOR_UPDATES)
     }
 
+    /// Whether hiding the launcher clears the search.
+    ///
+    /// Defaults to [`DEFAULT_POP_TO_ROOT_ON_CLOSE`].
+    #[must_use]
+    pub fn pop_to_root_on_close(&self) -> bool {
+        self.pop_to_root_on_close
+            .unwrap_or(DEFAULT_POP_TO_ROOT_ON_CLOSE)
+    }
+
     /// The scheme [`keybinding`](Self::keybinding) names.
     #[must_use]
     pub fn keybinding_scheme(&self) -> crate::keybinding::Scheme {
@@ -618,6 +639,7 @@ impl LauncherConfig {
             wrap_navigation,
             quick_launch,
             check_for_updates,
+            pop_to_root_on_close,
             appearance,
             clock,
             unknown,
@@ -629,6 +651,7 @@ impl LauncherConfig {
             && wrap_navigation.is_none()
             && quick_launch.is_none()
             && check_for_updates.is_none()
+            && pop_to_root_on_close.is_none()
             && appearance.is_empty()
             && clock.is_empty()
             && unknown.is_empty()
@@ -1373,16 +1396,23 @@ impl Config {
         };
         match crate::config_migration::migrate_file(legacy) {
             Ok(migration) => {
+                // Every reader of the configuration comes through here, many
+                // times per start: once per process is enough to say it.
+                static SAID: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    return Ok(migration.config);
+                }
                 tracing::info!(
                     from = %legacy.display(),
                     mapped = migration.mapped.len(),
                     skipped = migration.skipped.len(),
-                    "no compass.json; using the settings migrated from the C++ engine"
+                    "no compass.json yet; using the settings carried over from Vicinae"
                 );
                 Ok(migration.config)
             }
             Err(error) => {
-                tracing::warn!(%error, "could not migrate the C++ engine's settings; using defaults");
+                tracing::warn!(%error, "could not read the Vicinae settings; using defaults");
                 Ok(Config::default())
             }
         }

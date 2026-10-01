@@ -349,9 +349,10 @@ sidebar page, so a control is audited without anyone naming it.
 | General › SidebarSelected(6) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › Changed("launcher.close_on_focus_loss", Bool(true)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(7) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| General › Changed("launcher.quick_launch", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| General › Changed("launcher.pop_to_root_on_close", Bool(true)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(8) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(9) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| General › Changed("launcher.quick_launch", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(10) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(12) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › Changed("launcher.check_for_updates", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |

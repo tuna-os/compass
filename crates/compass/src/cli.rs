@@ -478,24 +478,25 @@ pub enum InputServerCommand {
 /// Configuration subcommands.
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub enum ConfigCommand {
-    /// Print where `compass.json` and the C++ engine's `settings.json` are.
+    /// Print where `compass.json` and Vicinae's `settings.json` are.
     Path,
 
     /// Print the JSON Schema for `compass.json`.
     ///
-    /// The same document is published at `packaging/schema/compass.schema.json`.
+    /// Editors can use it to complete keys and flag misspelled ones.
     Schema,
 
-    /// Translate the C++ engine's `settings.json` into `compass.json`.
+    /// Translate Vicinae's `settings.json` into `compass.json`.
     ///
     /// Without `--write` this only prints the result and what was and was not
-    /// carried across. The C++ file is never modified.
+    /// carried across. Vicinae's file is never changed.
     Migrate {
-        /// The settings file to read. Defaults to the C++ engine's own.
+        /// The settings file to read. Defaults to Vicinae's, in `~/.config/compass`
+        /// or, before Compass has run once, `~/.config/vicinae`.
         #[arg(long, value_name = "PATH")]
         from: Option<PathBuf>,
 
-        /// Where to write. Defaults to this engine's `compass.json`.
+        /// Where to write. Defaults to Compass's `compass.json`.
         #[arg(long, value_name = "PATH")]
         to: Option<PathBuf>,
 

@@ -870,13 +870,17 @@ Declared differences:
 - **The C++ settings Compass has no reader for are not offered**, each listed with its reason at
   the foot of its page (`settings_catalog::NOT_IN_COMPASS`), rather than written to a file that
   would then look as though it honoured them (the rule `config_migration` follows): Close on
-  Escape, Pop to root on close, Language, usage statistics, Font size, Icon Theme, Window material
+  Escape, Language, usage statistics, Font size, Icon Theme, Window material
   and opacity, Compact mode, Floating status bar, layer shell, client-side decorations and their
   rounding, border and shadow, native font rendering, Pop on backspace, Activate on single click,
   IME handling, Root file search, Favicon fetching, Encrypt sensitive data, and
   rebinding the launcher's keys (the Keybindings page lists the fixed ones).
 - **Settings only Compass has are offered beside them**: quick launch, the result count, the clock,
   the colour scheme, the layout preset, application icons and translucency.
+- **Clear the search on close** (`launcher.pop_to_root_on_close`, Vicinae's `pop_to_root_on_close`,
+  off by default as in v0.29.0) clears the search text when the launcher hides. A view opened from
+  the search closes on hide whatever it says; in Vicinae, with the setting off, the view stays open
+  for the next summon.
 - The launcher hotkey and Close on focus loss are written to `launcher.hotkey` and
   `launcher.close_on_focus_loss`, the schema's keys; the engine binds the hotkey from the file and
   rebinds it when it changes, and the window hides on focus loss when the switch is on ("The gaps

@@ -271,6 +271,8 @@ pub struct AppFlags {
     /// Whether the window hides when it loses focus, from
     /// `launcher.close_on_focus_loss`.
     pub close_on_focus_loss: bool,
+    /// `launcher.pop_to_root_on_close`: hiding clears the search.
+    pub pop_to_root_on_close: bool,
     /// The launcher hotkey as stored (`launcher.hotkey`), for the shortcut
     /// recorder's conflict check.
     pub launcher_hotkey: String,
@@ -412,6 +414,7 @@ impl Default for AppFlags {
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+            pop_to_root_on_close: compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE,
             launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
@@ -977,6 +980,8 @@ pub struct LauncherApp {
     quick_launch: bool,
     /// See [`AppFlags::close_on_focus_loss`].
     close_on_focus_loss: bool,
+    /// See [`AppFlags::pop_to_root_on_close`].
+    pop_to_root_on_close: bool,
     /// Whether the window has had the focus since it was last shown: losing
     /// it hides the window only after it had it (`setWindowActivated`).
     window_focused: bool,
@@ -1266,6 +1271,7 @@ impl LauncherApp {
         app.wrap_navigation = flags.wrap_navigation;
         app.quick_launch = flags.quick_launch;
         app.close_on_focus_loss = flags.close_on_focus_loss;
+        app.pop_to_root_on_close = flags.pop_to_root_on_close;
         app.launcher_hotkey = flags.launcher_hotkey;
         app.power_asks = flags.power_asks;
         app.browse_apps = flags.browse_apps;
@@ -1381,6 +1387,7 @@ impl LauncherApp {
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+            pop_to_root_on_close: compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE,
             window_focused: false,
             launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
             capture_reported: false,
@@ -1514,8 +1521,13 @@ impl LauncherApp {
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
         self.page = Page::Root;
+        let cleared = if self.pop_to_root_on_close && !self.query.is_empty() {
+            self.update(Message::QueryChanged(String::new()))
+        } else {
+            Task::none()
+        };
         let hidden = self.hide_window();
-        Task::batch([closing, hidden])
+        Task::batch([closing, cleared, hidden])
     }
 
     /// Hides or exits after [`Self::conceal`] has reset the view.

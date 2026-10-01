@@ -94,6 +94,16 @@ pub fn main() -> ExitCode {
     // engine migrates: every other command talks to one that already has.
     // Its log lines are replayed once tracing is up.
     let migrated = serving.then(compass_xdg::brand::migrate_legacy_install);
+    // A `vicinae.json` moved to `compass.json` still holds Vicinae's keys,
+    // which nothing here reads: they are translated as `settings.json` is.
+    let translated = serving
+        .then(|| {
+            let path = compass_core::config::default_config_path().ok()?;
+            Some(compass_core::config_migration::translate_file_in_place(
+                &path,
+            ))
+        })
+        .flatten();
     // The engine also writes its log to a file, for `compass logs`.
     let log_file = serving.then(logs::log_path).flatten().map(|path| {
         let log = logs::LogFile::pending(&path);
@@ -103,6 +113,17 @@ pub fn main() -> ExitCode {
     init_tracing(cli.verbose, log_file);
     for (base, migration) in migrated.iter().flatten() {
         compass_xdg::brand::log_migration(base, migration);
+    }
+    match translated {
+        Some(Ok(Some(migration))) => tracing::info!(
+            translated = migration.mapped.len(),
+            left_behind = ?migration.unmapped(),
+            "compass.json held Vicinae settings; translated them, and kept the original as compass.json.vicinae.bak"
+        ),
+        Some(Err(error)) => {
+            tracing::warn!(%error, "compass.json holds Vicinae settings that could not be translated");
+        }
+        _ => {}
     }
 
     match run(cli) {
@@ -373,6 +394,9 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             wrap_navigation,
             quick_launch,
             close_on_focus_loss,
+            pop_to_root_on_close: compass_core::Config::load()
+                .map(|config| config.launcher().pop_to_root_on_close())
+                .unwrap_or(compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE),
             launcher_hotkey,
             icons: appearance_preset.icons,
             appearance_preset,

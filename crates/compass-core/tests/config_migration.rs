@@ -1,4 +1,5 @@
-//! Migrating the C++ engine's `settings.json` to `compass.json`.
+//! Migrating Vicinae's `settings.json` (and a `compass.json` moved from `vicinae.json`) to
+//! `compass.json`.
 
 use std::path::Path;
 
@@ -72,6 +73,7 @@ fn every_shared_setting_is_carried_across() {
                 "close_on_focus_loss": true,
                 "keybinding": "emacs",
                 "wrap_navigation": true,
+                "pop_to_root_on_close": true,
                 "appearance": { "theme": "catppuccin" },
                 "clock": { "enabled": false, "format": "hh:mm:ss", "interval": 30 }
             },
@@ -87,7 +89,8 @@ fn every_shared_setting_is_carried_across() {
             },
             "favorites": ["applications:firefox", "clipboard:history"],
             "fallbacks": ["files:search"],
-            "global_shortcuts": { "inhibit_apps": ["steam"] }
+            "global_shortcuts": { "inhibit_apps": ["steam"] },
+            "font": { "normal": { "size": 11 } }
         })
     );
     assert_eq!(migration.sources, vec![path]);
@@ -104,11 +107,9 @@ fn settings_with_no_equivalent_are_reported_not_smuggled_in() {
     assert_eq!(
         migration.unmapped(),
         vec![
-            "font.normal.size",
             "keybinds.open-search-filter",
             "launcher_window.blur.enabled",
             "launcher_window.opacity",
-            "pop_to_root_on_close",
             "theme.dark.icon_theme",
         ]
     );
@@ -318,4 +319,92 @@ fn a_broken_cpp_settings_file_does_not_stop_the_rust_engine() {
     let legacy = write(dir.path(), "settings.json", "{ not json");
     let config = Config::load_or_migrate(&dir.path().join("compass.json"), Some(&legacy)).unwrap();
     assert_eq!(config, Config::default());
+}
+
+#[test]
+fn the_light_theme_left_behind_is_named_as_written_and_a_default_one_is_not_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "both.json",
+        r#"{ "theme": { "dark": { "name": "tokyo-night-storm" }, "light": { "name": "nord-light" } } }"#,
+    );
+    let migration = migrate_file(&path).unwrap();
+    let reason = &migration.skipped[0].reason;
+    assert!(
+        reason.contains("\"nord-light\" was not carried over"),
+        "{reason}"
+    );
+    assert!(reason.contains("\"tokyo-night-storm\" was"), "{reason}");
+
+    // Vicinae's own light theme is a default, not a choice: the chosen dark
+    // one is kept and nothing is reported.
+    let path = write(
+        dir.path(),
+        "default-light.json",
+        r#"{ "theme": { "dark": { "name": "dracula" }, "light": { "name": "vicinae-light" } } }"#,
+    );
+    let migration = migrate_file(&path).unwrap();
+    assert_eq!(migration.config.launcher().appearance().theme(), "dracula");
+    assert!(migration.skipped.is_empty(), "{:?}", migration.skipped);
+
+    // A chosen light theme wins over the default dark one.
+    let path = write(
+        dir.path(),
+        "chosen-light.json",
+        r#"{ "theme": { "dark": { "name": "vicinae-dark" }, "light": { "name": "catppuccin-latte" } } }"#,
+    );
+    let migration = migrate_file(&path).unwrap();
+    assert_eq!(
+        migration.config.launcher().appearance().theme(),
+        "catppuccin"
+    );
+}
+
+#[test]
+fn pop_to_root_on_close_the_font_and_the_favicon_service_are_carried_across() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "settings.json",
+        r#"{ "pop_to_root_on_close": true, "font": { "normal": { "family": "Inter" } },
+             "favicon_service": "google" }"#,
+    );
+    let migration = migrate_file(&path).unwrap();
+    assert!(migration.config.launcher().pop_to_root_on_close());
+    assert_eq!(migration.config.font_family(), Some("Inter"));
+    assert_eq!(migration.config.favicon_service(), Some(&json!("google")));
+    assert!(migration.skipped.is_empty(), "{:?}", migration.skipped);
+}
+
+#[test]
+fn a_compass_json_moved_from_vicinae_json_is_translated_keeping_compass_keys() {
+    use compass_core::config_migration::{translate_file_in_place, translate_vicinae_keys};
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "compass.json",
+        r#"{ "close_on_focus_loss": true, "keybinding": "emacs",
+             "global_shortcuts": { "toggle": "alt+space" },
+             "launcher": { "max_results": 7 }, "favorites": ["apps:firefox"] }"#,
+    );
+    let migration = translate_file_in_place(&path).unwrap().expect("translated");
+    assert!(migration.skipped.is_empty(), "{:?}", migration.skipped);
+    let config = Config::load_from(&path).unwrap();
+    assert!(config.launcher().close_on_focus_loss());
+    assert_eq!(config.launcher().keybinding(), "emacs");
+    assert_eq!(config.launcher().hotkey(), "alt+space");
+    assert_eq!(
+        config.launcher().max_results(),
+        7,
+        "Compass's own key is kept"
+    );
+    assert_eq!(config.favorite_ids(), ["apps:firefox"]);
+    assert!(dir.path().join("compass.json.vicinae.bak").is_file());
+
+    // Once translated there is nothing left to translate.
+    assert!(translate_file_in_place(&path).unwrap().is_none());
+    let plain: serde_json::Map<String, Value> =
+        serde_json::from_str(r#"{ "launcher": { "hotkey": "super+space" } }"#).unwrap();
+    assert!(translate_vicinae_keys(&plain).is_none());
 }

@@ -207,12 +207,6 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         reason: "Escape always goes back one view, then hides the launcher",
     },
     NotPorted {
-        cpp: "popToRootOnClose",
-        page: CorePage::General,
-        label: "Pop to root on close",
-        reason: "the launcher always opens at the root search",
-    },
-    NotPorted {
         cpp: "language",
         page: CorePage::General,
         label: "Language",
@@ -407,6 +401,16 @@ pub fn catalog() -> Vec<Setting> {
                 json!(crate::config::DEFAULT_CLOSE_ON_FOCUS_LOSS),
             )
             .cpp("closeOnFocusLoss"),
+        Setting::new("launcher.pop_to_root_on_close", core(General), "Behavior")
+            .label(
+                "Clear the search on close",
+                "Open the launcher with an empty search every time.",
+            )
+            .kind(
+                Kind::Toggle,
+                json!(crate::config::DEFAULT_POP_TO_ROOT_ON_CLOSE),
+            )
+            .cpp("popToRootOnClose"),
         Setting::new("launcher.quick_launch", core(General), "Behavior")
             .label(
                 "Quick launch",

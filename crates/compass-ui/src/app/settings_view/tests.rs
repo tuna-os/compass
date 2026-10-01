@@ -552,3 +552,21 @@ fn a_reloaded_file_reaches_the_window_and_an_open_settings_view() {
     let wrap = settings_catalog::find("launcher.wrap_navigation").unwrap();
     assert_eq!(page(&app).value(&wrap), json!(true));
 }
+
+#[test]
+fn clear_the_search_on_close_empties_the_query_only_when_it_is_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    let _ = app.update(Message::QueryChanged("fire".into()));
+    let _ = app.conceal();
+    assert_eq!(app.query, "fire", "off, as in Vicinae: the search is kept");
+
+    let config = compass_core::Config::parse(
+        r#"{"launcher": {"pop_to_root_on_close": true}}"#,
+        std::path::Path::new("compass.json"),
+    )
+    .unwrap();
+    let _ = app.update(Message::ConfigReloaded(Arc::new(config)));
+    let _ = app.conceal();
+    assert_eq!(app.query, "", "on: the next summon starts empty");
+}

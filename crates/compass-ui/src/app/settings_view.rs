@@ -431,6 +431,7 @@ impl LauncherApp {
             "launcher.keybinding",
             "launcher.quick_launch",
             "launcher.close_on_focus_loss",
+            "launcher.pop_to_root_on_close",
             "launcher.hotkey",
             "launcher.clock.enabled",
             "launcher.appearance.preset",
@@ -498,6 +499,9 @@ impl LauncherApp {
             },
             "launcher.appearance.theme" => {
                 let _ = self.update(Message::ThemeCommit);
+            }
+            "launcher.pop_to_root_on_close" => {
+                self.pop_to_root_on_close = launcher.pop_to_root_on_close();
             }
             "font.normal.family" => self.font_family = config.font_family().map(str::to_owned),
             _ if key.starts_with("providers.power.entrypoints.") => {
