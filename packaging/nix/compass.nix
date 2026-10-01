@@ -69,7 +69,20 @@
 
   # Built on its own so the install and fixup below apply to the package
   # only: the dependencies-only build has no bin/compass to patch.
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  #
+  # The dependencies-only build swaps every Rust source for a stub, and that
+  # includes the patched crates in vendor/ that `[patch.crates-io]` points at;
+  # crates.io dependencies built against those stubs fail. They are put back.
+  cargoArtifacts = craneLib.buildDepsOnly (commonArgs
+    // {
+      dummySrc = craneLib.mkDummySrc {
+        inherit src;
+        extraDummyScript = ''
+          rm -rf $out/vendor/layershellev $out/vendor/smithay-clipboard
+          cp -r ${src}/vendor/layershellev ${src}/vendor/smithay-clipboard $out/vendor/
+        '';
+      };
+    });
 in
   craneLib.buildPackage (commonArgs
     // {

@@ -790,6 +790,12 @@ impl Started {
     fn acks(&self, request: Request) -> bool {
         self.answers(request, Duration::from_secs(10)) == Some(Response::Ack)
     }
+
+    /// The first `Show`, which waits on the new window's renderer: a runner
+    /// without a GPU spends seconds probing Vulkan before it settles on GL.
+    fn shows_first(&self) -> bool {
+        self.answers(Request::Show, Duration::from_secs(45)) == Some(Response::Ack)
+    }
 }
 
 impl Drop for Started {
@@ -849,7 +855,7 @@ fn on_sway_the_launcher_survives_copies_while_keyboards_come_and_go() {
     };
     let started = Started::start(&sway);
     let launcher = started.launcher().expect("a launcher");
-    assert!(started.acks(Request::Show), "{}", started.log());
+    assert!(started.shows_first(), "{}", started.log());
 
     let copier = sway.run_child(
         "child_copies_again_and_again",
@@ -961,7 +967,7 @@ fn on_sway_a_launcher_whose_output_is_unplugged_comes_back_on_the_next_show() {
     swaymsg(&sway, &["create_output"]);
     swaymsg(&sway, &["output", "HEADLESS-2", "position", "1280", "0"]);
     swaymsg(&sway, &["focus", "output", "HEADLESS-2"]);
-    assert!(started.acks(Request::Show), "{}", started.log());
+    assert!(started.shows_first(), "{}", started.log());
 
     swaymsg(&sway, &["output", "HEADLESS-2", "unplug"]);
 
