@@ -24,6 +24,7 @@ pub mod compass_pages;
 pub mod design;
 pub mod developer_page;
 pub mod dmenu_page;
+pub mod elided;
 pub mod emoji_page;
 pub mod extension_fields;
 pub mod extension_page;

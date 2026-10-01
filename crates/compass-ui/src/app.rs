@@ -5281,24 +5281,26 @@ impl LauncherApp {
             palette.muted
         };
 
-        let mut labels = column![
-            text(title)
-                .font(self.font())
-                .size(f32::from(geometry.title_size))
-                .color(title_color.to_iced())
-        ];
+        // One line each, elided: the row is a fixed height, and a wrapped
+        // subtitle ran into the row below it (P-07).
+        let mut labels = column![crate::elided::elided(
+            title,
+            f32::from(geometry.title_size),
+            Some(self.font()),
+            title_color.to_iced(),
+        )];
         if let Some(subtitle) = subtitle {
-            labels = labels.push(
-                text(subtitle)
-                    .font(self.font())
-                    .size(f32::from(geometry.subtitle_size))
-                    .color(subtitle_color.to_iced()),
-            );
+            labels = labels.push(crate::elided::elided(
+                subtitle,
+                f32::from(geometry.subtitle_size),
+                Some(self.font()),
+                subtitle_color.to_iced(),
+            ));
         }
 
         let line = match accessory {
             Some(accessory) => row![icon, labels.width(Length::Fill), accessory],
-            None => row![icon, labels],
+            None => row![icon, labels.width(Length::Fill)],
         }
         .spacing(12)
         .align_y(Alignment::Center)

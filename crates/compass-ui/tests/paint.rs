@@ -643,3 +643,43 @@ fn the_launcher_in_a_window_fitted_to_a_small_output_keeps_inside_it_and_scrolls
         );
     }
 }
+
+/// A LONG SUBTITLE STAYS ON ITS ROW'S ONE LINE (P-07).
+///
+/// The row is `row_height` tall and Iced's text wraps, so LibreOffice's
+/// comment took two lines and ran into the row below. It is elided now: the
+/// subtitle is laid out one line tall, and the title and subtitle together fit
+/// the row.
+#[test]
+fn a_long_subtitle_is_one_line_and_stays_in_its_row() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let comment = "Launch applications to create text documents, spreadsheets, presentations, \
+                   drawings, formulas, and databases, or open recently used documents.";
+    std::fs::write(
+        dir.path().join("office.desktop"),
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Office Suite\nComment={comment}\nExec=/bin/true\n"
+        ),
+    )
+    .expect("write a desktop entry");
+    let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+    let _ = app.update(Message::QueryChanged("Office".to_owned()));
+    let mut ui = iced_test::Simulator::with_size(
+        iced::Settings::default(),
+        iced::Size::new(768.0, 608.0),
+        app.view(),
+    );
+    let title = ui.find("Office Suite").expect("the title").bounds();
+    let subtitle = ui.find(comment).expect("the subtitle").bounds();
+    let geometry = compass_ui::design::GEOMETRY;
+    let line = f32::from(geometry.subtitle_size) * 1.3;
+    assert!(
+        subtitle.height <= line + 1.0,
+        "the subtitle is {} tall: more than one line of {line}",
+        subtitle.height
+    );
+    assert!(
+        subtitle.y + subtitle.height - title.y <= f32::from(geometry.row_height),
+        "title and subtitle overflow the row: {title:?} {subtitle:?}"
+    );
+}

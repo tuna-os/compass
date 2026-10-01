@@ -1254,6 +1254,7 @@ dependencies = [
  "compass-search",
  "compass-xdg",
  "iced",
+ "iced_core",
  "iced_layershell",
  "iced_test",
  "iced_winit",

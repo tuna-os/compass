@@ -27,6 +27,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # (already in the tree through iced's SVG, and in `compass`).
 resvg = { version = "0.45", default-features = false }
 iced_winit = { version = "0.14", features = ["wayland"] }
+# The widget traits, for `crate::elided` (already in the tree under `iced`,
+# whose `advanced` re-export would rebuild it with another feature set).
+iced_core = "0.14"
 winit = { version = "0.30", features = ["wayland"] }
 compass-core.workspace = true
 compass-search.workspace = true
