@@ -3530,9 +3530,11 @@ impl LauncherApp {
                 if let Some(power) = self.power_confirm {
                     return match key.as_ref() {
                         Key::Named(Named::Enter) => self.run_power_command(power),
+                        // Back to the search, as the generic confirmation
+                        // above: the field lost the focus to the question.
                         Key::Named(Named::Escape) => {
                             self.power_confirm = None;
-                            Task::none()
+                            focus_search()
                         }
                         _ => Task::none(),
                     };
@@ -10863,8 +10865,12 @@ mod tests {
             let mut ui = iced_test::simulator(app.view());
             assert!(ui.find("Enter: Reboot System    Esc: cancel").is_ok());
         }
-        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        let cancelled = app.update(pressed(iced::keyboard::key::Named::Escape));
         assert!(app.power_confirm.is_none());
+        assert!(
+            cancelled.units() > 0,
+            "Escape gives the search field its focus back (P-03)"
+        );
         assert!(
             backend.powered.lock().unwrap().is_empty(),
             "Escape runs nothing"
