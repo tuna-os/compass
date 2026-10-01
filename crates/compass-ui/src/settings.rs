@@ -146,6 +146,9 @@ pub struct ProviderInfo {
 pub struct SidebarModel {
     rows: Vec<SidebarRow>,
     query: String,
+    /// Rows the query reached through a setting on them rather than their
+    /// name, by key, with that setting's score.
+    hits: Vec<(String, u32)>,
 }
 
 impl SidebarModel {
@@ -176,6 +179,36 @@ impl SidebarModel {
         }
         self.query = query;
         self.rebuild(providers);
+    }
+
+    /// [`set_query`](Self::set_query), with the pages a setting on them
+    /// matched: each `(row key, score)` keeps its row listed even when its
+    /// name does not match, ranked by the better of the two scores.
+    pub fn set_query_with_hits(
+        &mut self,
+        query: String,
+        providers: &[ProviderInfo],
+        hits: Vec<(String, u32)>,
+    ) {
+        self.query = query;
+        self.hits = hits;
+        self.rebuild(providers);
+    }
+
+    /// The best score a setting on the row `key` scored.
+    fn hit(&self, key: &str) -> Option<u32> {
+        self.hits
+            .iter()
+            .filter(|(row, _)| row == key)
+            .map(|(_, score)| *score)
+            .max()
+    }
+
+    /// The better of a name's match and a setting's on the row.
+    fn row_score(&self, key: &str, label: &str, query: &Query) -> Option<u32> {
+        let named = score_weighted(&[WeightedField::new(label, 1.0)], query);
+        let named = named.accepted().then_some(named.score);
+        named.max(self.hit(key))
     }
 
     /// Index of the row with `key`, or -1 when absent.
@@ -298,10 +331,9 @@ impl SidebarModel {
         let mut scored: Vec<(u32, SidebarRow)> = Vec::new();
 
         for page in SettingsPage::ALL {
-            let matched = score_weighted(&[WeightedField::new(page.label(), 1.0)], &query);
-            if matched.accepted() {
+            if let Some(score) = self.row_score(page.key(), page.label(), &query) {
                 scored.push((
-                    matched.score,
+                    score,
                     SidebarRow {
                         key: page.key().to_owned(),
                         kind: SidebarKind::Core,
@@ -313,11 +345,9 @@ impl SidebarModel {
         }
 
         for provider in &visible_providers {
-            let matched =
-                score_weighted(&[WeightedField::new(&provider.display_name, 1.0)], &query);
-            if matched.accepted() {
+            if let Some(score) = self.row_score(&provider.id, &provider.display_name, &query) {
                 scored.push((
-                    matched.score,
+                    score,
                     SidebarRow {
                         key: provider.id.clone(),
                         kind: if provider.is_group {

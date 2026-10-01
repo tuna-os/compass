@@ -193,6 +193,8 @@ pub struct SettingsPage {
     pub focused: Option<Control>,
     /// The option highlighted in the focused dropdown, while it is open.
     pub menu: Option<usize>,
+    /// The settings the search matched by label or description, best first.
+    pub matches: Vec<String>,
 }
 
 impl SettingsPage {
@@ -219,6 +221,7 @@ impl SettingsPage {
             notice: None,
             focused: None,
             menu: None,
+            matches: Vec::new(),
         };
         if let Some(tab) = tab {
             page.open_tab(tab);
@@ -252,18 +255,86 @@ impl SettingsPage {
         self.selected = row;
     }
 
-    /// Filters the sidebar, keeping the selected page when it still shows.
+    /// Filters the sidebar by page name and by each setting's label and
+    /// description, fuzzily, and shows the page of the best match; with
+    /// nothing typed, the page shown stays.
     pub fn set_query(&mut self, query: String) {
         let key = self.selected_key().to_owned();
         let infos = provider_infos(&self.providers);
-        self.sidebar.set_query(query.clone(), &infos);
+        let matched = self.setting_matches(&query);
+        let hits = matched
+            .iter()
+            .map(|(row, _, score)| (row.clone(), *score))
+            .collect();
+        self.matches = matched.into_iter().map(|(_, key, _)| key).collect();
+        self.sidebar
+            .set_query_with_hits(query.clone(), &infos, hits);
         self.query = query;
         let row = self.sidebar.index_of_key(&key);
-        self.select_row(if row >= 0 && !key.is_empty() {
+        self.select_row(if self.query.is_empty() && row >= 0 && !key.is_empty() {
             row
         } else {
             self.sidebar.first_selectable_row()
         });
+    }
+
+    /// Every setting whose label or description `query` matches, as
+    /// `(sidebar row key, setting key, score)`, best first. A setting under
+    /// a provider that is not listed is left out.
+    fn setting_matches(&self, query: &str) -> Vec<(String, String, u32)> {
+        use compass_search::{Query, WeightedField, score_weighted};
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        let query = Query::new(query);
+        let mut matched: Vec<(String, String, u32)> = settings_catalog::catalog()
+            .into_iter()
+            .filter_map(|setting| {
+                let row = match &setting.scope {
+                    Scope::Core(page) => page.id().to_owned(),
+                    Scope::Provider(id) => (*id).to_owned(),
+                    Scope::Command(item) => compass_core::root_items::split_entrypoint_id(item)
+                        .map_or_else(|| item.clone(), |(provider, _)| provider.to_owned()),
+                };
+                if !self.sidebar_lists(&row) {
+                    return None;
+                }
+                let found = score_weighted(
+                    &[
+                        WeightedField::new(setting.label, 1.0),
+                        WeightedField::new(setting.description, 0.5),
+                    ],
+                    &query,
+                );
+                found.accepted().then(|| (row, setting.key, found.score))
+            })
+            .collect();
+        matched.sort_by(|left, right| right.2.cmp(&left.2));
+        matched
+    }
+
+    /// Whether `key` is a page the sidebar can list: a core page or a
+    /// provider.
+    fn sidebar_lists(&self, key: &str) -> bool {
+        CorePage::ALL.iter().any(|page| page.id() == key)
+            || self.providers.iter().any(|provider| provider.id == key)
+    }
+
+    /// Whether the search matched `key`, a setting on the page on show.
+    #[must_use]
+    pub fn is_match(&self, key: &str) -> bool {
+        !self.query.is_empty() && self.matches.iter().any(|matched| matched == key)
+    }
+
+    /// The best match on the page on show, which the page scrolls to and
+    /// Enter in the search field moves the keyboard to.
+    #[must_use]
+    pub fn first_match_shown(&self) -> Option<String> {
+        let controls = self.controls(None);
+        self.matches
+            .iter()
+            .find(|key| controls.contains(&Control::Setting((*key).clone())))
+            .cloned()
     }
 
     /// Moves the sidebar selection one selectable row.
@@ -735,14 +806,49 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_keeps_the_page_when_it_still_matches() {
+    fn the_filter_shows_the_best_match_and_nothing_when_nothing_does() {
         let mut page = page(Some("@me/notes"));
-        page.set_query("not".into());
+        page.set_query("notes".into());
         assert_eq!(page.selected_key(), "@me/notes");
         page.set_query("appear".into());
         assert_eq!(page.shown(), Shown::Core(CorePage::Appearance));
         page.set_query("zzzz".into());
         assert_eq!(page.shown(), Shown::Nothing);
+    }
+
+    #[test]
+    fn a_setting_is_found_by_its_label_and_its_page_shown() {
+        let mut page = page(Some("about"));
+        page.set_query("quick launch".into());
+        assert_eq!(page.shown(), Shown::Core(CorePage::General));
+        assert_eq!(
+            page.matches.first().map(String::as_str),
+            Some("launcher.quick_launch")
+        );
+        assert_eq!(
+            page.first_match_shown().as_deref(),
+            Some("launcher.quick_launch")
+        );
+        assert!(page.is_match("launcher.quick_launch"));
+
+        page.set_query("translucnt".into());
+        assert_eq!(page.shown(), Shown::Core(CorePage::Appearance), "fuzzily");
+        assert!(page.is_match("launcher.appearance.tint"));
+
+        page.set_query(String::new());
+        assert!(!page.is_match("launcher.appearance.tint"));
+        assert_eq!(
+            page.shown(),
+            Shown::Core(CorePage::Appearance),
+            "the page stays"
+        );
+    }
+
+    #[test]
+    fn a_setting_is_found_by_its_description() {
+        let mut page = page(None);
+        page.set_query("ctrl+1".into());
+        assert!(page.is_match("launcher.quick_launch"), "{:?}", page.matches);
     }
 
     #[test]

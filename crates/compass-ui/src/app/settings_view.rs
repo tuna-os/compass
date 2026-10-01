@@ -194,6 +194,13 @@ impl LauncherApp {
             Key::Named(Named::ArrowUp) => Some(Direction::Up),
             _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
         };
+        // Enter in the search field takes the keyboard to the best match.
+        if key.as_ref() == Key::Named(Named::Enter)
+            && let Some(matched) = page.first_match_shown()
+        {
+            page.focused = Some(Control::Setting(matched));
+            return self.settings_focus_task();
+        }
         if let Some(direction) = direction {
             let before = page.selected;
             page.step(direction == Direction::Down);
@@ -340,9 +347,13 @@ impl LauncherApp {
                 if let Page::Settings(page) = &mut self.page {
                     let before = page.selected;
                     page.set_query(query);
+                    // The best match is highlighted on its page and
+                    // scrolled to.
+                    let reveal = crate::scroll::reveal_settings_focus();
                     if page.selected != before {
-                        return shown_page_changed();
+                        return shown_page_changed().chain(reveal);
                     }
+                    return reveal;
                 }
                 Task::none()
             }
@@ -894,6 +905,39 @@ impl LauncherApp {
             .into()
     }
 
+    /// A row the search matched: tinted with the accent, and the best one is
+    /// what the page scrolls to while the search field has the keyboard.
+    fn settings_match<'a>(
+        &self,
+        page: &SettingsPage,
+        key: &str,
+        row: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let tinted = container(row)
+            .width(Length::Fill)
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(
+                    iced::Color {
+                        a: 0.10,
+                        ..palette.accent.to_iced()
+                    }
+                    .into(),
+                ),
+                border: iced::Border {
+                    color: palette.accent.to_iced(),
+                    width: 1.0,
+                    radius: adwaita::CONTROL_RADIUS.into(),
+                },
+                ..iced::widget::container::Style::default()
+            });
+        if page.focused.is_none() && page.first_match_shown().as_deref() == Some(key) {
+            tinted.id(crate::scroll::SETTINGS_FOCUS).into()
+        } else {
+            tinted.into()
+        }
+    }
+
     /// A flat, Adwaita-style button.
     fn settings_button<'a>(&self, label: String, size: f32) -> iced::widget::Button<'a, Message> {
         let palette = self.palette();
@@ -1051,6 +1095,11 @@ impl LauncherApp {
                 let open = page
                     .menu
                     .filter(|_| page.has_focus(&Control::Setting(setting.key.clone())));
+                let row = if page.is_match(&setting.key) {
+                    self.settings_match(page, &setting.key, row)
+                } else {
+                    row
+                };
                 let row = match open {
                     Some(highlighted) => {
                         let current = page.value(setting);
