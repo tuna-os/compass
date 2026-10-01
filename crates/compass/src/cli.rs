@@ -75,15 +75,34 @@ pub const DEEPLINK_SCHEMES: [&str; 4] = ["compass", "vicinae", "raycast", "com.r
 /// <url>`; anything else unchanged.
 #[must_use]
 pub fn with_deeplink(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
-    let is_deeplink = args.get(1).and_then(|arg| arg.to_str()).is_some_and(|arg| {
-        arg.split_once(':')
-            .is_some_and(|(scheme, _)| DEEPLINK_SCHEMES.contains(&scheme))
-    });
+    // The first argument that is not a global option or its value: the
+    // subcommand, or the bare URL. `compass --socket <path> compass://...`
+    // is as much a bare deeplink as `compass compass://...`.
+    let mut at = 1;
+    while let Some(arg) = args.get(at).and_then(|arg| arg.to_str()) {
+        if GLOBAL_OPTIONS_WITH_VALUE.contains(&arg) {
+            at += 2;
+        } else if arg.starts_with('-') && arg != "-" {
+            at += 1;
+        } else {
+            break;
+        }
+    }
+    let is_deeplink = args
+        .get(at)
+        .and_then(|arg| arg.to_str())
+        .is_some_and(|arg| {
+            arg.split_once(':')
+                .is_some_and(|(scheme, _)| DEEPLINK_SCHEMES.contains(&scheme))
+        });
     if is_deeplink {
-        args.insert(1, "deeplink".into());
+        args.insert(at, "deeplink".into());
     }
     args
 }
+
+/// The global options that take their value as the next argument.
+const GLOBAL_OPTIONS_WITH_VALUE: [&str; 2] = ["--socket", "--engine"];
 
 impl Cli {
     /// The socket path this invocation should use.
@@ -604,6 +623,16 @@ mod tests {
             with_deeplink(argv(&["compass", "toggle"])),
             argv(&["compass", "toggle"])
         );
+        let url = "compass://launch/commands/clipboard-history";
+        for args in [
+            &["compass", "--socket", "/tmp/s", url][..],
+            &["compass", "-v", "--engine=rust", url][..],
+            &["compass", "--engine", "rust", "-vv", url][..],
+        ] {
+            let parsed = Cli::try_parse_from(with_deeplink(argv(args)))
+                .unwrap_or_else(|err| panic!("{args:?}: {err}"));
+            assert_eq!(parsed.command, Command::Deeplink { url: url.into() });
+        }
         assert_eq!(
             with_deeplink(argv(&["compass", "https://example.com"])),
             argv(&["compass", "https://example.com"]),
