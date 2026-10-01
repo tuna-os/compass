@@ -4127,9 +4127,11 @@ impl LauncherApp {
                     }
                     // Text in the field is cleared first, and only an empty
                     // field hides: `NavigationController::goBack` at the
-                    // root search, as Raycast does.
+                    // root search, as Raycast does. The field gives up its
+                    // focus on Escape, so it is handed back for the next key.
                     Key::Named(Named::Escape) if !self.query.is_empty() => {
-                        return self.update(Message::QueryChanged(String::new()));
+                        let cleared = self.update(Message::QueryChanged(String::new()));
+                        return Task::batch([cleared, focus_search()]);
                     }
                     Key::Named(Named::Escape) => return self.update(Message::Dismiss),
                     // A message (a script's line, an error) stands in place
