@@ -36,7 +36,10 @@ fn the_telemetry_notice_says_what_the_cpp_says() {
     );
     assert_eq!(item.icon, "megaphone");
     assert_eq!(item.icon_background_tint, "Yellow");
-    assert_eq!(item.learn_more_url, "https://docs.vicinae.com/telemetry");
+    assert_eq!(
+        item.learn_more_url,
+        "https://tunaos.org/docs/compass/getting-started#privacy"
+    );
 }
 
 #[test]

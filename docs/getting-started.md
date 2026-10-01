@@ -1,0 +1,126 @@
+# Getting started with Compass
+
+Compass is a keyboard launcher for the Linux desktop. Open it with a key, type a few letters, and
+press Enter to start an application, run a command, or search your clipboard history, files and
+more.
+
+## Install
+
+Compass is published in the TunaOS Flatpak remote. Its runtime comes from Flathub, so add both:
+
+```sh
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak remote-add --if-not-exists tuna-os https://tunaos.org/flatpak/tuna-os.flatpakrepo
+flatpak install tuna-os org.tunaos.compass
+```
+
+The AppImage, the Arch package (`compass-git`), the Nix flake and building from source are
+described in the [README](https://github.com/tuna-os/compass#install).
+
+## First run
+
+Open **Compass** from your application grid. The first time, a short setup walks you through the
+theme, the keyboard shortcut and a few recommended extensions. You can change all of them later.
+
+Compass then keeps running in the background. Press Escape to hide the launcher, and your
+keyboard shortcut to bring it back.
+
+The examples on this page use the `compass` command. From the Flatpak, run it as
+`flatpak run org.tunaos.compass`, for example `flatpak run org.tunaos.compass toggle`.
+
+## Set a keyboard shortcut
+
+The launcher opens with `compass toggle`, which shows it or hides it. Compass has to be running
+for this to work: open it once from the application grid, or run `compass start --hidden` when you
+log in.
+
+Compass asks for <kbd>Super</kbd>+<kbd>Space</kbd> by default. To change it, run **Open Settings**
+and set **Launcher hotkey** under General, or set `launcher.hotkey` in the configuration file.
+
+### GNOME
+
+On GNOME 48 and later, Compass asks for the shortcut through the desktop's GlobalShortcuts portal
+when it starts. GNOME shows a dialog that names the shortcut "Open the Compass launcher". Accept
+it, and the key opens Compass from then on.
+
+If you declined the dialog, or you prefer a different key, add a custom shortcut instead:
+
+1. Open **Settings**, then **Keyboard**, then **View and Customize Shortcuts**.
+2. Choose **Custom Shortcuts** and add one.
+3. Set the command to `compass toggle` (or `flatpak run org.tunaos.compass toggle`) and pick a
+   key.
+
+### KDE Plasma
+
+Plasma provides the same GlobalShortcuts portal, so Compass asks for the shortcut when it starts.
+To use another key, open **System Settings**, then **Keyboard**, then **Shortcuts**, add a new
+command shortcut, and set its command to `compass toggle`.
+
+### Sway, Hyprland and niri
+
+Bind the key in your compositor's configuration file.
+
+Sway, in `~/.config/sway/config`:
+
+```text
+bindsym $mod+space exec compass toggle
+```
+
+Hyprland, in `~/.config/hypr/hyprland.conf`:
+
+```text
+bind = SUPER, SPACE, exec, compass toggle
+```
+
+niri, in the `binds` section of `~/.config/niri/config.kdl`:
+
+```kdl
+Mod+Space { spawn "compass" "toggle"; }
+```
+
+Reload the compositor's configuration after you edit it.
+
+### Other desktops
+
+Compass binds the key itself where the compositor offers a hotkey protocol (`xx-hotkey-v1`) or
+the GlobalShortcuts portal. Anywhere else, bind a key to `compass toggle` in your desktop's
+keyboard settings.
+
+`compass doctor` says which of these mechanisms your session has.
+
+## Extensions
+
+Extensions add commands to Compass. Open the launcher and search for **Extension Store** to browse
+community extensions, or **Raycast Store** to install Raycast extensions. Each Raycast extension
+shows how well it works on Linux. Installed extensions show up in the launcher's search right away.
+
+Compass runs extensions written for Vicinae unchanged. To write your own, see the
+[Vicinae extension documentation](https://docs.vicinae.com/extensions/introduction).
+
+## Configuration
+
+Settings are stored in `~/.config/compass/compass.json`. The Flatpak keeps its own copy in
+`~/.var/app/org.tunaos.compass/config/compass/compass.json`. Most settings can be changed with the
+**Open Settings** command, and the file has a
+[JSON Schema](https://github.com/tuna-os/compass/blob/main/packaging/schema/compass.schema.json)
+that editors can use for completion.
+
+If you used Vicinae before, Compass moves its settings over on first start.
+
+## Privacy
+
+Compass sends no telemetry. It checks for updates on GitHub, and you can turn that check off.
+
+## Troubleshooting
+
+`compass doctor` checks what works on your machine and explains what is missing, such as the
+GlobalShortcuts portal or the GNOME Shell helper extension:
+
+```sh
+compass doctor
+compass doctor --check-only
+```
+
+`--check-only` prints only the problems. When you
+[report a bug](https://github.com/tuna-os/compass/issues/new), include the full `compass doctor`
+output, your distribution and desktop, and how you installed Compass.

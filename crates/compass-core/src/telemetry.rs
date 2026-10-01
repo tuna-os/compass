@@ -53,8 +53,9 @@ pub const SYSTEM_INFO_PATH: &str = "/telemetry/system-info";
 /// The endpoint that unlinks a user id from past records.
 pub const FORGET_PATH: &str = "/telemetry/forget";
 
-/// What the C++ prints when telemetry is switched on.
-pub const DOC_TELEMETRY_URL: &str = "https://docs.vicinae.com/telemetry";
+/// What the C++ prints when telemetry is switched on. Compass sends none,
+/// so this is the guide's privacy section, which says so.
+pub const DOC_TELEMETRY_URL: &str = "https://tunaos.org/docs/compass/getting-started#privacy";
 
 /// The base URL to post to, honouring [`API_URL_ENV`].
 #[must_use]

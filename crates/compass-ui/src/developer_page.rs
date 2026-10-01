@@ -103,8 +103,9 @@ pub fn success_markdown(title: &str, path: &str) -> String {
          For commands from this extension to be picked up, you need to run your extension in \
          development mode at least once:\n\n\
          ```bash\ncd '{path}'\nnpm install\nnpm run dev\n```\n\n\
-         You can learn more about extension development in the \
-         [Vicinae documentation](https://docs.vicinae.com/).\n"
+         Compass runs extensions built with the Vicinae SDK. You can learn more about \
+         extension development in the \
+         [Vicinae SDK documentation](https://docs.vicinae.com/extensions/introduction).\n"
     )
 }
 

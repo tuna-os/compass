@@ -54,7 +54,7 @@ pub const ALL_ITEMS: &[NewsItem] = &[NewsItem {
     subtitle: "We now collect basic usage statistics on startup",
     icon: "megaphone",
     icon_background_tint: "Yellow",
-    learn_more_url: "https://docs.vicinae.com/telemetry",
+    learn_more_url: "https://tunaos.org/docs/compass/getting-started#privacy",
 }];
 
 /// What is kept on disk.

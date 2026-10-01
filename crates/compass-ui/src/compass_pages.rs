@@ -288,14 +288,14 @@ The Vicinae extension store features community-built extensions that have been a
 
 Every extension listed here has its source code available in the [vicinaehq/extensions](https://github.com/vicinaehq/extensions) repository.
 
-If you're looking to build your own extension, take a look at the [documentation](https://docs.vicinae.com/extensions/introduction). If you think your extension would be a good fit for the store, feel free to submit it!
+If you're looking to build your own extension, take a look at the [Vicinae SDK documentation](https://docs.vicinae.com/extensions/introduction), which Compass extensions use too. If you think your extension would be a good fit for the store, feel free to submit it!
 ";
 
 /// The Raycast store's intro (`RaycastStoreCommand`'s `INTRO`, with its
 /// compatibility sheet, which this store shows).
 pub const RAYCAST_STORE_INTRO: &str = "# Welcome to the Raycast Extension Store
 
-Compass provides direct integration with the official [Raycast store](https://www.raycast.com/store), allowing you to search and install Raycast extensions directly from Vicinae.
+Compass provides direct integration with the official [Raycast store](https://www.raycast.com/store), allowing you to search and install Raycast extensions directly from Compass.
 
 Each extension has a colored compatibility indicator showing how well it works on Linux.
 
