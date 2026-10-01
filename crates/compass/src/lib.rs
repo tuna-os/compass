@@ -439,7 +439,15 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
 fn onboarding_due() -> Option<std::path::PathBuf> {
     use compass_core::onboarding;
     let disabled = onboarding::disabled_by(std::env::var_os(onboarding::DISABLE_ENV).as_deref());
-    onboarding::default_path().filter(|path| onboarding::should_show(path, disabled))
+    let path = onboarding::default_path().filter(|path| onboarding::should_show(path, disabled))?;
+    let migrated = compass_core::xdg_dirs::config_home()
+        .is_some_and(|home| onboarding::came_from_vicinae(&home));
+    if migrated {
+        tracing::info!("settings carried over from Vicinae; skipping the first-run setup");
+        let _ = onboarding::mark_completed(&path, &jiff::Timestamp::now().to_string());
+        return None;
+    }
+    Some(path)
 }
 
 /// Whether each power command asks first, from its `confirm` preference

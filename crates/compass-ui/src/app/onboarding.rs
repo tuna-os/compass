@@ -4,9 +4,11 @@
 //! extensions" step before the last, which installs through the same backend
 //! call as the store's detail page.
 //!
-//! Finishing records the flow in `onboarding.json` and hides, as
-//! `OnboardingWindow::finish`; closing does not record it, so the next start
-//! shows it again, as closing the C++'s window does.
+//! Finishing records the flow in `onboarding.json` and leaves the launcher
+//! open at its search. Closing it, with Escape or the hotkey, records it too:
+//! unlike Vicinae, which asks again at the next start, Compass does not show
+//! it at every login to someone who has already dismissed it. Started with
+//! `--hidden`, the flow waits for the first summon.
 
 use iced::keyboard::{Key, key::Named};
 use iced::widget::{Space, button, column, container, pick_list, row, text};
@@ -26,6 +28,18 @@ const SHORTCUTS_AVAILABLE: bool = false;
 
 /// Why Install did nothing, as the store pages say it.
 const NEEDS_ENGINE: &str = "Installing extensions needs the Compass engine";
+
+/// Records the flow as seen, now. A file that cannot be written is logged:
+/// the cost is seeing the flow again, not losing anything.
+pub(super) fn record_completed(path: &std::path::Path) {
+    let completed_at = jiff::Timestamp::now()
+        .round(jiff::Unit::Second)
+        .unwrap_or_else(|_| jiff::Timestamp::now())
+        .to_string();
+    if let Err(error) = onboarding::mark_completed(path, &completed_at) {
+        tracing::warn!(%error, path = %path.display(), "could not write the onboarding state file");
+    }
+}
 
 impl LauncherApp {
     /// Opens the flow at its first step, recording to `state_path`.
@@ -70,16 +84,11 @@ impl LauncherApp {
             Message::OnboardingContinue => match page.flow.advance() {
                 Advance::Next => Task::none(),
                 Advance::Finish => {
-                    let completed_at = jiff::Timestamp::now()
-                        .round(jiff::Unit::Second)
-                        .unwrap_or_else(|_| jiff::Timestamp::now())
-                        .to_string();
-                    if let Err(error) = onboarding::mark_completed(&page.state_path, &completed_at)
-                    {
-                        tracing::warn!(%error, path = %page.state_path.display(),
-                            "could not write the onboarding state file");
-                    }
-                    self.conceal()
+                    // Finish leaves the launcher open at its search, so the
+                    // first thing after setting it up is using it.
+                    record_completed(&page.state_path);
+                    self.page = Page::Root;
+                    super::focus_search()
                 }
             },
             Message::OnboardingBack => {

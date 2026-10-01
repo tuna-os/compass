@@ -953,6 +953,9 @@ pub struct LauncherApp {
     known_files: std::collections::HashSet<std::path::PathBuf>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
+    /// The first-run flow, when it is due but the launcher started hidden:
+    /// it opens with the first summon rather than at login.
+    pending_onboarding: Option<std::path::PathBuf>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
     appearance: Appearance,
     /// Where later appearance changes arrive. See [`AppFlags::appearance_link`].
@@ -1301,13 +1304,16 @@ impl LauncherApp {
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
         let onboarding = flags.onboarding.clone();
-        let hidden = flags.start_hidden && flags.link.is_some() && onboarding.is_none();
+        let hidden = flags.start_hidden && flags.link.is_some();
         let (mut app, task) = Self::new(flags);
+        if hidden {
+            // `compass start --hidden` runs at login: the flow waits for the
+            // first time someone opens the launcher.
+            app.pending_onboarding = onboarding;
+            return (app, task);
+        }
         if let Some(path) = onboarding {
             app.open_onboarding(path);
-        }
-        if hidden {
-            return (app, task);
         }
         let opened = app.open_window();
         (app, Task::batch([task, opened]))
@@ -1365,6 +1371,7 @@ impl LauncherApp {
             masked: crate::icons::MaskedCache::default(),
             known_files: std::collections::HashSet::new(),
             theme_preview: None,
+            pending_onboarding: None,
             appearance: Appearance::Light,
             appearance_link: None,
             font_family: None,
@@ -1487,6 +1494,11 @@ impl LauncherApp {
     /// stayed on screen after launching is a bug report waiting to happen; a
     /// launcher that vanished with no way back is a worse one.
     fn conceal(&mut self) -> Task<Message> {
+        // Dismissing the first-run flow, by Escape or the hotkey, counts as
+        // having seen it: it is not shown again at every login.
+        if let Page::Onboarding(page) = &self.page {
+            onboarding::record_completed(&page.state_path);
+        }
         self.cancel_search();
         self.panel = None;
         // Leaving Set Theme without choosing puts the theme back, as
@@ -2023,6 +2035,12 @@ impl LauncherApp {
         if !show {
             self.summoned_at = None;
             return self.conceal();
+        }
+
+        if matches!(command, UiCommand::Show | UiCommand::Toggle)
+            && let Some(path) = self.pending_onboarding.take()
+        {
+            self.open_onboarding(path);
         }
 
         if self.window.is_none() || self.closing {
@@ -6844,17 +6862,46 @@ mod tests {
     }
 
     #[test]
-    fn a_due_onboarding_opens_the_window_even_when_started_hidden() {
+    fn a_due_onboarding_started_hidden_waits_for_the_first_summon() {
         let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compass/onboarding.json");
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (mut app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            onboarding: Some(path.clone()),
+            ..AppFlags::default()
+        });
+        assert!(app.pending_window.is_none(), "login stays quiet");
+        assert!(!app.showing_onboarding());
+
+        let _ = app.update(Message::Command(UiCommand::Toggle));
+        assert!(app.pending_window.is_some(), "the first summon opens it");
+        assert_eq!(
+            app.onboarding_step(),
+            Some(compass_core::onboarding::Step::Welcome)
+        );
+
+        // Dismissed with the hotkey: seen, and not shown at the next login.
+        let _ = app.update(Message::Command(UiCommand::Toggle));
+        assert!(!app.showing_onboarding());
+        assert!(!compass_core::onboarding::should_show(&path, false));
+        let _ = app.update(Message::Command(UiCommand::Toggle));
+        assert!(!app.showing_onboarding(), "once is enough");
+
         let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
         let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
         let (app, _) = LauncherApp::boot(AppFlags {
-            start_hidden: true,
+            start_hidden: false,
             link: Some(EngineLink::new(receiver, sender)),
-            onboarding: Some(dir.path().join("compass/onboarding.json")),
+            onboarding: Some(dir.path().join("other/onboarding.json")),
             ..AppFlags::default()
         });
-        assert!(app.pending_window.is_some(), "the flow is put on screen");
+        assert!(
+            app.pending_window.is_some(),
+            "started shown, it opens at once"
+        );
         assert_eq!(
             app.onboarding_step(),
             Some(compass_core::onboarding::Step::Welcome)
@@ -6907,12 +6954,16 @@ mod tests {
         assert_eq!(app.onboarding_step(), Some(Step::Complete));
         assert!(onboarding::should_show(&path, false), "not before Finish");
         let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
-        assert!(!app.showing_onboarding(), "Finish hides the flow");
+        assert!(!app.showing_onboarding(), "Finish closes the flow");
+        assert!(
+            matches!(app.page, Page::Root),
+            "and leaves the launcher open at its search"
+        );
         assert!(!onboarding::should_show(&path, false), "and records it");
     }
 
     #[test]
-    fn escape_closes_the_onboarding_without_recording_it() {
+    fn escape_closes_the_onboarding_and_records_it_as_seen() {
         use compass_core::onboarding;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(onboarding::FILE_NAME);
@@ -6928,7 +6979,10 @@ mod tests {
         assert_eq!(app.onboarding_step(), Some(onboarding::Step::Extensions));
         let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
         assert!(!app.showing_onboarding());
-        assert!(!path.exists(), "the next start asks again");
+        assert!(
+            !onboarding::should_show(&path, false),
+            "not asked again at every login"
+        );
     }
 
     #[test]
