@@ -3,7 +3,7 @@
 //!
 //! A hand edit, `compass theme set` or `compass config set` used to change
 //! nothing until the next start. Both processes now watch the file: the
-//! engine re-applies what it holds ([`crate::serve::settings::apply_all`]),
+//! engine re-applies what it holds (`serve::settings::apply_all`),
 //! and the launcher window re-reads its settings (`compass_ui`'s
 //! `ConfigLink`). The watch is on the file's directory rather than the file,
 //! because editors save by writing a new file and renaming it over the old
