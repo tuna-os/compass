@@ -53,7 +53,8 @@ impl std::fmt::Debug for TrayHost {
 }
 
 /// Why a tray request cannot be answered.
-pub const UNAVAILABLE: &str = "the tray is unavailable: the engine has no session bus";
+pub const UNAVAILABLE: &str =
+    "the tray is unavailable because Compass could not reach the D-Bus session bus";
 
 impl TrayHost {
     /// Starts the host, if it has not been; `false` when it cannot.

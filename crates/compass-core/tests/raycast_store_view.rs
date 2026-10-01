@@ -198,7 +198,7 @@ fn a_failure_to_load_quotes_the_identifier_back() {
 fn the_detail_page_is_titled_after_the_extension() {
     assert_eq!(
         detail_navigation_title("Slack Status"),
-        "Extension Store - Slack Status"
+        "Raycast Store - Slack Status"
     );
 }
 

@@ -57,7 +57,7 @@ fn the_descriptions_are_the_ones_the_user_reads() {
     // hibernate and suspend ones exist to tell the user which is which.
     assert_eq!(
         get("hibernate").description,
-        "Suspend the system to disk. This turns off the system completely and saves its state on disk, to be restored on next boot."
+        "Save the session to disk and turn the computer off. It comes back as it was at the next start."
     );
     assert_eq!(
         get("suspend").description,
@@ -157,8 +157,8 @@ fn a_command_that_asks_first_puts_the_dialog_before_everything() {
             body: CONFIRM_BODY,
         }
     );
-    assert_eq!(CONFIRM_TITLE, "Are you sure");
-    assert_eq!(CONFIRM_BODY, "High-impact operation, please confirm");
+    assert_eq!(CONFIRM_TITLE, "Are you sure?");
+    assert_eq!(CONFIRM_BODY, "This affects your whole session.");
     assert!(steps.contains(&Step::Perform { id: "reboot" }));
 }
 

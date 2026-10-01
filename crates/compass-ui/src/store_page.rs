@@ -310,7 +310,7 @@ pub struct StoreDetailPage {
     pub store: Store,
     /// Everything the engine sent.
     pub detail: StoreDetail,
-    /// The navigation title, `Extension Store - <title>`.
+    /// The navigation title: the store's name, then the extension's.
     pub title: String,
     /// Its Markdown, parsed.
     pub markdown: Vec<iced::widget::markdown::Item>,
@@ -329,7 +329,12 @@ impl StoreDetailPage {
     #[must_use]
     pub fn new(store: Store, detail: StoreDetail) -> Self {
         let markdown = iced::widget::markdown::parse(&detail.markdown).collect();
-        let title = compass_core::raycast_store_view::detail_navigation_title(&detail.row.title);
+        let title = match store {
+            Store::Raycast => {
+                compass_core::raycast_store_view::detail_navigation_title(&detail.row.title)
+            }
+            Store::Vicinae => format!("Vicinae Store - {}", detail.row.title),
+        };
         Self {
             store,
             detail,

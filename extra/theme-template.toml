@@ -2,11 +2,14 @@
 # You don't need to define all of these: only override what you want to customize.
 # Undefined colors will be automatically derived from core colors or inherited from base themes.
 #
-# Check out the full documentation at https://docs.vicinae.com/theming/getting-started
+# Save a copy in one of the folders `compass theme paths` lists, check it with
+# `compass theme check <file>`, and choose it in Settings or with `compass theme set` and the
+# file name without `.toml`.
+# See https://tunaos.org/docs/compass/getting-started#themes
 
 [meta]
-name = "Vicinae Dark"
-description = "Default Vicinae dark palette"
+name = "My Dark Theme"
+description = "A dark theme based on the default palette"
 variant = "dark"                              # "dark" | "light": impacts what icon to show in some circumstances
 inherits = "vicinae-dark"
 icon = "icons/theme-name.png"                 # Optional: path to theme icon (relative to the theme directory it is placed in if not an absolute path)

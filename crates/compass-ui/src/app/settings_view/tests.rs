@@ -570,3 +570,37 @@ fn clear_the_search_on_close_empties_the_query_only_when_it_is_on() {
     let _ = app.conceal();
     assert_eq!(app.query, "", "on: the next summon starts empty");
 }
+
+#[test]
+fn an_item_the_search_lists_is_not_offered_again_as_a_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    app.fallbacks = vec![compass_core::commands::SEARCH_FILES_FALLBACK_ID.to_owned()];
+    let _ = app.update(Message::QueryChanged("docs".into()));
+    let search_files = app
+        .results
+        .iter()
+        .filter(|row| match row {
+            crate::app::RootRow::Command(command) => command.entrypoint == "search-files",
+            crate::app::RootRow::Fallback(crate::app::Fallback::Command(command)) => {
+                command.entrypoint == "search-files"
+            }
+            _ => false,
+        })
+        .count();
+    assert_eq!(search_files, 1, "{}", app.state_line());
+
+    // A query that does not find it still offers it as the fallback.
+    let _ = app.update(Message::QueryChanged("quarterly".into()));
+    assert!(
+        app.results
+            .iter()
+            .any(|row| matches!(row, crate::app::RootRow::Fallback(_)))
+    );
+}
+
+#[test]
+fn hibernate_does_not_answer_store() {
+    let hibernate = compass_core::power_commands::command("hibernate").unwrap();
+    assert!(!hibernate.description.to_lowercase().contains("store"));
+}

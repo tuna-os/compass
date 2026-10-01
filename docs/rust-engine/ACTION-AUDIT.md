@@ -391,31 +391,31 @@ sidebar page, so a control is audited without anyone naming it.
 | Commands › Record(Item("commands:toggle-fullscreen")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:toggle-floating")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:toggle-fullscreen", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:toggle-overview")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:toggle-floating", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:search-emojis")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:search-emojis", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.files.preferences.autoIndexing", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:manage-shortcuts")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:create-snippet")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:manage-shortcuts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:create-snippet", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:manage-snippets")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.snippets.preferences.enabled", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.snippets.preferences.undo", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:create-extension")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:create-extension", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:raycast-store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:raycast-store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:power-off")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:power-off", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.power.entrypoints.power-off.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:reboot")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:reboot", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.power.entrypoints.sleep.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:lock")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:lock", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.power.entrypoints.logout.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:suspend")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Changed("providers.power.entrypoints.hibernate.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:suspend", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:soft-reboot")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:soft-reboot", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:calculator-history")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:calculator-history", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:now-playing")) | changes Settings | `every_control_in_the_settings_view_does_something` |
@@ -433,12 +433,13 @@ sidebar page, so a control is audited without anyone naming it.
 | Commands › ItemToggled("commands:volume-0", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:browse-apps")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:browse-apps", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.commands.entrypoints.browse-apps.preferences.sortAlphabetically", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:set-default-browser")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:set-default-browser", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:settings")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:manage-fallback")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:settings", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:manage-fallback", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:list-extensions")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:refresh-apps")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:refresh-apps", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:sponsor")) | changes Settings | `every_control_in_the_settings_view_does_something` |
@@ -455,8 +456,6 @@ sidebar page, so a control is audited without anyone naming it.
 | Commands › ItemToggled("commands:inspect-local-storage", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:switch-workspaces")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:switch-workspaces", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:browse-fonts")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:browse-fonts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › ProviderToggled("shortcuts", false) | changes Settings; calls engine.providers_set; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › Record(Item("shortcuts:sct-docs")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › ItemToggled("shortcuts:sct-docs", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |

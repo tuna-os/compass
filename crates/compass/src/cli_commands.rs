@@ -322,7 +322,7 @@ mod tests {
     fn the_theme_template_is_a_valid_theme_with_nothing_to_warn_about() {
         let theme =
             compass_core::theme_file::parse(Path::new("template.toml"), THEME_TEMPLATE).unwrap();
-        assert_eq!(theme.name, "Vicinae Dark");
+        assert_eq!(theme.name, "My Dark Theme");
         assert!(theme.dark);
         assert!(theme.diagnostics.is_empty(), "{:?}", theme.diagnostics);
     }

@@ -112,6 +112,21 @@ wrong in its log, in `compass doctor` and at the bottom of the settings view.
 
 If you used Vicinae before, Compass moves its settings over on first start.
 
+## Themes
+
+Choose a theme in **Settings › Appearance**, or with `compass theme list` and
+`compass theme set <name>`. To make your own, start from the template:
+
+```sh
+compass theme paths          # the folders Compass reads themes from
+mkdir -p ~/.local/share/compass/themes
+compass theme template > ~/.local/share/compass/themes/my-theme.toml
+compass theme check ~/.local/share/compass/themes/my-theme.toml
+compass theme set my-theme
+```
+
+Compass reads theme files in the same format as Vicinae, so a Vicinae theme works as it is.
+
 ## Privacy
 
 Compass sends no telemetry. It checks for updates on GitHub, and you can turn that check off.

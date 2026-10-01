@@ -790,8 +790,8 @@ impl LauncherApp {
                 let submit = key.clone();
                 let placeholder = if setting.placeholder.is_empty() {
                     match setting.kind {
-                        Kind::Paths => "Folders, separated by :",
-                        Kind::Names => "Application ids, separated by ,",
+                        Kind::Paths => "Folders, separated by colons",
+                        Kind::Names => "Application IDs, separated by commas",
                         _ => "",
                     }
                 } else {
@@ -872,7 +872,7 @@ impl LauncherApp {
                             .size(14),
                     )
                     .push(
-                        text("A launcher for the Linux desktop, compatible with Vicinae.")
+                        text("A launcher for the Linux desktop that runs Vicinae and Raycast extensions.")
                             .font(self.font())
                             .size(12)
                             .color(muted),

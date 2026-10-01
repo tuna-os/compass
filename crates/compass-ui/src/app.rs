@@ -6485,10 +6485,23 @@ impl LauncherApp {
         if self.query.trim().is_empty() || self.provider_scope.is_some() {
             return;
         }
+        // An item the search already lists is not offered a second time
+        // under the fallbacks ("docs" finds Search Files by its keywords).
+        let listed = |fallback: &Fallback| {
+            self.results.iter().any(|row| match (row, fallback) {
+                (RootRow::Command(listed), Fallback::Command(offered)) => {
+                    listed.entrypoint == offered.entrypoint
+                }
+                (RootRow::Extension(listed), Fallback::Extension(offered))
+                | (RootRow::Shortcut(listed), Fallback::Shortcut(offered)) => listed == offered,
+                _ => false,
+            })
+        };
         let fallbacks: Vec<RootRow> = self
             .fallbacks
             .iter()
             .filter_map(|id| self.resolve_fallback(id))
+            .filter(|fallback| !listed(fallback))
             .map(RootRow::Fallback)
             .collect();
         self.results.extend(fallbacks);
@@ -7640,7 +7653,7 @@ mod tests {
         let Page::StoreDetail(detail) = &app.page else {
             panic!("the click did not open the row: {}", app.state_line());
         };
-        assert_eq!(detail.title, "Extension Store - Timer");
+        assert_eq!(detail.title, "Vicinae Store - Timer");
     }
 
     /// Hovering sends nothing and selects nothing: the C++ list moves its
@@ -13458,10 +13471,10 @@ mod tests {
         let Page::StoreDetail(detail) = &app.page else {
             panic!("no detail page: {}", app.state_line());
         };
-        assert_eq!(detail.title, "Extension Store - Clock");
+        assert_eq!(detail.title, "Vicinae Store - Clock");
         {
             let mut ui = iced_test::simulator(app.view());
-            assert!(ui.find("Extension Store - Clock").is_ok());
+            assert!(ui.find("Vicinae Store - Clock").is_ok());
         }
 
         assert!(app.app_index.extensions().is_empty());

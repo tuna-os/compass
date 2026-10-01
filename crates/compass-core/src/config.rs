@@ -279,7 +279,7 @@ pub struct LauncherConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = DEFAULT_POP_TO_ROOT_ON_CLOSE))]
     pop_to_root_on_close: Option<bool>,
-    /// Colour mode and row presentation.
+    /// The color scheme, the theme and how results look.
     #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
     appearance: AppearanceConfig,
     /// The clock the root search shows in its status bar.
@@ -291,14 +291,15 @@ pub struct LauncherConfig {
     unknown: BTreeMap<String, Value>,
 }
 
-/// The `launcher.clock` section (the C++ `launcher_window.clock`).
+/// The `launcher.clock` section: the clock in the search's status bar.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ClockConfig {
     /// Whether the clock is shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = DEFAULT_CLOCK_ENABLED))]
     enabled: Option<bool>,
-    /// A Qt date-time format, e.g. `hh:mm:ss`; `hh:mm` when unset.
+    /// How the time is written: `hh:mm` (the default), `hh:mm:ss`, or `h:mm ap` for a 12-hour
+    /// clock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("examples" = ["hh:mm:ss", "ddd hh:mm"]))]
     format: Option<String>,
@@ -343,7 +344,7 @@ impl ClockConfig {
     }
 }
 
-/// The `launcher.appearance` section: colour mode and row presentation, not behavior.
+/// The `launcher.appearance` section: the color scheme, the theme and how results look.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AppearanceConfig {
     /// Light or dark: `system` follows the desktop, `light` and `dark` force one.
@@ -803,8 +804,7 @@ impl TrayConfig {
     }
 }
 
-/// The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose
-/// `toggle` is [`LauncherConfig::hotkey`] here).
+/// The `global_shortcuts` section. The launcher's own key is `launcher.hotkey`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct GlobalShortcutsConfig {
     /// While one of these applications is focused, every global shortcut is
@@ -876,8 +876,8 @@ pub struct Config {
     /// The global shortcuts, beyond the launcher hotkey.
     #[serde(default, skip_serializing_if = "GlobalShortcutsConfig::is_empty")]
     global_shortcuts: GlobalShortcutsConfig,
-    /// The interface font, as Vicinae writes it: `font.normal.family` names a
-    /// family, and `auto` or `system` follow the desktop.
+    /// The interface font: `font.normal.family` names a family, and `auto` or `system` follow
+    /// the desktop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("examples" = [{"normal": {"family": "Inter"}}]))]
     font: Option<Value>,

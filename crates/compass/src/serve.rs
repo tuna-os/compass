@@ -1207,11 +1207,15 @@ async fn paste_text(state: &Arc<RwLock<EngineState>>, text: String) -> Response 
     .await
 }
 
+/// Why clipboard history answers nothing: almost always a keyring that is
+/// missing or locked, which `compass doctor` explains.
+const CLIPBOARD_UNAVAILABLE: &str = "clipboard history is unavailable: Compass needs an unlocked \
+     keyring to keep it encrypted. Run compass doctor to see what is missing";
+
 fn clipboard_unavailable() -> Response {
     Response::Error(ProtocolError::new(
         ErrorKind::Unsupported,
-        "clipboard history is unavailable: no keyring, or the store would not open \
-         (the engine log says which)",
+        CLIPBOARD_UNAVAILABLE,
     ))
 }
 
@@ -2729,8 +2733,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let Some(store) = state.read().await.clipboard.clone() else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::Unsupported,
-                    "clipboard history is unavailable: no keyring, or the store would not open \
-                     (the engine log says which)",
+                    CLIPBOARD_UNAVAILABLE,
                 ));
             };
             match tokio::task::spawn_blocking(move || store.content(&id)).await {
@@ -3517,8 +3520,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let Some(store) = state.read().await.clipboard.clone() else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::Unsupported,
-                    "clipboard history is unavailable: no keyring, or the store would not open \
-                     (the engine log says which)",
+                    CLIPBOARD_UNAVAILABLE,
                 ));
             };
             let changed = tokio::task::spawn_blocking(move || match request {
@@ -3552,8 +3554,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let Some(store) = store else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::Unsupported,
-                    "clipboard history is unavailable: no keyring, or the store would not open \
-                     (the engine log says which)",
+                    CLIPBOARD_UNAVAILABLE,
                 ));
             };
             let (mime_type, data) =

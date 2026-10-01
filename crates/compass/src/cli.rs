@@ -122,19 +122,16 @@ pub enum Command {
 
     /// Run the engine.
     ///
-    /// Serves the IPC socket until a `shutdown` request or a termination
-    /// signal. It answers `ping`, `query` and `doctor` on any machine, display
-    /// or not. `toggle`, `show` and `hide` are forwarded to a resident launcher
-    /// window that attached over the same socket, and refused when none has --
-    /// see ADR-0015.
+    /// Runs until `compass shutdown` or a termination signal. `toggle`, `show`
+    /// and `hide` reach the launcher window started with `compass start` or
+    /// `compass ui`, and are refused when there is none.
     Serve {
         /// Do not bind the global launcher hotkey.
         ///
-        /// The engine normally asks the GlobalShortcuts portal for
-        /// `LOGO+space`, which on GNOME means a permission prompt. Pass this
-        /// when your compositor already binds a key to `compass toggle`, or on
-        /// a desktop with no GlobalShortcuts backend, and the engine will not
-        /// ask. Everything else works exactly the same.
+        /// Compass normally asks the desktop to bind Super+Space, which on
+        /// GNOME shows a permission prompt. Pass this when your compositor
+        /// already binds a key to `compass toggle`. Everything else works the
+        /// same.
         #[arg(long)]
         no_hotkey: bool,
     },
@@ -154,14 +151,13 @@ pub enum Command {
         json: bool,
 
         /// Keep only hits from this provider, e.g. `applications` or
-        /// `commands`. The C++ CLI's flag of the same name, so the parity
-        /// harness can narrow both engines alike. Filters the engine's ranked
-        /// list, so it can return fewer than `launcher.max_results`.
+        /// `commands`. Filters the ranked list, so it can return fewer than
+        /// `launcher.max_results`.
         #[arg(long, value_name = "PROVIDER")]
         provider: Option<String>,
     },
 
-    /// Theme management (#153).
+    /// List, choose and check themes.
     #[command(subcommand, alias = "th")]
     Theme(ThemeCommand),
 
@@ -169,7 +165,7 @@ pub enum Command {
     #[command(alias = "ver")]
     Version,
 
-    /// Start the engine in the foreground, as the C++ `vicinae server`.
+    /// Start the engine in the foreground, as `vicinae server` does.
     ///
     /// Refuses while one is already running unless `--replace` is passed,
     /// which kills it first.
@@ -340,7 +336,7 @@ pub struct DmenuArgs {
     pub no_footer: bool,
 }
 
-/// Theme management subcommands (#153: Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized + System).
+/// Theme subcommands.
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub enum ThemeCommand {
     /// List available themes.
@@ -349,12 +345,13 @@ pub enum ThemeCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Set the theme. Use `system` to return to OS natives.
+    /// Set the theme. Use `system` to follow the desktop.
     Set {
-        /// Theme name (system, catppuccin, dracula, nord, gruvbox, tokyo-night, solarized).
+        /// Theme name: system, catppuccin, dracula, nord, gruvbox, tokyo-night, solarized, or a
+        /// theme file's name (see `compass theme list`).
         theme: String,
     },
-    /// Reset to System (OS native) theme.
+    /// Go back to the System theme, which follows the desktop.
     Reset,
     /// Print out the theme template, every key it can set.
     #[command(alias = "tmpl")]
@@ -414,7 +411,7 @@ pub enum FsCommand {
     /// Return a list of indexed files matching the given query.
     #[command(alias = "q")]
     Query {
-        /// Fuzzyish search query, at least three characters.
+        /// What to search for, at least three characters.
         query: String,
         /// Limit the number of results (up to 10,000).
         #[arg(short = 'n', long, default_value_t = 100)]

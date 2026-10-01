@@ -282,13 +282,13 @@ impl TokensPage {
 }
 
 /// The Vicinae store's intro (`VicinaeStoreCommand`'s `INTRO`).
-pub const VICINAE_STORE_INTRO: &str = "# Welcome to the Vicinae extension store
+pub const VICINAE_STORE_INTRO: &str = "# Welcome to the Vicinae Store
 
-The Vicinae extension store features community-built extensions that have been approved by our core contributors.
+The Vicinae Store is a third-party store run by the Vicinae project, not by Compass. It lists community-built extensions that the Vicinae maintainers have reviewed, and Compass runs them unchanged.
 
-Every extension listed here has its source code available in the [vicinaehq/extensions](https://github.com/vicinaehq/extensions) repository.
+Every extension listed here has its source code in the [vicinaehq/extensions](https://github.com/vicinaehq/extensions) repository.
 
-If you're looking to build your own extension, take a look at the [Vicinae SDK documentation](https://docs.vicinae.com/extensions/introduction), which Compass extensions use too. If you think your extension would be a good fit for the store, feel free to submit it!
+To build your own extension, see the [Vicinae SDK documentation](https://docs.vicinae.com/extensions/introduction), which Compass extensions use too. Extensions are submitted to the store through that repository.
 ";
 
 /// The Raycast store's intro (`RaycastStoreCommand`'s `INTRO`, with its
@@ -297,9 +297,9 @@ pub const RAYCAST_STORE_INTRO: &str = "# Welcome to the Raycast Extension Store
 
 Compass provides direct integration with the official [Raycast store](https://www.raycast.com/store), allowing you to search and install Raycast extensions directly from Compass.
 
-Each extension has a colored compatibility indicator showing how well it works on Linux.
+Raycast extensions are written for macOS, so not all of them work on Linux. Each extension has a colored indicator showing how well it works here.
 
-Compass can also install from the [Vicinae extension store](compass://launch/core/store), which does not suffer from these limitations.
+Compass can also install from the [Vicinae Store](compass://launch/core/store), a third-party store whose extensions are all made for Linux.
 ";
 
 /// The intro's one action (`StoreIntroViewHost`'s primary).

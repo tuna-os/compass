@@ -2,7 +2,7 @@
   "$defs": {
     "AppearanceConfig": {
       "additionalProperties": false,
-      "description": "The `launcher.appearance` section: colour mode and row presentation, not behavior.",
+      "description": "The `launcher.appearance` section: the color scheme, the theme and how results look.",
       "properties": {
         "color_scheme": {
           "default": "system",
@@ -69,7 +69,7 @@
     },
     "ClockConfig": {
       "additionalProperties": false,
-      "description": "The `launcher.clock` section (the C++ `launcher_window.clock`).",
+      "description": "The `launcher.clock` section: the clock in the search's status bar.",
       "properties": {
         "enabled": {
           "default": true,
@@ -80,7 +80,7 @@
           ]
         },
         "format": {
-          "description": "A Qt date-time format, e.g. `hh:mm:ss`; `hh:mm` when unset.",
+          "description": "How the time is written: `hh:mm` (the default), `hh:mm:ss`, or `h:mm ap` for a 12-hour\nclock.",
           "examples": [
             "hh:mm:ss",
             "ddd hh:mm"
@@ -130,7 +130,7 @@
     },
     "GlobalShortcutsConfig": {
       "additionalProperties": false,
-      "description": "The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose\n`toggle` is [`LauncherConfig::hotkey`] here).",
+      "description": "The `global_shortcuts` section. The launcher's own key is `launcher.hotkey`.",
       "properties": {
         "inhibit_apps": {
           "default": [],
@@ -172,7 +172,7 @@
       "properties": {
         "appearance": {
           "$ref": "#/$defs/AppearanceConfig",
-          "description": "Colour mode and row presentation."
+          "description": "The color scheme, the theme and how results look."
         },
         "check_for_updates": {
           "default": true,
@@ -385,7 +385,7 @@
       ]
     },
     "font": {
-      "description": "The interface font, as Vicinae writes it: `font.normal.family` names a\nfamily, and `auto` or `system` follow the desktop.",
+      "description": "The interface font: `font.normal.family` names a family, and `auto` or `system` follow\nthe desktop.",
       "examples": [
         {
           "normal": {
