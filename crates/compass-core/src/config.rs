@@ -41,6 +41,16 @@
 //!   ([`crate::config_issues`]). The published schema closes every section
 //!   (`additionalProperties: false`) so an editor flags the typo as it is made, even though the
 //!   types keep unknown keys.
+//!
+//! # System-wide defaults
+//!
+//! A distribution or an administrator can set defaults for every user in `compass/compass.json`
+//! under `$XDG_CONFIG_DIRS` (`/etc/xdg` when unset), in the same format ([`system_defaults`]). The
+//! user's file is layered over them key by key, so anything a user sets wins. Writing the user's
+//! file leaves out what it would only hold because the system provided it, so a later change to
+//! the system file still reaches that user. Bluefin uses this to bind the launcher through GNOME's
+//! own keyboard settings instead of asking the GlobalShortcuts portal:
+//! `{"launcher": {"hotkey": ""}}`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1273,8 +1283,25 @@ impl Config {
         data: &str,
         path: &Path,
     ) -> Result<(Config, Vec<crate::config_issues::ConfigIssue>), ConfigError> {
+        Config::parse_layered(data, path, system_defaults().as_ref())
+    }
+
+    /// [`Config::parse_checked`] over `system` rather than over the
+    /// [`system_defaults`] this machine has: `data` wins wherever it sets a key.
+    ///
+    /// # Errors
+    ///
+    /// See [`Config::parse`].
+    pub fn parse_layered(
+        data: &str,
+        path: &Path,
+        system: Option<&Value>,
+    ) -> Result<(Config, Vec<crate::config_issues::ConfigIssue>), ConfigError> {
         if data.trim().is_empty() {
-            return Ok((Config::default(), Vec::new()));
+            return match system {
+                Some(system) => Ok(crate::config_issues::parse_value(system.clone())),
+                None => Ok((Config::default(), Vec::new())),
+            };
         }
         let parse_error = |source: serde_json::Error| ConfigError::Parse {
             path: path.to_path_buf(),
@@ -1283,7 +1310,7 @@ impl Config {
             message: parse_message(&source),
             source,
         };
-        let document: Value = serde_json::from_str(data).map_err(parse_error)?;
+        let mut document: Value = serde_json::from_str(data).map_err(parse_error)?;
         if !document.is_object() {
             // Not an object at all: the strict parse names what it is.
             return serde_json::from_value::<Config>(document)
@@ -1291,6 +1318,9 @@ impl Config {
                 .map_err(parse_error);
         }
         let mut unknown = crate::config_issues::unknown_keys(&document);
+        if let Some(system) = system {
+            inherit(&mut document, system);
+        }
         let (config, mut issues) = crate::config_issues::parse_value(document);
         issues.append(&mut unknown);
         Ok((config, issues))
@@ -1308,7 +1338,7 @@ impl Config {
         match std::fs::read_to_string(path) {
             Ok(data) => Config::parse_checked(&data, path),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                Ok((Config::default(), Vec::new()))
+                Config::parse_checked("", path)
             }
             Err(source) => Err(ConfigError::Read {
                 path: path.to_path_buf(),
@@ -1332,7 +1362,7 @@ impl Config {
             Ok(data) => data,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
                 tracing::debug!(path = %path.display(), "no configuration file, using defaults");
-                return Ok(Config::default());
+                return Config::parse("", path);
             }
             Err(source) => {
                 return Err(ConfigError::Read {
@@ -1400,8 +1430,9 @@ impl Config {
                 // times per start: once per process is enough to say it.
                 static SAID: std::sync::atomic::AtomicBool =
                     std::sync::atomic::AtomicBool::new(false);
+                let config = migration.config.over_system_defaults();
                 if SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    return Ok(migration.config);
+                    return Ok(config);
                 }
                 tracing::info!(
                     from = %legacy.display(),
@@ -1409,13 +1440,25 @@ impl Config {
                     skipped = migration.skipped.len(),
                     "no compass.json yet; using the settings carried over from Vicinae"
                 );
-                Ok(migration.config)
+                Ok(config)
             }
             Err(error) => {
                 tracing::warn!(%error, "could not read the Vicinae settings; using defaults");
-                Ok(Config::default())
+                Config::parse("", path)
             }
         }
+    }
+
+    /// This configuration with the [`system_defaults`] filled in under it.
+    fn over_system_defaults(self) -> Config {
+        let Some(system) = system_defaults() else {
+            return self;
+        };
+        let Ok(mut document) = serde_json::to_value(&self) else {
+            return self;
+        };
+        inherit(&mut document, &system);
+        crate::config_issues::parse_value(document).0
     }
 
     /// The `$schema` the file names, if any.
@@ -1535,19 +1578,60 @@ impl Config {
     ///
     /// [`ConfigError::Write`] on any I/O failure.
     pub fn save_to(&self, path: impl AsRef<Path>) -> Result<(), ConfigError> {
+        self.save_layered(path, system_defaults().as_ref())
+    }
+
+    /// [`Config::save_to`] over `system` rather than over the [`system_defaults`] this machine
+    /// has: what the file would only hold because `system` provided it is left out.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::Write`] on any I/O failure.
+    pub fn save_layered(
+        &self,
+        path: impl AsRef<Path>,
+        system: Option<&Value>,
+    ) -> Result<(), ConfigError> {
         let path = path.as_ref();
-        let edited = match std::fs::read_to_string(path) {
-            Ok(existing) if !existing.trim().is_empty() => serde_json::to_value(self)
-                .ok()
-                .and_then(|value| crate::config_edit::rewrite(&existing, &value)),
-            _ => None,
+        let write_error = |err: serde_json::Error| ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(err),
         };
-        let data = match edited {
-            Some(data) => data,
-            None => self.to_json_pretty().map_err(|err| ConfigError::Write {
-                path: path.to_path_buf(),
-                source: std::io::Error::other(err),
-            })?,
+        let existing = std::fs::read_to_string(path)
+            .ok()
+            .filter(|existing| !existing.trim().is_empty());
+        let data = match system {
+            None => {
+                let edited = existing.as_deref().and_then(|existing| {
+                    serde_json::to_value(self)
+                        .ok()
+                        .and_then(|value| crate::config_edit::rewrite(existing, &value))
+                });
+                match edited {
+                    Some(data) => data,
+                    None => self.to_json_pretty().map_err(write_error)?,
+                }
+            }
+            Some(system) => {
+                let mut value = serde_json::to_value(self).map_err(write_error)?;
+                let own = existing.as_deref().and_then(|existing| {
+                    jsonc_parser::parse_to_serde_value(existing, &Default::default())
+                        .ok()
+                        .flatten()
+                });
+                drop_inherited(&mut value, own.as_ref(), system);
+                match existing
+                    .as_deref()
+                    .and_then(|existing| crate::config_edit::rewrite(existing, &value))
+                {
+                    Some(data) => data,
+                    None => {
+                        let mut out = serde_json::to_string_pretty(&value).map_err(write_error)?;
+                        out.push('\n');
+                        out
+                    }
+                }
+            }
         };
         crate::atomic_write(path, data.as_bytes()).map_err(|source| ConfigError::Write {
             path: path.to_path_buf(),
@@ -1670,6 +1754,88 @@ pub fn default_config_path() -> Result<PathBuf, ConfigError> {
     }
     let dir = dirs::config_dir().ok_or(ConfigError::NoConfigDir)?;
     Ok(dir.join(CONFIG_RELATIVE_PATH))
+}
+
+/// The system-wide defaults: every `compass/compass.json` under `$XDG_CONFIG_DIRS`, merged.
+///
+/// `None` when there is none. See [`system_defaults_in`].
+#[must_use]
+pub fn system_defaults() -> Option<Value> {
+    system_defaults_in(&compass_xdg::mimeapps::config_dirs())
+}
+
+/// The defaults in `compass/compass.json` under each of `dirs`, merged key by key with the
+/// earlier directories winning, as `$XDG_CONFIG_DIRS` orders them.
+///
+/// A file that cannot be read, or is not a JSON object, is logged and skipped: a broken system
+/// file must not cost every user their launcher. Comments are allowed, as in the user's file.
+#[must_use]
+pub fn system_defaults_in(dirs: &[PathBuf]) -> Option<Value> {
+    let mut merged: Option<Value> = None;
+    for dir in dirs {
+        let path = dir.join(CONFIG_RELATIVE_PATH);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "could not read the system configuration");
+                continue;
+            }
+        };
+        let layer = match jsonc_parser::parse_to_serde_value(&text, &Default::default()) {
+            Ok(Some(layer @ Value::Object(_))) => layer,
+            Ok(_) => {
+                tracing::warn!(path = %path.display(), "the system configuration is not a JSON object");
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "the system configuration is not valid JSON");
+                continue;
+            }
+        };
+        match &mut merged {
+            Some(merged) => inherit(merged, &layer),
+            None => merged = Some(layer),
+        }
+    }
+    merged
+}
+
+/// Adds to `document` every key `base` has and it lacks, object by object. A key `document` sets
+/// keeps its value, whatever its type.
+fn inherit(document: &mut Value, base: &Value) {
+    let (Value::Object(document), Value::Object(base)) = (document, base) else {
+        return;
+    };
+    for (key, value) in base {
+        match document.get_mut(key) {
+            Some(own) => inherit(own, value),
+            None => {
+                document.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+/// Takes out of `value` what it holds only because `system` provided it: a key the user's own
+/// file (`own`) does not set and whose value is still the system's. A section left empty that way
+/// goes too.
+fn drop_inherited(value: &mut Value, own: Option<&Value>, system: &Value) {
+    let (Value::Object(map), Value::Object(system)) = (value, system) else {
+        return;
+    };
+    let own = own.and_then(Value::as_object);
+    map.retain(|key, child| {
+        let Some(provided) = system.get(key) else {
+            return true;
+        };
+        let set_by_user = own.and_then(|own| own.get(key));
+        if set_by_user.is_none() && child == provided {
+            return false;
+        }
+        drop_inherited(child, set_by_user, provided);
+        set_by_user.is_some() || !child.as_object().is_some_and(serde_json::Map::is_empty)
+    });
 }
 
 /// Makes sure `path` exists, so "Open Config File" has a file to open: when it

@@ -767,3 +767,132 @@ fn a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared() {
     firefox.merge_config(&config.root_config(), false);
     assert_eq!(firefox.meta.shortcut, None);
 }
+
+// --- system-wide defaults --------------------------------------------------
+
+/// Writes `json` as `compass/compass.json` under `dir`, as a distribution puts
+/// it under `/etc/xdg`.
+fn system_file(dir: &Path, json: &str) {
+    std::fs::create_dir_all(dir.join("compass")).unwrap();
+    std::fs::write(dir.join("compass/compass.json"), json).unwrap();
+}
+
+#[test]
+fn the_system_file_sets_defaults_the_users_file_overrides() {
+    let etc = tempfile::tempdir().unwrap();
+    system_file(
+        etc.path(),
+        r#"{
+            // Bluefin binds the launcher through GNOME's own keyboard settings.
+            "launcher": {"hotkey": "", "max_results": 20}
+        }"#,
+    );
+    let system = compass_core::config::system_defaults_in(&[etc.path().to_path_buf()]);
+    let path = Path::new("/test/compass.json");
+
+    let (config, _) = Config::parse_layered("", path, system.as_ref()).unwrap();
+    assert_eq!(config.launcher().hotkey(), "");
+    assert_eq!(config.launcher().max_results(), 20);
+
+    let user = r#"{"launcher": {"hotkey": "ctrl+space"}}"#;
+    let (config, issues) = Config::parse_layered(user, path, system.as_ref()).unwrap();
+    assert_eq!(
+        config.launcher().hotkey(),
+        "ctrl+space",
+        "the user's own key wins"
+    );
+    assert_eq!(
+        config.launcher().max_results(),
+        20,
+        "the rest of the section is inherited"
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+}
+
+#[test]
+fn the_first_system_directory_wins_and_a_broken_file_is_skipped() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let broken = tempfile::tempdir().unwrap();
+    system_file(first.path(), r#"{"launcher": {"hotkey": "super+k"}}"#);
+    system_file(
+        second.path(),
+        r#"{"launcher": {"hotkey": "super+j", "max_results": 9}}"#,
+    );
+    system_file(broken.path(), "{ not json");
+
+    let system = compass_core::config::system_defaults_in(&[
+        broken.path().to_path_buf(),
+        first.path().to_path_buf(),
+        second.path().to_path_buf(),
+    ]);
+    let (config, _) =
+        Config::parse_layered("", Path::new("/test/compass.json"), system.as_ref()).unwrap();
+    assert_eq!(config.launcher().hotkey(), "super+k");
+    assert_eq!(config.launcher().max_results(), 9);
+}
+
+#[test]
+fn saving_leaves_out_what_only_the_system_file_set() {
+    let etc = tempfile::tempdir().unwrap();
+    system_file(
+        etc.path(),
+        r#"{"launcher": {"hotkey": "", "max_results": 20}}"#,
+    );
+    let system = compass_core::config::system_defaults_in(&[etc.path().to_path_buf()]);
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("compass.json");
+    std::fs::write(&path, "{\n  \"launcher\": {\"max_results\": 20}\n}\n").unwrap();
+
+    let read = std::fs::read_to_string(&path).unwrap();
+    let (mut config, _) = Config::parse_layered(&read, &path, system.as_ref()).unwrap();
+    config.launcher_mut().set_max_results(Some(30));
+    config.save_layered(&path, system.as_ref()).unwrap();
+
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved["launcher"]["max_results"], 30);
+    assert!(
+        saved["launcher"].get("hotkey").is_none(),
+        "the system's hotkey must not be copied into the user's file: {saved}"
+    );
+
+    // A fresh file gets only what the user changed.
+    let fresh = home.path().join("fresh.json");
+    let (mut config, _) = Config::parse_layered("", &fresh, system.as_ref()).unwrap();
+    config.launcher_mut().set_max_results(Some(5));
+    config.save_layered(&fresh, system.as_ref()).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fresh).unwrap()).unwrap();
+    assert_eq!(
+        saved["launcher"],
+        serde_json::json!({"max_results": 5}),
+        "{saved}"
+    );
+}
+
+#[test]
+fn a_value_the_user_wrote_stays_even_when_it_equals_the_systems() {
+    let etc = tempfile::tempdir().unwrap();
+    system_file(etc.path(), r#"{"launcher": {"hotkey": ""}}"#);
+    let system = compass_core::config::system_defaults_in(&[etc.path().to_path_buf()]);
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("compass.json");
+    std::fs::write(&path, r#"{"launcher": {"hotkey": ""}}"#).unwrap();
+
+    let read = std::fs::read_to_string(&path).unwrap();
+    let (mut config, _) = Config::parse_layered(&read, &path, system.as_ref()).unwrap();
+    config.launcher_mut().set_max_results(Some(5));
+    config.save_layered(&path, system.as_ref()).unwrap();
+
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved["launcher"]["hotkey"], "", "{saved}");
+}
+
+#[test]
+fn no_system_directory_means_no_system_defaults() {
+    let empty = tempfile::tempdir().unwrap();
+    assert!(compass_core::config::system_defaults_in(&[empty.path().to_path_buf()]).is_none());
+    assert!(compass_core::config::system_defaults_in(&[]).is_none());
+}

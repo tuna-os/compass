@@ -65,6 +65,24 @@ they run the keyboard, and still leave `/dev/uinput` closed on most distribution
 `getcap`), and what the running engine says about it; `compass input-server status|enable|disable`
 reads and flips `input_server.enabled`.
 
+## System-wide defaults
+
+A distribution sets defaults for every user in `compass/compass.json` under `$XDG_CONFIG_DIRS`,
+usually `/etc/xdg/compass/compass.json`. It has the same format as the user's file, comments
+allowed. The user's `~/.config/compass/compass.json` is layered over it key by key, so a setting
+the user makes wins. When Compass writes the user's file, it leaves out values that came only from
+the system file, so a later change to the system file still reaches existing users. With several
+`$XDG_CONFIG_DIRS`, the directory listed first wins. A system file that does not parse is logged
+and skipped. Compass reads it at start, so a change takes effect when the engine restarts.
+
+Bluefin binds Super+Space with a GNOME custom keyboard shortcut that runs `compass toggle`,
+because the GlobalShortcuts portal asks the user to approve a binding the first time. The image
+then turns off the engine's own request with:
+
+```json
+{"launcher": {"hotkey": ""}}
+```
+
 ## Configuration schema
 
 `schema/compass.schema.json` is generated from `compass_core::config` by `schemars` and never edited

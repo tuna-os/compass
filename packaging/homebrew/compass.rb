@@ -49,6 +49,8 @@ class Compass < Formula
     Dir["extensions/rhai-examples/*/"].each do |dir|
       (share/"compass/scripts/#{File.basename(dir)}").install Dir["#{dir}/{script.toml,*.rhai}"]
     end
+    # systemd does not search the Homebrew prefix for a bare `compass`.
+    inreplace "packaging/systemd/compass.service", "ExecStart=compass ", "ExecStart=#{opt_bin}/compass "
     (lib/"systemd/user").install "packaging/systemd/compass.service"
   end
 
@@ -58,6 +60,11 @@ class Compass < Formula
         sudo setcap cap_dac_override+ep #{opt_libexec}/compass/compass-input-server
       See "The input server" in https://github.com/tuna-os/compass/blob/main/packaging/README.md.
     EOS
+  end
+
+  service do
+    run [opt_bin/"compass", "start", "--hidden"]
+    keep_alive crashed: true
   end
 
   test do
