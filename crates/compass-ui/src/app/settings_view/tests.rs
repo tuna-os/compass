@@ -604,3 +604,26 @@ fn hibernate_does_not_answer_store() {
     let hibernate = compass_core::power_commands::command("hibernate").unwrap();
     assert!(!hibernate.description.to_lowercase().contains("store"));
 }
+
+#[test]
+fn the_hotkey_guidance_names_the_compositor_line_and_the_flatpak_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    assert!(
+        app.open_hint()
+            .starts_with("Press Super+Space to open Compass"),
+        "{}",
+        app.open_hint()
+    );
+    app.hotkey_compositor = Some(compass_core::hotkey_guide::Compositor::Sway);
+    app.flatpak = true;
+    assert!(
+        app.open_hint()
+            .contains("`bindsym $mod+space exec flatpak run org.tunaos.compass toggle`"),
+        "{}",
+        app.open_hint()
+    );
+    // The settings view draws the row as guidance, not as a recorder.
+    let _ = app.open_settings(None);
+    let _ = app.view();
+}

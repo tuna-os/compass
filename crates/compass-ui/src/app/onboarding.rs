@@ -42,6 +42,23 @@ pub(super) fn record_completed(path: &std::path::Path) {
 }
 
 impl LauncherApp {
+    /// How to open the launcher from anywhere on this desktop: the
+    /// compositor's own line on Sway, Hyprland and niri, the hotkey
+    /// elsewhere, and in the Flatpak the command the Flatpak needs.
+    pub(super) fn open_hint(&self) -> String {
+        let command = compass_core::hotkey_guide::toggle_command(self.flatpak);
+        if let Some(compositor) = self.hotkey_compositor {
+            return compositor.instruction(&command);
+        }
+        let key = compass_core::key_combo::KeyCombo::parse(&self.launcher_hotkey).map_or_else(
+            || self.launcher_hotkey.clone(),
+            |combo| combo.display_tokens().join("+"),
+        );
+        format!(
+            "Press {key} to open Compass from anywhere. If it does nothing, bind a key to `{command}` in your desktop's keyboard settings."
+        )
+    }
+
     /// Opens the flow at its first step, recording to `state_path`.
     pub fn open_onboarding(&mut self, state_path: std::path::PathBuf) {
         let files = crate::theme::load_user_themes(&self.theme_dirs);
@@ -232,7 +249,10 @@ impl LauncherApp {
                 let hotkey_row = row![
                     column![
                         text("Global hotkey").font(self.font()).size(14),
-                        small("Bind a key to \"compass toggle\""),
+                        text(self.open_hint())
+                            .font(self.font())
+                            .size(12)
+                            .color(palette.muted.to_iced()),
                     ]
                     .width(Length::Fill),
                     action(
@@ -285,6 +305,16 @@ impl LauncherApp {
             }
             Step::Complete => {
                 content = content
+                    .push(
+                        container(
+                            text(self.open_hint())
+                                .font(self.font())
+                                .size(13)
+                                .color(palette.text.to_iced())
+                                .align_x(Alignment::Center),
+                        )
+                        .max_width(480.0),
+                    )
                     .push(Space::new().height(16))
                     .push(small("Compass is open source software."))
                     .push(

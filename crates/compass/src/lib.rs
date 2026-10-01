@@ -398,6 +398,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                 .map(|config| config.launcher().pop_to_root_on_close())
                 .unwrap_or(compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE),
             launcher_hotkey,
+            hotkey_compositor: compass_core::hotkey_guide::Compositor::from_env(),
+            flatpak: compass_core::hotkey_guide::in_flatpak(),
             icons: appearance_preset.icons,
             appearance_preset,
             started_at: Some(started_at),

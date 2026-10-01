@@ -145,10 +145,8 @@ impl Step {
             Self::Extensions => {
                 "A few to start with. Find more in the Extension Store at any time."
             }
-            Self::Complete if shortcuts => "Compass is running. Open the launcher with:",
-            Self::Complete => {
-                "Compass is running. Bind a key to \"compass toggle\" to open it from anywhere."
-            }
+            Self::Complete if shortcuts => "Compass is ready. Open the launcher with:",
+            Self::Complete => "Compass is ready. Finish opens the launcher.",
         }
     }
 }
@@ -543,11 +541,14 @@ mod tests {
     }
 
     #[test]
-    fn the_last_step_says_how_to_open_the_launcher() {
-        assert!(Step::Complete.subtitle(false).contains("compass toggle"));
+    fn the_last_step_says_what_finish_does() {
+        assert_eq!(
+            Step::Complete.subtitle(false),
+            "Compass is ready. Finish opens the launcher."
+        );
         assert_eq!(
             Step::Complete.subtitle(true),
-            "Compass is running. Open the launcher with:"
+            "Compass is ready. Open the launcher with:"
         );
     }
 

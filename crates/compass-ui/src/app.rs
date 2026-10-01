@@ -276,6 +276,12 @@ pub struct AppFlags {
     /// The launcher hotkey as stored (`launcher.hotkey`), for the shortcut
     /// recorder's conflict check.
     pub launcher_hotkey: String,
+    /// The compositor that binds the launcher's key in its own configuration
+    /// (Sway, Hyprland, niri), when this is one; there the hotkey setting
+    /// does nothing and the guidance names the compositor's line instead.
+    pub hotkey_compositor: Option<compass_core::hotkey_guide::Compositor>,
+    /// Whether this is the Flatpak, whose toggle command is longer.
+    pub flatpak: bool,
     /// Whether each power command asks first, by id, as its `confirm`
     /// preference resolves (`compass_core::power_commands::should_confirm`).
     /// A command missing here asks by its own default.
@@ -416,6 +422,8 @@ impl Default for AppFlags {
             close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
             pop_to_root_on_close: compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE,
             launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
+            hotkey_compositor: None,
+            flatpak: false,
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
             config_path: None,
@@ -987,6 +995,10 @@ pub struct LauncherApp {
     window_focused: bool,
     /// See [`AppFlags::launcher_hotkey`].
     launcher_hotkey: String,
+    /// See [`AppFlags::hotkey_compositor`].
+    hotkey_compositor: Option<compass_core::hotkey_guide::Compositor>,
+    /// See [`AppFlags::flatpak`].
+    flatpak: bool,
     /// Whether the engine was last told the recorder is capturing.
     capture_reported: bool,
     /// Whether an extension's file chooser is open, which takes the focus
@@ -1273,6 +1285,8 @@ impl LauncherApp {
         app.close_on_focus_loss = flags.close_on_focus_loss;
         app.pop_to_root_on_close = flags.pop_to_root_on_close;
         app.launcher_hotkey = flags.launcher_hotkey;
+        app.hotkey_compositor = flags.hotkey_compositor;
+        app.flatpak = flags.flatpak;
         app.power_asks = flags.power_asks;
         app.browse_apps = flags.browse_apps;
         app.config_path = flags.config_path;
@@ -1390,6 +1404,8 @@ impl LauncherApp {
             pop_to_root_on_close: compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE,
             window_focused: false,
             launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
+            hotkey_compositor: None,
+            flatpak: false,
             capture_reported: false,
             choosing_files: false,
             power_asks: std::collections::BTreeMap::new(),

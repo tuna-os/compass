@@ -821,6 +821,22 @@ impl LauncherApp {
         settings_shown
             .iter()
             .map(|setting| {
+                // On Sway, Hyprland and niri the compositor owns the key, so
+                // the row says where to bind it rather than offering a
+                // recorder whose shortcut nothing would bind.
+                if setting.key == "launcher.hotkey"
+                    && let Some(compositor) = self.hotkey_compositor
+                {
+                    let control = text(format!("Set in {}", compositor.name()))
+                        .font(self.font())
+                        .size(13)
+                        .color(self.palette().muted.to_iced())
+                        .into();
+                    return (
+                        setting.section,
+                        self.settings_row(setting.label.to_owned(), self.open_hint(), control),
+                    );
+                }
                 (
                     setting.section,
                     self.settings_row(

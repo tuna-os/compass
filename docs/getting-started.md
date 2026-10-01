@@ -78,7 +78,16 @@ niri, in the `binds` section of `~/.config/niri/config.kdl`:
 Mod+Space { spawn "compass" "toggle"; }
 ```
 
-Reload the compositor's configuration after you edit it.
+With the Flatpak, the command is `flatpak run org.tunaos.compass toggle`:
+
+```text
+bindsym $mod+space exec flatpak run org.tunaos.compass toggle
+bind = SUPER, SPACE, exec, flatpak run org.tunaos.compass toggle
+Mod+Space { spawn "flatpak" "run" "org.tunaos.compass" "toggle"; }
+```
+
+Reload the compositor's configuration after you edit it. On these compositors the
+**Launcher hotkey** setting has no effect, because the compositor, not Compass, owns the key.
 
 ### Other desktops
 
