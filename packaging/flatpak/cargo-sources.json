@@ -6632,6 +6632,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/serde_path_to_error/serde_path_to_error-0.1.20.crate",
+        "sha256": "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457",
+        "dest": "cargo/vendor/serde_path_to_error-0.1.20"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457\", \"files\": {}}",
+        "dest": "cargo/vendor/serde_path_to_error-0.1.20",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/serde_repr/serde_repr-0.1.21.crate",
         "sha256": "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906",
         "dest": "cargo/vendor/serde_repr-0.1.21"

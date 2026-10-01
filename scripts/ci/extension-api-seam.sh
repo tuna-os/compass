@@ -38,6 +38,8 @@ trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/crates"
 cp -r "$repo_root/crates/$crate" "$scratch/crates/$crate"
 cp "$repo_root/Cargo.lock" "$repo_root/rust-toolchain.toml" "$scratch/"
+# The root manifest's `[patch.crates-io]` points into vendor/.
+cp -r "$repo_root/vendor" "$scratch/vendor"
 # The root manifest's package metadata, dependency versions and lints, with
 # every in-tree path dependency dropped and the member list narrowed to one.
 sed -e '/path = "crates\//d' \

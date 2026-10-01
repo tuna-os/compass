@@ -10,8 +10,10 @@ accepts the schema and agrees about which files are valid. This does:
   * packaging/schema/example.compass.json validates;
   * a config with a wrongly typed key does not (a schema that accepts
     everything would pass the first two);
-  * a config with a key this build does not know still validates, because
-    the Rust reader preserves unknown keys and the schema must not flag them.
+  * a config with a key this build does not know does not validate: the
+    Rust reader keeps the key in the file, but reports it (with a "did you
+    mean") in the log, `compass doctor` and Settings, and an editor should
+    flag it the same way.
 
 Usage: scripts/packaging/check-config-schema.py   (needs `pip install jsonschema`)
 """
@@ -46,7 +48,8 @@ def main() -> int:
 
     expect("example.compass.json", json.loads(EXAMPLE.read_text()), True)
     expect("empty object", {}, True)
-    expect("unknown keys survive", {"launcher": {"from_the_future": 1}, "later": {}}, True)
+    expect("unknown keys are flagged", {"launcher": {"from_the_future": 1}}, False)
+    expect("unknown sections are flagged", {"later": {}}, False)
     expect("max_results must be an integer", {"launcher": {"max_results": "fifty"}}, False)
     expect("hotkey must be a string", {"launcher": {"hotkey": 3}}, False)
     expect("installed must be strings", {"extensions": {"installed": [1]}}, False)
