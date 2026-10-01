@@ -25,6 +25,10 @@ const COMPASS_LOGO: &[u8] = include_bytes!("../../../../extra/compass.svg");
 /// takes the C++'s other branch: bind a key to `compass toggle`.
 const SHORTCUTS_AVAILABLE: bool = false;
 
+/// How tall the theme list opened from the keyboard grows before it
+/// scrolls: five themes.
+const MENU_HEIGHT: f32 = 160.0;
+
 /// Why Install did nothing, as the store pages say it.
 const NEEDS_ENGINE: &str = "Installing extensions needs the Compass engine";
 
@@ -68,11 +72,11 @@ impl LauncherApp {
             return match key.as_ref() {
                 Key::Named(Named::ArrowDown) => {
                     page.menu = Some(crate::focus::move_highlight(page.themes.len(), at, 1));
-                    Task::none()
+                    crate::scroll::reveal_onboarding_option()
                 }
                 Key::Named(Named::ArrowUp) => {
                     page.menu = Some(crate::focus::move_highlight(page.themes.len(), at, -1));
-                    Task::none()
+                    crate::scroll::reveal_onboarding_option()
                 }
                 Key::Named(Named::Escape) => {
                     page.menu = None;
@@ -322,8 +326,14 @@ impl LauncherApp {
                             .collect();
                         column![
                             theme_row,
-                            container(self.choice_menu(options, highlighted))
-                                .padding(Padding::new(4.0).left(220))
+                            // A list of every theme file would push the
+                            // step off the card: it scrolls past a few.
+                            container(
+                                crate::scroll::scrollable(self.choice_menu(options, highlighted))
+                                    .id(crate::scroll::ONBOARDING_MENU)
+                            )
+                            .max_height(MENU_HEIGHT)
+                            .padding(Padding::new(4.0).left(220))
                         ]
                         .into()
                     }
