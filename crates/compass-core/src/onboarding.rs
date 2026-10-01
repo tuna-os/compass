@@ -650,11 +650,11 @@ mod tests {
                 assert!(
                     listed.iter().any(|entry| {
                         entry["name"] == recommendation.name
-                            && entry["author"] == recommendation.author
+                            && entry["author"] == recommendation.owner
                     }),
                     "{} {}/{} is not in Suite 1's corpus",
                     store.name(),
-                    recommendation.author,
+                    recommendation.owner,
                     recommendation.name
                 );
             }
