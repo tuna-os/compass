@@ -39,6 +39,11 @@ pub const ROW_MIN_CONTENT: f32 = 34.0;
 pub const SPACING: f32 = 12.0;
 /// A focus ring's width.
 pub const FOCUS_RING_WIDTH: f32 = 2.0;
+/// The gap between a focus ring and its control, so a ring in the accent
+/// still shows around a control filled with it (a switch that is on).
+pub const FOCUS_RING_GAP: f32 = 2.0;
+/// What a ring takes on each side of its control.
+pub const FOCUS_RING_ROOM: f32 = FOCUS_RING_WIDTH + FOCUS_RING_GAP;
 
 /// `alpha(currentColor, a)`: the palette's text at opacity `a`.
 fn ink(palette: Palette, a: f32) -> Color {
@@ -203,6 +208,39 @@ pub fn dropdown(palette: Palette, status: pick_list::Status) -> pick_list::Style
     }
 }
 
+/// The focus ring (`outline: 2px solid accent`, offset outward): a 2 px
+/// line in the accent, which the palette holds at 4.5:1 against every
+/// background, around a control with the keyboard, and nothing around one
+/// without. `radius` is the control's own, which the ring follows.
+#[must_use]
+pub fn focus_ring(palette: Palette, focused: bool, radius: f32) -> container::Style {
+    container::Style {
+        border: Border {
+            color: if focused {
+                palette.accent.to_iced()
+            } else {
+                Color::TRANSPARENT
+            },
+            width: FOCUS_RING_WIDTH,
+            radius: (radius + FOCUS_RING_ROOM).into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// `control` with room for its focus ring, drawn when `focused`. The room
+/// is kept either way, so a control does not move when it takes the focus.
+pub fn ringed<'a, Message: 'a>(
+    control: impl Into<iced::Element<'a, Message>>,
+    palette: Palette,
+    focused: bool,
+    radius: f32,
+) -> iced::widget::Container<'a, Message> {
+    container(control)
+        .padding(FOCUS_RING_ROOM)
+        .style(move |_: &iced::Theme| focus_ring(palette, focused, radius))
+}
+
 /// A boxed list's fill: Adwaita's `card_bg_color` ([`Palette::card`]).
 #[must_use]
 pub fn card(palette: Palette) -> Color {
@@ -274,6 +312,27 @@ mod tests {
         let off = switch(LIGHT, toggler::Status::Active { is_toggled: false });
         assert_eq!(Some(on.background), accent);
         assert_ne!(Some(off.background), accent);
+    }
+
+    #[test]
+    fn a_focused_control_has_a_two_pixel_ring_that_reads_on_every_background() {
+        for palette in [LIGHT, DARK] {
+            let ring = focus_ring(palette, true, CONTROL_RADIUS);
+            assert!((ring.border.width - 2.0).abs() < f32::EPSILON);
+            assert_eq!(ring.border.color, palette.accent.to_iced());
+            for background in palette.backgrounds() {
+                let ratio = compass_core::contrast::contrast_ratio(
+                    palette.accent.into(),
+                    background.into(),
+                );
+                assert!(
+                    ratio >= 3.0,
+                    "{palette:?}: ring {ratio:.2} on {background:?}"
+                );
+            }
+            let idle = focus_ring(palette, false, CONTROL_RADIUS);
+            assert_eq!(idle.border.color, Color::TRANSPARENT);
+        }
     }
 
     #[test]
