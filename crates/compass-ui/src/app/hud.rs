@@ -69,10 +69,21 @@ impl LauncherApp {
         self
     }
 
-    /// The view for surface `window`: the HUD's pill or the launcher.
+    /// The view for surface `window`: the HUD's pill, the backdrop, or the
+    /// launcher — nothing while a layer surface is still measuring its output
+    /// (`window_sized`), which would show the card at the wrong size for a
+    /// frame.
     pub fn view_for(&self, window: iced::window::Id) -> Element<'_, Message> {
         if self.hud.owns(window) {
             self.hud_view()
+        } else if self.backdrop == Some(window) {
+            iced::widget::mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+                .on_press(Message::BackdropPressed)
+                .on_right_press(Message::BackdropPressed)
+                .on_middle_press(Message::BackdropPressed)
+                .into()
+        } else if self.measuring == Some(window) {
+            container(text("")).into()
         } else {
             self.view()
         }

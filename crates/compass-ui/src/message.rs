@@ -496,6 +496,21 @@ pub enum Message {
     /// translucency or corner radius changed. Where the blur goes (see
     /// `crate::material`).
     CardMeasured(iced::Size),
+    /// A window was opened (`opened`) or resized to this logical size.
+    WindowSized {
+        /// The window.
+        id: iced::window::Id,
+        /// Its size, logical pixels.
+        size: iced::Size,
+        /// Whether this is its first size, from the compositor's first
+        /// configure.
+        opened: bool,
+    },
+    /// The logical size of the monitor a toplevel is on, when the toolkit
+    /// knows it.
+    MonitorSized(iced::window::Id, Option<iced::Size>),
+    /// A click landed on the backdrop, outside the launcher.
+    BackdropPressed,
     /// Leave for good.
     ///
     /// The one thing that still ends the process, now that dismissing only

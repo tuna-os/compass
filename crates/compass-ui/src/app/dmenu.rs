@@ -12,7 +12,7 @@ use super::{
     Task, chord_direction, column, container, mouse_area, next_selection, row, scrollable, text,
 };
 use crate::action_panel::Action;
-use crate::design::{GEOMETRY, SHADOW_PADDING};
+use crate::design::GEOMETRY;
 use crate::dmenu_page::{self, DmenuPage, Status};
 
 const SELECT: &str = "dmenu.select";
@@ -43,15 +43,12 @@ impl LauncherApp {
             return Task::none();
         }
         self.resized_to = wanted;
-        let (width, height) = wanted.unwrap_or((
-            u32::from(GEOMETRY.card_width),
-            u32::from(GEOMETRY.card_max_height),
-        ));
-        let pad = 2 * u32::from(SHADOW_PADDING);
-        crate::surface::resize(
-            id,
-            iced::Size::new((width + pad) as f32, (height + pad) as f32),
-        )
+        // A layer surface still measuring its output gets this size when it
+        // has measured (`window_sized`).
+        if self.measuring == Some(id) {
+            return Task::none();
+        }
+        crate::surface::resize(id, self.wanted_window_size())
     }
 
     /// Puts up the dmenu view for `token` and asks the engine for its list.
