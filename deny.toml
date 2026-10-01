@@ -1,0 +1,73 @@
+# cargo-deny: advisories, licences, bans and sources for the Rust workspace.
+# CI runs `cargo deny check` (rust.yaml, `deny` job). Run it locally the same way.
+#
+# An advisory that cannot be fixed by a lockfile bump goes in
+# [advisories].ignore with the reason and a link, never silently.
+
+[graph]
+# Linux is the only target (ADR-0007), on both architectures the Flatpak ships.
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+all-features = true
+
+[advisories]
+# Vulnerabilities always fail. cargo-deny has no "warn" level for unmaintained
+# crates any more, only a scope, so every unmaintained crate anywhere in the
+# graph fails until it is either replaced or listed below with a reason.
+unmaintained = "all"
+yanked = "warn"
+#
+# None of the ignored advisories reports a vulnerability, and none has a
+# semver-compatible release that drops the crate, so a lockfile bump cannot fix
+# them. Each goes when the crate that pulls it in moves on.
+ignore = [
+  # ttf-parser: used directly by compass and by Iced's text stack (fontdb,
+  # cosmic-text). Goes when Iced moves to skrifa.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0192
+  { id = "RUSTSEC-2026-0192", reason = "unmaintained ttf-parser via Iced 0.14's fontdb/cosmic-text; no fix until Iced moves to skrifa" },
+  # rustybuzz: through usvg 0.45, which resvg 0.45 and iced_tiny_skia 0.14 pin.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0206
+  { id = "RUSTSEC-2026-0206", reason = "unmaintained rustybuzz via usvg 0.45, pinned by iced_tiny_skia 0.14" },
+  # bincode 1 and yaml-rust: through syntect 5.3 (latest), from two-face and
+  # iced_highlighter 0.14. They load syntect's bundled syntax dumps.
+  # https://rustsec.org/advisories/RUSTSEC-2025-0141
+  # https://rustsec.org/advisories/RUSTSEC-2024-0320
+  { id = "RUSTSEC-2025-0141", reason = "unmaintained bincode 1 via syntect 5.3 (latest) from iced_highlighter 0.14" },
+  { id = "RUSTSEC-2024-0320", reason = "unmaintained yaml-rust via syntect 5.3 (latest) from iced_highlighter 0.14" },
+  # smartstring: through rhai 1.26.1 (latest), for compass-script.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0249
+  { id = "RUSTSEC-2026-0249", reason = "unmaintained smartstring via rhai 1.26.1 (latest), compass-script's engine" },
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Cargo.lock has no git sources. Add one here only with the reason.
+allow-git = []
+
+[licenses]
+# The project is GPL-3.0-only, so everything here must be GPL-3.0 compatible.
+# The list is what the dependency graph actually uses; a crate offering a
+# choice (Apache-2.0 OR GPL-2.0-only, say) is satisfied by any one allowed
+# term, so GPL-2.0-only is deliberately absent.
+allow = [
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  # webpki-root-certs: the Mozilla root store, published as data.
+  "CDLA-Permissive-2.0",
+  "GPL-3.0-only",
+  "GPL-3.0-or-later",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  # ksni is Unlicense only; elsewhere it is offered beside MIT.
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.8

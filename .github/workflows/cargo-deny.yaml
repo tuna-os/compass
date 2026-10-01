@@ -1,0 +1,49 @@
+# cargo-deny against deny.toml: RustSec advisories, licences, duplicate
+# versions and where crates may come from.
+#
+# Advisories are a separate leg because they change without any change here:
+# a crate published years ago can gain an advisory tonight. On a pull request
+# that leg reports without blocking, so an unrelated change is not held up by
+# news about a dependency it did not touch; on main and on the daily schedule it
+# fails, which is where somebody has to act on it. The other checks only change
+# when Cargo.lock or deny.toml does, so they always gate.
+name: cargo-deny
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - Cargo.lock
+      - "**/Cargo.toml"
+      - deny.toml
+      - .github/workflows/cargo-deny.yaml
+  pull_request:
+    paths: *paths
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    name: cargo-deny (${{ matrix.checks }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        checks:
+          - advisories
+          - bans licenses sources
+    continue-on-error: ${{ matrix.checks == 'advisories' && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check ${{ matrix.checks }}
