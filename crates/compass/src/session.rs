@@ -11,6 +11,17 @@ use compass_ipc::{Client, Request, Response, SocketPath};
 #[derive(Debug)]
 pub struct EngineSession(Option<Child>);
 
+impl EngineSession {
+    /// False once an engine this session started has exited. An engine it
+    /// found running is not its to watch, and counts as running.
+    pub fn is_running(&mut self) -> bool {
+        match &mut self.0 {
+            Some(child) => matches!(child.try_wait(), Ok(None)),
+            None => true,
+        }
+    }
+}
+
 impl Drop for EngineSession {
     fn drop(&mut self) {
         if let Some(child) = &mut self.0 {
@@ -20,7 +31,8 @@ impl Drop for EngineSession {
     }
 }
 
-async fn listening(socket: &SocketPath) -> Result<bool> {
+/// Whether an engine answers a ping on `socket`.
+pub(crate) async fn listening(socket: &SocketPath) -> Result<bool> {
     let mut client = match Client::connect(socket.as_path()).await {
         Ok(client) => client,
         Err(compass_ipc::Error::Io(error))

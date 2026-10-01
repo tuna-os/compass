@@ -109,12 +109,13 @@ pub use resident::{EngineLink, UiCommand, UiOutcome};
 ///
 /// # Errors
 ///
-/// Returns Iced's error when the event loop cannot start, which on a machine
-/// with no compositor is the normal outcome rather than a bug.
+/// [`RunError::Start`] with Iced's error when the event loop cannot start,
+/// which on a machine with no compositor is the normal outcome rather than a
+/// bug, and [`RunError::Stopped`] when it ends without the app asking.
 pub fn run_resident(
     flags: AppFlags,
     material: Option<Box<dyn compass_platform::WindowMaterial>>,
-) -> iced::Result {
+) -> Result<(), RunError> {
     // `iced::daemon`, NOT `iced::application`, AND THE DIFFERENCE IS THE WHOLE
     // FEATURE.
     //
@@ -155,6 +156,35 @@ pub fn run_resident(
     .style(LauncherApp::style)
     .subscription(LauncherApp::subscription)
     .run()
+    .map_err(|error| RunError::Start(error.to_string()))?;
+    ended()
+}
+
+/// Why the launcher's event loop did not run until the launcher asked it to
+/// end. The two are worded apart because they mean different things to the
+/// person reading them: one never had a window, the other lost it.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// The event loop or the window could not be set up.
+    #[error("the launcher could not start: {0}")]
+    Start(String),
+    /// The event loop ended under a running launcher, typically because the
+    /// compositor dropped the connection after a protocol error.
+    #[error("the launcher stopped unexpectedly: {0}")]
+    Stopped(String),
+}
+
+/// The outcome of an event loop that returned without an error: fine if the
+/// app asked it to end, a lost compositor connection if not, which is how
+/// `iced_winit` reports one (it logs the dispatch error and returns `Ok`).
+fn ended() -> Result<(), RunError> {
+    if app::exit_requested() {
+        Ok(())
+    } else {
+        Err(RunError::Stopped(
+            "the connection to the compositor was lost".to_owned(),
+        ))
+    }
 }
 
 /// What the `compass` binary hands [`run_resident_layer_shell`]: the
@@ -181,13 +211,14 @@ pub struct LayerShellConnection {
 ///
 /// # Errors
 ///
-/// `iced_layershell`'s error when the compositor has no layer shell or the
-/// event loop cannot start.
+/// [`RunError::Start`] when the compositor has no layer shell or the event
+/// loop cannot start, and [`RunError::Stopped`] when the connection fails
+/// under a running launcher.
 #[cfg(target_os = "linux")]
 pub fn run_resident_layer_shell(
     flags: AppFlags,
     shared: LayerShellConnection,
-) -> Result<(), iced_layershell::Error> {
+) -> Result<(), RunError> {
     use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 
     fn view(app: &LauncherApp, window: iced::window::Id) -> iced::Element<'_, Message> {
@@ -235,4 +266,11 @@ pub fn run_resident_layer_shell(
         ..Settings::default()
     })
     .run()
+    .map_err(|error| match error {
+        iced_layershell::Error::WaylandDispatchFailed(cause) => RunError::Stopped(format!(
+            "the connection to the compositor was lost ({cause})"
+        )),
+        other => RunError::Start(other.to_string()),
+    })?;
+    ended()
 }

@@ -195,3 +195,18 @@ from. None was added.
 | The grants file | `serde_json` (already), the Rhai consent file's write-then-rename | **Used** (`compass::host_commands::Grants`). |
 | The runtime's unit tests | `vitest`, `jest`, `tsx` | **Node's own `node:test`**, over bundles `esbuild` (already the runtime's bundler) makes: `npm test` needs nothing the offline builds would have to fetch. |
 
+## The robustness pass: two patched crates (2026-10-01)
+
+Two QA blockers on the wlroots track (TIL-01, TIL-02) were bugs in crates under Iced, not in ours.
+Both are fixed with a small patch to the crate, vendored under `vendor/` and wired in by
+`[patch.crates-io]`, rather than by a replacement: the crates are otherwise right, and a
+replacement would be the hand-rolling this audit exists to avoid. Each patch is a few lines,
+marked `Compass patch` in the source, and each vendored manifest says when to drop it. Both are
+excluded from the workspace, so they keep upstream's lints and `unsafe`, and
+`packaging/flatpak/cargo-sources.json` no longer downloads them.
+
+| Need | Crate | Decision |
+|---|---|---|
+| The clipboard Iced's two shells use, on the UI's own Wayland connection | `smithay-clipboard` 0.7.3 (latest; through `window_clipboard` 0.5, under both `iced_winit` and `iced_layershell`) | **Patched** (`vendor/smithay-clipboard`). It released its `wl_data_device` when the seat lost its keyboard, and its `Drop` released it too, which both shells trigger on every hide. A `data_offer` the compositor had already sent then reached a zombie device; libwayland 1.22 discards such an event without reserving the server-side id it carries, so the next offer failed "not a valid new object id" and killed the launcher's connection (`WAYLAND_DEBUG` shows the `release`, then `discarded [unknown]@…[event 0]`, then the fatal offer). The patch keeps a device for the seat's life and keeps one worker per display for the process, handed out to every `Clipboard::new`. A side effect: a copy made just before the launcher hides survives it. Moving the clipboard to a connection of its own was considered and refused: a client with no surface never has the keyboard focus, and the selection is only offered to the focused client. |
+| Supervising the launcher under `compass start` | `std::process` (already) | **Used**: `start` holds the lease and the engine and runs the window as `compass launcher-child`, starting it again when it fails (`compass::supervise`). The child notices `start` going away by its parent pid changing, which needs no signal handling (and so no `tokio` `signal` feature, which would rebuild the workspace) and no `prctl`, which is `unsafe`. |
+

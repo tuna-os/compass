@@ -99,7 +99,24 @@ fn focus_search() -> Task<Message> {
     iced::widget::operation::focus(SEARCH_INPUT)
 }
 
-/// Lifts keyboard events out of the runtime's event stream.
+/// Set when the app asks its event loop to end.
+static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ends the event loop, noting that the app asked for it. `iced_winit` returns
+/// `Ok` whether the loop ended on request or because the compositor
+/// connection failed, and only this tells the two apart ([`exit_requested`]).
+fn exit() -> Task<Message> {
+    EXIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    iced::exit()
+}
+
+/// Whether the app asked its event loop to end, rather than the loop ending
+/// under it.
+pub(crate) fn exit_requested() -> bool {
+    EXIT_REQUESTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Lifts keyboard and window events out of the runtime's event stream.
 ///
 /// A free function rather than a closure because [`iced::event::listen_with`]
 /// takes a plain `fn` pointer. See [`LauncherApp::subscription`] for why the
@@ -1503,7 +1520,7 @@ impl LauncherApp {
         self.reopen_after_close = false;
         self.window_focused = false;
         if self.on_dismiss() == Dismissal::Exit {
-            return iced::exit();
+            return exit();
         }
         if self.pending_window.is_some() {
             self.pending_hide = true;
@@ -1514,7 +1531,7 @@ impl LauncherApp {
             // link. Written as a return rather than an unwrap so a future
             // change to `on_dismiss` degrades into exiting rather than
             // panicking in the middle of a keystroke.
-            return iced::exit();
+            return exit();
         }
         match self.window {
             // The answer waits for `Message::Closed`, which arrives when the
@@ -2395,10 +2412,10 @@ impl LauncherApp {
             Message::ShortcutActivated(_) => Task::none(),
             Message::FocusChanged(_) => Task::none(),
             Message::WindowClosed => self.conceal(),
-            Message::Quit => iced::exit(),
+            Message::Quit => exit(),
             Message::EngineDisconnected => {
                 if self.exit_on_engine_disconnect {
-                    iced::exit()
+                    exit()
                 } else {
                     Task::none()
                 }

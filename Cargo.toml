@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# Patched third-party crates, not ours: they keep upstream's lints and their
+# own `unsafe`, so they stay out of the workspace. See `[patch.crates-io]`.
+exclude = ["vendor/smithay-clipboard"]
 
 [workspace.package]
 # The release line: scripts/bump_version.sh moves this with the manifest.yaml
@@ -142,3 +145,11 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+
+# The clipboard both Iced shells use, patched so that a launcher surface coming
+# and going, or a keyboard doing so, never releases a `wl_data_device` on the
+# UI's connection: the release races the compositor's next `data_offer` and
+# kills the connection (TIL-01). `vendor/smithay-clipboard/src/lib.rs` has the
+# details, and CRATE-AUDIT.md the reasoning.
+[patch.crates-io]
+smithay-clipboard = { path = "vendor/smithay-clipboard" }
