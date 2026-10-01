@@ -2551,10 +2551,12 @@ pub(crate) async fn forward(slot: &WindowSlot, command: WindowCommand, what: &st
 ///
 /// The slot is locked while it waits, so every request that needs the window
 /// waits too. Every command is answered as soon as the window has acted on it
-/// (a dmenu's choice comes later, outside the push), so a window that has not
-/// answered in this long is stuck. Shorter than the CLI's own 10 seconds, so
-/// `compass toggle` reports the engine's reason rather than its own timeout.
-const WINDOW_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// (a dmenu's choice comes later, outside the push), but the first `Show` waits
+/// on the new window's renderer, and a machine without a GPU spends seconds
+/// probing Vulkan before it settles on GL. So this bounds a stuck window rather
+/// than a slow one, and is longer than the CLI's own 10 seconds: a slow first
+/// show must not be refused while it is still coming up.
+const WINDOW_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// [`forward`] with the wait for the window's answer bounded by `timeout`.
 ///
