@@ -64,6 +64,15 @@ done
 [ -n "$WAYLAND_DISPLAY" ] || { cat "$work/sway.log" >&2; echo "sway never listened" >&2; exit 1; }
 export WAYLAND_DISPLAY SWAYSOCK
 
+# A seat with a keyboard that stays, as a real one has. Each `wtype` below adds
+# a keyboard of its own and removes it again; without this one the seat is
+# left with none, the launcher loses its focus with no other window to take
+# it, and a toplevel then looks as if it were behind another window.
+if command -v wtype >/dev/null; then
+  wtype -s 2147483647 &
+  pids+=($!)
+fi
+
 # Share of pixels that differ from the background colour, in the centre third.
 covered() {
   grim -t ppm "$work/shot.ppm"
