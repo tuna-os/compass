@@ -21,6 +21,11 @@ const RUN: &str = "script.run";
 const COPY_PATH: &str = "script.copy-path";
 const KILL: &str = "script.kill";
 const RERUN: &str = "script.rerun";
+const COPY_OUTPUT: &str = "script.copy-output";
+
+/// How far one arrow press scrolls the output, and one Page Up or Down.
+const LINE_STEP: f32 = 40.0;
+const PAGE_STEP: f32 = 320.0;
 
 /// How often a followed run is asked for its output.
 const POLL: std::time::Duration = std::time::Duration::from_millis(250);
@@ -59,7 +64,7 @@ impl LauncherApp {
         self.panel = None;
         if let Some(form) = script_page::arguments_form(script) {
             self.page = Page::Preferences(Box::new(form));
-            return iced::widget::operation::focus_next();
+            return Task::none();
         }
         let id = script.id.clone();
         self.send_run_script(id, Vec::new())
@@ -166,14 +171,23 @@ impl LauncherApp {
     /// The panel over a script row, or over the full-output view.
     pub(super) fn open_script_panel(&mut self) -> Option<Task<Message>> {
         let actions = match &self.page {
-            Page::ScriptOutput(page) if page.state.finished => {
-                vec![
-                    Action::new("Run script again")
-                        .with_id(RERUN)
-                        .with_shortcut("Ctrl+R"),
-                ]
+            Page::ScriptOutput(page) => {
+                let mut actions = if page.state.finished {
+                    vec![
+                        Action::new("Run script again")
+                            .with_id(RERUN)
+                            .with_shortcut("ctrl+r"),
+                    ]
+                } else {
+                    vec![Action::new("Kill process").with_id(KILL)]
+                };
+                actions.push(
+                    Action::new("Copy output")
+                        .with_id(COPY_OUTPUT)
+                        .with_shortcut("ctrl+shift+c"),
+                );
+                actions
             }
-            Page::ScriptOutput(_) => vec![Action::new("Kill process").with_id(KILL)],
             Page::Root => match self.selected_row()? {
                 RootRow::Script(_) => vec![
                     Action::new("Run script")
@@ -202,12 +216,16 @@ impl LauncherApp {
             COPY_PATH => match self.selected_row()? {
                 RootRow::Script(index) => {
                     let path = self.app_index.scripts().get(index)?.path.clone();
-                    iced::clipboard::write(path)
+                    super::hud::copy_text(self.backend.clone(), path)
                 }
                 _ => return None,
             },
             KILL => self.stop_followed_script(),
             RERUN => self.rerun_script(),
+            COPY_OUTPUT => {
+                self.panel = None;
+                return Some(self.copy_script_output());
+            }
             _ => return None,
         };
         self.panel = None;
@@ -223,10 +241,37 @@ impl LauncherApp {
         self.send_run_script(id, arguments)
     }
 
+    /// Copies the output as it reads, without its colour codes.
+    fn copy_script_output(&mut self) -> Task<Message> {
+        let Page::ScriptOutput(page) = &self.page else {
+            return Task::none();
+        };
+        let text = script_page::plain_text(&page.state.output);
+        self.copy_with_hud(text)
+    }
+
     /// The full-output view's keys: Escape stops a running script and goes
-    /// back, Ctrl+R runs it again once it has ended.
+    /// back, Ctrl+R runs it again once it has ended, Ctrl+Shift+C copies the
+    /// output, and the arrows, Page Up and Down, Home and End scroll it.
     pub(super) fn script_output_key(&mut self, key: &Key, modifiers: Modifiers) -> Task<Message> {
+        use iced::widget::operation::{self, AbsoluteOffset, RelativeOffset};
+        let scroll = |y: f32| {
+            operation::scroll_by(crate::scroll::ROOT_RESULTS, AbsoluteOffset { x: 0.0, y })
+        };
         match key.as_ref() {
+            Key::Named(Named::ArrowDown) => scroll(LINE_STEP),
+            Key::Named(Named::ArrowUp) => scroll(-LINE_STEP),
+            Key::Named(Named::PageDown) => scroll(PAGE_STEP),
+            Key::Named(Named::PageUp) => scroll(-PAGE_STEP),
+            Key::Named(Named::Home) => {
+                operation::snap_to(crate::scroll::ROOT_RESULTS, RelativeOffset::START)
+            }
+            Key::Named(Named::End) => operation::snap_to_end(crate::scroll::ROOT_RESULTS),
+            Key::Character(c)
+                if modifiers.control() && modifiers.shift() && c.eq_ignore_ascii_case("c") =>
+            {
+                self.copy_script_output()
+            }
             Key::Named(Named::Escape) => {
                 let stop = self.stop_followed_script();
                 let back = self.update(Message::Back);
@@ -318,6 +363,12 @@ impl LauncherApp {
                         self.page = Page::Root;
                     }
                     self.following_script = Some(FollowedScript { session, mode });
+                    // Its line shows in place of the results; the search
+                    // field keeps the keyboard, so typing replaces it.
+                    return Task::batch([
+                        self.poll_script(session, std::time::Duration::ZERO),
+                        super::focus_search(),
+                    ]);
                 }
                 self.poll_script(session, std::time::Duration::ZERO)
             }
@@ -403,18 +454,28 @@ impl LauncherApp {
         let heading = text(format!("{} — {}", page.title, page.heading()))
             .font(self.font())
             .size(12)
-            .color(palette.muted.to_iced());
+            .color(if page.failed() {
+                colour(OutputColor::Red)
+            } else {
+                palette.muted.to_iced()
+            });
         let output = iced::widget::rich_text(spans)
             .size(13)
+            .width(Length::Fill)
             .on_link_click(Message::ExtensionLinkClicked);
-        let mut body = column![heading, output].spacing(8);
+        let mut body = column![heading, output].spacing(8).width(Length::Fill);
         if let Some(notice) = &page.notice {
             body = body.push(text(notice.clone()).font(self.font()).size(12));
         }
-        scrollable(container(body).padding(Padding::new(12.0)))
-            .id(crate::scroll::ROOT_RESULTS)
-            .height(Length::Shrink)
-            .into()
+        scrollable(
+            container(body)
+                .width(Length::Fill)
+                .padding(Padding::new(12.0)),
+        )
+        .id(crate::scroll::ROOT_RESULTS)
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .into()
     }
 }
 

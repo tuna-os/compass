@@ -170,9 +170,42 @@ pub fn is_conversion(question: &str) -> bool {
             .any(|word| matches!(word.to_lowercase().as_str(), "to" | "in" | "as"))
 }
 
+/// What copying `answer` puts on the clipboard: the value alone.
+///
+/// The C++ copies `answer.text`, and Numen keeps the unit apart from it
+/// (`answer.unit`), so `100 usd to eur` copies `88.07` rather than the row's
+/// `88.07 EUR`. fend prints one string, so the value is read back out of it:
+/// its `approx. ` is dropped, and a unit after a lone number goes. An answer
+/// that is not a number and a unit (`2 days, 3 hours`, a date, `true`) is
+/// copied as shown.
+#[must_use]
+pub fn copied_value(answer: &str) -> String {
+    let shown = answer.trim();
+    let value = shown.strip_prefix("approx. ").unwrap_or(shown);
+    match value.split_once(' ') {
+        Some((number, unit))
+            if number.parse::<f64>().is_ok() && !unit.chars().any(|c| c.is_ascii_digit()) =>
+        {
+            number.to_owned()
+        }
+        _ => value.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copying_an_answer_copies_its_value_without_approx_or_unit() {
+        assert_eq!(copied_value("approx. 88.0669308675 EUR"), "88.0669308675");
+        assert_eq!(copied_value("1.524 m"), "1.524");
+        assert_eq!(copied_value("approx. 3.1415926536"), "3.1415926536");
+        assert_eq!(copied_value("-40 °F"), "-40");
+        assert_eq!(copied_value("4"), "4");
+        assert_eq!(copied_value("2 days, 3 hours"), "2 days, 3 hours");
+        assert_eq!(copied_value("true"), "true");
+    }
 
     #[test]
     fn conversions_are_told_from_arithmetic_by_their_keyword() {

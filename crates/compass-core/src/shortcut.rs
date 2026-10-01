@@ -243,31 +243,42 @@ pub trait Reserved {
 /// unavailable clipboard or selection expands to nothing, as the C++'s does),
 /// and every other placeholder takes the next argument.
 ///
-/// Two differences from the C++, both in PARITY (Shortcuts): an argument left
-/// empty takes its `default=` (the C++ drops the default on the floor, so an
-/// optional argument could only ever expand to nothing), and `{date}`, which
-/// is reserved and so is not an argument, expands to nothing instead of
-/// falling into the argument branch and eating the next argument's value.
+/// Three differences from the C++, all in PARITY (Shortcuts): an argument
+/// left empty takes its `default=` (the C++ drops the default on the floor,
+/// so an optional argument could only ever expand to nothing); `{date}`,
+/// which is reserved and so is not an argument, expands to nothing instead
+/// of falling into the argument branch and eating the next argument's value;
+/// and in a URL template (see [`is_url_template`]) every value put in is
+/// percent-encoded, so `is:open label:bug & more` searches for that rather
+/// than ending the query at the `&`.
 #[must_use]
 pub fn expand(link: &Link, arguments: &[String], reserved: &dyn Reserved) -> String {
+    let encode = is_url_template(&link.raw);
     let mut expanded = String::with_capacity(link.raw.len());
+    let put = |expanded: &mut String, value: &str| {
+        if encode {
+            expanded.extend(percent_encoding::utf8_percent_encode(value, URL_VALUE));
+        } else {
+            expanded.push_str(value);
+        }
+    };
     let mut next_argument = 0usize;
     for part in &link.parts {
         match part {
             UrlPart::Text(text) => expanded.push_str(text),
             UrlPart::Placeholder(placeholder) => match placeholder.id.as_str() {
-                "clipboard" => expanded.push_str(&reserved.clipboard().unwrap_or_default()),
+                "clipboard" => put(&mut expanded, &reserved.clipboard().unwrap_or_default()),
                 "selected" | "selection" => {
-                    expanded.push_str(&reserved.selection().unwrap_or_default());
+                    put(&mut expanded, &reserved.selection().unwrap_or_default());
                 }
                 "uuid" => expanded.push_str(&reserved.uuid()),
                 id if RESERVED_PLACEHOLDER_IDS.contains(&id) => {}
                 _ => {
                     match arguments.get(next_argument) {
-                        Some(value) if !value.is_empty() => expanded.push_str(value),
+                        Some(value) if !value.is_empty() => put(&mut expanded, value),
                         _ => {
                             if let Some(argument) = link.arguments.get(next_argument) {
-                                expanded.push_str(&argument.default_value);
+                                put(&mut expanded, &argument.default_value);
                             }
                         }
                     }
@@ -277,6 +288,31 @@ pub fn expand(link: &Link, arguments: &[String], reserved: &dyn Reserved) -> Str
         }
     }
     expanded
+}
+
+/// What a value put into a URL template is encoded against: everything but
+/// RFC 3986's unreserved characters and `/`, which a value may use to name
+/// a path (`{repo}` as `owner/name`) and which a query takes as it is.
+const URL_VALUE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~')
+    .remove(b'/');
+
+/// Whether `raw` is a URL template, whose values are percent-encoded: it
+/// starts with a scheme and `://` before any placeholder, and the scheme is
+/// not `file`. A link that is all placeholder (`{url}`), a path or a
+/// command line is filled in as typed.
+#[must_use]
+pub fn is_url_template(raw: &str) -> bool {
+    let Some((scheme, _)) = raw.split_once("://") else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        && !scheme.eq_ignore_ascii_case("file")
 }
 
 /// A quicklink's root-search row: its name as the title and its link as a
@@ -313,6 +349,43 @@ mod expand_tests {
         fn uuid(&self) -> String {
             "00000000-0000-4000-8000-000000000000".to_owned()
         }
+    }
+
+    #[test]
+    fn values_in_a_url_template_are_percent_encoded_and_elsewhere_left_alone() {
+        let link = parse_link("https://github.com/{repo}/issues?q={query}");
+        assert_eq!(
+            expand(
+                &link,
+                &["tuna-os/compass".into(), "is:open label:bug & more".into()],
+                &Fixed
+            ),
+            "https://github.com/tuna-os/compass/issues?q=is%3Aopen%20label%3Abug%20%26%20more"
+        );
+        assert_eq!(
+            expand(&parse_link("https://x.test/?q={clipboard}"), &[], &Fixed),
+            "https://x.test/?q=copied"
+        );
+        assert_eq!(
+            expand(
+                &parse_link("{url}"),
+                &["https://a.test/?a=1&b=2".into()],
+                &Fixed
+            ),
+            "https://a.test/?a=1&b=2",
+            "a link that is all placeholder is the value as typed"
+        );
+        assert_eq!(
+            expand(
+                &parse_link("file:///home/me/{name}"),
+                &["a b".into()],
+                &Fixed
+            ),
+            "file:///home/me/a b"
+        );
+        assert!(!is_url_template("/usr/bin/{x}"));
+        assert!(!is_url_template("{scheme}://x"));
+        assert!(is_url_template("obsidian://open?vault={v}"));
     }
 
     #[test]

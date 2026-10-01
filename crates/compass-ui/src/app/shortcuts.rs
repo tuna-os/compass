@@ -148,7 +148,7 @@ impl LauncherApp {
             &applications,
             from_manage,
         )));
-        iced::widget::operation::focus_next()
+        Task::none()
     }
 
     /// Opens the shortcut at `index`: through its arguments form when its
@@ -160,7 +160,7 @@ impl LauncherApp {
         self.panel = None;
         if let Some(form) = shortcuts_page::arguments_form(shortcut) {
             self.page = Page::Preferences(Box::new(form));
-            return iced::widget::operation::focus_next();
+            return Task::none();
         }
         let id = shortcut.id.clone();
         self.send_open_shortcut(id, Vec::new())
@@ -508,7 +508,10 @@ impl LauncherApp {
             }
             Message::ShortcutExpanded(Ok(text)) => {
                 let hud = crate::hud::Hud::new("Copied to clipboard");
-                Task::batch([iced::clipboard::write(text), self.show_hud(hud)])
+                Task::batch([
+                    super::hud::copy_text(self.backend.clone(), text),
+                    self.show_hud(hud),
+                ])
             }
             Message::ShortcutExpanded(Err(reason)) => {
                 self.shortcut_notice(reason);

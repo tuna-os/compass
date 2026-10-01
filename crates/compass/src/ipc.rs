@@ -217,6 +217,7 @@ fn describe(request: &Request) -> &'static str {
         Request::RefreshExchangeRates => "RefreshExchangeRates",
         Request::ProbeShortcut { .. } => "ProbeShortcut",
         Request::ExtensionAlertRemember { .. } => "ExtensionAlertRemember",
+        Request::CopyText { .. } => "CopyText",
     }
 }
 

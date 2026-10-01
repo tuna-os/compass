@@ -357,7 +357,7 @@ impl LauncherApp {
             self.parked_clipboard = Some(page);
         }
         self.page = Page::Preferences(Box::new(form));
-        iced::widget::operation::focus_next()
+        Task::none()
     }
 
     /// Saves the keyword form and goes back to the history, which reloads.

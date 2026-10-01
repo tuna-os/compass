@@ -149,6 +149,24 @@ async fn only_the_requested_command_is_sent() {
     assert!(requests.try_recv().is_err());
 }
 
+#[tokio::test]
+async fn a_launch_deeplink_goes_to_the_engine_bare_or_as_a_subcommand() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket = dir.path().join("ipc.sock");
+    let mut requests = stub_engine(&socket).await;
+    let url = "compass://launch/commands/clipboard-history";
+    // `run_cli` puts `--socket <path>` first, so the bare form is the one a
+    // desktop entry's `Exec=compass %u` runs with a global option before it.
+    for args in [&["deeplink", url][..], &[url][..]] {
+        let output = run_cli(dir.path(), &socket, args).await;
+        assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        assert_eq!(
+            requests.recv().await,
+            Some(Request::OpenDeeplink { url: url.into() })
+        );
+    }
+}
+
 // --------------------------------------------------------------------------
 // No daemon
 // --------------------------------------------------------------------------

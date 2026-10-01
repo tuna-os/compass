@@ -1203,6 +1203,54 @@ async fn paste_text(state: &Arc<RwLock<EngineState>>, text: String) -> Response 
     .await
 }
 
+/// `ClipboardService::copyText` for the window: the text goes on a clipboard
+/// the engine owns, so it outlives the window that asked. Over data-control
+/// on wlroots, through the Shell extension elsewhere.
+async fn copy_text(state: &Arc<RwLock<EngineState>>, text: String) -> Response {
+    const WHAT: &str = "Copying";
+    if crate::wlroots::detect()
+        .await
+        .is_some_and(|wlroots| wlroots.capabilities.data_control)
+    {
+        let offers = text_offers(&text);
+        return match tokio::task::spawn_blocking(move || compass_wayland::clipboard::set(offers))
+            .await
+        {
+            Ok(Ok(())) => Response::Ack,
+            Ok(Err(err)) => Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("{WHAT} failed: {err}"),
+            )),
+            Err(err) => Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("{WHAT} failed: {err}"),
+            )),
+        };
+    }
+    let Some(shell) = state.read().await.shell_client() else {
+        return Response::Error(crate::window_service::no_bus(WHAT));
+    };
+    match shell
+        .set_clipboard(&compass_shell::ClipboardContent::text(text))
+        .await
+    {
+        Ok(()) => Response::Ack,
+        Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
+    }
+}
+
+/// Text as data-control offers: UTF-8 under the types toolkits ask for, so
+/// GTK, Qt, terminals and X clients through Xwayland all find one.
+fn text_offers(text: &str) -> Vec<compass_wayland::data_control::Offer> {
+    ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"]
+        .into_iter()
+        .map(|mime_type| compass_wayland::data_control::Offer {
+            mime_type: mime_type.to_owned(),
+            data: text.as_bytes().to_vec(),
+        })
+        .collect()
+}
+
 fn clipboard_unavailable() -> Response {
     Response::Error(ProtocolError::new(
         ErrorKind::Unsupported,
@@ -3325,6 +3373,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             crate::paste::paste(state, compass_shell::ClipboardContent::text(text), WHAT).await
         }
         Request::PasteText { text } => paste_text(state, text).await,
+        Request::CopyText { text } => copy_text(state, text).await,
         Request::ExpandShortcut { id, arguments } => {
             match expand_shortcut(state, &id, &arguments).await {
                 Ok((_, expanded)) => Response::Text { text: expanded },

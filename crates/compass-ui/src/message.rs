@@ -61,6 +61,14 @@ pub enum Message {
     /// The engine armed a paste of the selected entry, or could not; on a
     /// refusal the entry is copied instead.
     ClipboardPasted(Result<(), String>),
+    /// The engine put text on its clipboard, or could not; on a refusal the
+    /// window copies it itself.
+    TextCopied {
+        /// What was copied.
+        text: String,
+        /// The engine's answer.
+        result: Result<(), String>,
+    },
     /// The engine pasted a glyph from the emoji picker, or could not; on a
     /// refusal the glyph is copied instead.
     EmojiPasted {

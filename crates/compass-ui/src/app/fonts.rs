@@ -99,7 +99,7 @@ impl LauncherApp {
                 let family = page.selected_family()?.family.clone();
                 self.panel = None;
                 return Some(Task::batch([
-                    iced::clipboard::write(family),
+                    super::hud::copy_text(self.backend.clone(), family),
                     self.conceal(),
                 ]));
             }

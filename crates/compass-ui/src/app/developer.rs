@@ -16,7 +16,7 @@ impl LauncherApp {
     /// Opens the Create Extension form.
     pub(super) fn open_create_extension(&mut self) -> Task<Message> {
         self.page = Page::Preferences(Box::new(developer_page::form()));
-        iced::widget::operation::focus_next()
+        Task::none()
     }
 
     /// Submits the Create Extension form. `None` when the form showing is

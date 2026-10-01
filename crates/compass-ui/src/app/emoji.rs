@@ -132,7 +132,10 @@ impl LauncherApp {
             return None;
         };
         let glyph = page.selected_glyph()?;
-        let copy = |text: String| Task::batch([iced::clipboard::write(text), focus_search()]);
+        let backend = self.backend.clone();
+        let copy = |text: String| {
+            Task::batch([super::hud::copy_text(backend.clone(), text), focus_search()])
+        };
         let task = match id {
             actions::COPY => return Some(self.copy_selected_emoji()),
             actions::PASTE => return Some(self.paste_selected_emoji()),
@@ -196,7 +199,7 @@ impl LauncherApp {
         };
         self.parked_emoji = Some(page);
         self.page = Page::Preferences(Box::new(form));
-        iced::widget::operation::focus_next()
+        Task::none()
     }
 
     /// Saves the keyword form and goes back to the picker. `None` when the

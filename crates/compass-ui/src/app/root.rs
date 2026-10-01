@@ -252,9 +252,13 @@ impl LauncherApp {
             }
             COPY_DEEPLINK => {
                 let link = compass_core::root_items::deeplink(&id)?;
-                Task::batch([iced::clipboard::write(link), focus_search()])
+                self.panel = None;
+                return Some(self.copy_with_hud(link));
             }
-            COPY_ID => Task::batch([iced::clipboard::write(id), focus_search()]),
+            COPY_ID => {
+                self.panel = None;
+                return Some(self.copy_with_hud(id));
+            }
             RESET_RANKING => {
                 self.confirm = Some(Confirm {
                     title: "Are you sure?".to_owned(),
@@ -417,7 +421,7 @@ impl LauncherApp {
             root_view::alias_form_title(&title),
             vec![field],
         )));
-        iced::widget::operation::focus_next()
+        Task::none()
     }
 
     /// A root row's title, for the alias form's.
@@ -562,6 +566,9 @@ impl LauncherApp {
         let queries = self.search_history.queries();
         match root_view::history_entry_at(&queries, offset, &self.query) {
             Some((reached, query)) => {
+                if self.history_offset.is_none() {
+                    self.history_draft = Some(self.query.clone());
+                }
                 self.history_offset = Some(reached);
                 self.query = query;
                 self.error = None;
@@ -572,6 +579,31 @@ impl LauncherApp {
                 Some(Task::none())
             }
         }
+    }
+
+    /// The down arrow while the up arrow has reached into history: back
+    /// towards the newest search, then to what was being typed before.
+    pub(super) fn history_down(&mut self, direction: Option<Direction>) -> Option<Task<Message>> {
+        if direction != Some(Direction::Down)
+            || !matches!(self.page, Page::Root)
+            || self.panel.is_some()
+        {
+            return None;
+        }
+        let offset = self.history_offset?;
+        let queries = self.search_history.queries();
+        match root_view::newer_history_entry(&queries, offset, &self.query) {
+            Some((reached, query)) => {
+                self.history_offset = Some(reached);
+                self.query = query;
+            }
+            None => {
+                self.history_offset = None;
+                self.query = self.history_draft.take().unwrap_or_default();
+            }
+        }
+        self.error = None;
+        Some(self.search_task())
     }
 
     /// A `compass://launch/...` (or `vicinae://`) deeplink the engine handed over: a
@@ -614,6 +646,7 @@ impl LauncherApp {
         self.panel = None;
         self.page = Page::Root;
         self.history_offset = None;
+        self.history_draft = None;
         self.provider_scope = Some(ProviderScope {
             id: id.to_owned(),
             placeholder: format!("Search {title}"),

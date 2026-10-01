@@ -290,6 +290,10 @@ pub struct ClipboardPage {
     pub detail: Option<Detail>,
     /// Whether copies are being recorded, once the engine has said.
     pub monitoring: Option<ClipboardMonitoring>,
+    /// The filter text and kind the rows were last listed for. An answer for
+    /// the same pair is a reload (after a delete, a pin, a new copy), which
+    /// keeps the selection on its entry; a new filter starts at the top.
+    pub listed_for: Option<(String, Option<ClipboardRowKind>)>,
 }
 
 impl Default for ClipboardPage {
@@ -304,6 +308,7 @@ impl Default for ClipboardPage {
             kind: None,
             detail: None,
             monitoring: None,
+            listed_for: None,
         }
     }
 }
@@ -375,8 +380,22 @@ impl ClipboardPage {
         }
         match result {
             Ok(rows) => {
+                let listing = (self.query.clone(), self.kind);
+                let reload = self.listed_for.as_ref() == Some(&listing);
+                let was = self.selected_row().map(|row| row.id.clone());
+                let at = self.selected;
                 self.rows = rows;
-                self.selected = 0;
+                // By id, not by position: a reload that lands between seeing
+                // a row and pressing Ctrl+X must not put the key on another.
+                self.selected = match (reload, was) {
+                    (true, Some(id)) => self
+                        .rows
+                        .iter()
+                        .position(|row| row.id == id)
+                        .unwrap_or_else(|| at.min(self.rows.len().saturating_sub(1))),
+                    _ => 0,
+                };
+                self.listed_for = Some(listing);
                 self.status = Status::Ready;
             }
             Err(error) => {
@@ -550,6 +569,38 @@ mod tests {
         assert!(page.apply(2, Ok(vec![row("new", ClipboardRowKind::Text)])));
         assert_eq!(page.selected_row().map(|r| r.id.as_str()), Some("new"));
         assert_eq!(page.status, Status::Ready);
+    }
+
+    #[test]
+    fn a_reload_keeps_the_selection_on_its_entry_and_a_new_filter_starts_at_the_top() {
+        let text = ClipboardRowKind::Text;
+        let mut page = ClipboardPage::default();
+        page.apply(
+            0,
+            Ok(vec![row("pinned", text), row("a", text), row("b", text)]),
+        );
+        page.selected = 2;
+        // A new copy arrives at the top while "b" is selected.
+        page.apply(
+            0,
+            Ok(vec![
+                row("pinned", text),
+                row("new", text),
+                row("a", text),
+                row("b", text),
+            ]),
+        );
+        assert_eq!(page.selected_row().map(|r| r.id.as_str()), Some("b"));
+        // "b" is deleted: the selection stays where it was, on the next one
+        // up the list rather than jumping to the pinned entry at the top.
+        page.apply(
+            0,
+            Ok(vec![row("pinned", text), row("new", text), row("a", text)]),
+        );
+        assert_eq!(page.selected_row().map(|r| r.id.as_str()), Some("a"));
+        page.query = "n".into();
+        page.apply(0, Ok(vec![row("pinned", text), row("new", text)]));
+        assert_eq!(page.selected, 0);
     }
 
     #[test]

@@ -452,6 +452,9 @@ fn all_requests() -> Vec<Request> {
             trigger: "ctrl+alt+é".into(),
         },
         Request::ExtensionAlertRemember { session: u64::MAX },
+        Request::CopyText {
+            text: "88.07 👍🏽 zoë".into(),
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -1174,6 +1177,7 @@ fn request_variants_are_exhaustive() {
             | Request::RefreshExchangeRates
             | Request::ProbeShortcut { .. }
             | Request::ExtensionAlertRemember { .. }
+            | Request::CopyText { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

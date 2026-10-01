@@ -98,7 +98,8 @@ impl LauncherApp {
     /// hides the launcher, as `selectEntry` closes the window.
     fn choose_dmenu(&mut self, output: String, copy: Option<String>) -> Task<Message> {
         let answer = self.answer_dmenu(Some(output));
-        let copied = copy.map_or_else(Task::none, iced::clipboard::write);
+        let backend = self.backend.clone();
+        let copied = copy.map_or_else(Task::none, |text| super::hud::copy_text(backend, text));
         Task::batch([answer, copied, self.conceal()])
     }
 

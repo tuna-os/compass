@@ -101,8 +101,10 @@ use serde::{Deserialize, Serialize};
 /// beside its author ([`StoreEntry::owner`]), which the Raycast store keys an
 /// organisation's extension by, and which [`Request::StoreExtension`] and
 /// [`Request::StoreInstall`] now carry, and a no-view command's failure
-/// said in the launcher ([`WindowCommand::Failure`]).
-pub const PROTOCOL_VERSION: u16 = 23;
+/// said in the launcher ([`WindowCommand::Failure`]); version 24, copying text
+/// on the engine's long-lived clipboard rather than the window's, which goes
+/// when the window hides ([`Request::CopyText`]).
+pub const PROTOCOL_VERSION: u16 = 24;
 
 /// How long the engine holds an [`Request::ExtensionView`] open waiting for a
 /// change before it answers with the version it has.
@@ -1072,6 +1074,17 @@ pub enum Request {
     ExtensionAlertRemember {
         /// From [`Response::ExtensionStarted`].
         session: u64,
+    },
+    /// Put `text` on the clipboard, and keep it there after the window hides
+    /// (`ClipboardService::copyText`). The window's own clipboard source goes
+    /// with its last surface, so a copy that hides the launcher has to be
+    /// owned by the engine: over data-control on wlroots, through the GNOME
+    /// Shell extension elsewhere. Answered with [`Response::Ack`]; refused
+    /// where the engine reaches no clipboard, and the window copies itself.
+    /// (v23.)
+    CopyText {
+        /// What to copy.
+        text: String,
     },
 }
 

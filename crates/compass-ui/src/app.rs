@@ -123,6 +123,18 @@ pub(crate) fn exit_requested() -> bool {
     EXIT_REQUESTED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Gives Iced's focus to the form field the keyboard is on: the text field
+/// itself, or nothing for a checkbox or a dropdown, which the form draws as
+/// focused and drives from the key handler.
+fn form_focus(page: &crate::preferences_page::PreferencesPage) -> Task<Message> {
+    match page.focus {
+        Some(index) if page.is_text(index) => {
+            iced::widget::operation::focus(crate::preferences_page::field_id(index))
+        }
+        _ => iced::widget::operation::focus(crate::preferences_page::NO_FIELD),
+    }
+}
+
 /// Lifts keyboard and window events out of the runtime's event stream.
 ///
 /// A free function rather than a closure because [`iced::event::listen_with`]
@@ -533,6 +545,16 @@ impl PanelState {
         self.sections.get(row.section)?.actions.get(row.action?)
     }
 
+    /// The row of the action whose shortcut is the key `pressed`.
+    #[must_use]
+    pub fn row_answering(&self, pressed: &action_panel::Pressed<'_>) -> Option<usize> {
+        self.rows.iter().position(|row| {
+            row.action
+                .and_then(|action| self.sections.get(row.section)?.actions.get(action))
+                .is_some_and(|action| action.answers_to(pressed))
+        })
+    }
+
     /// The row of the action called `title`, for a test to click.
     #[cfg(test)]
     fn row_titled(&self, title: &str) -> Option<usize> {
@@ -775,6 +797,34 @@ enum Page {
 /// A key press as an extension shortcut: its modifiers and the key's name
 /// as `jsx.d.ts` spells it. `None` for a press with no Control, Alt or Super,
 /// which is typing or navigation, never a shortcut.
+/// A key's name as panel shortcuts spell it: a character lower-cased, or
+/// the named key (`enter`, `up`, `delete`, ...). `None` for a key no
+/// shortcut names.
+fn pressed_key_name(key: &iced::keyboard::Key) -> Option<String> {
+    use iced::keyboard::{Key, key::Named};
+    Some(match key.as_ref() {
+        Key::Character(c) => c.to_lowercase(),
+        Key::Named(named) => match named {
+            Named::Enter => "enter",
+            Named::Delete => "delete",
+            Named::Backspace => "backspace",
+            Named::Tab => "tab",
+            Named::Space => "space",
+            Named::ArrowUp => "up",
+            Named::ArrowDown => "down",
+            Named::ArrowLeft => "left",
+            Named::ArrowRight => "right",
+            Named::Home => "home",
+            Named::End => "end",
+            Named::PageUp => "pageup",
+            Named::PageDown => "pagedown",
+            _ => return None,
+        }
+        .to_owned(),
+        Key::Unidentified => return None,
+    })
+}
+
 fn extension_chord(
     key: &iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
@@ -1043,6 +1093,9 @@ pub struct LauncherApp {
     /// Where the up arrow has reached in the history; `None` until it is
     /// pressed, and again once something is typed.
     history_offset: Option<usize>,
+    /// What was typed when the up arrow first reached into history, for the
+    /// down arrow to put back.
+    history_draft: Option<String>,
     /// See [`AppFlags::clock`].
     clock: Option<ClockSettings>,
     /// The time the root search's status bar shows, once the clock ticked.
@@ -1446,6 +1499,7 @@ impl LauncherApp {
             search_history_path: None,
             search_history: compass_core::root_view::SearchHistory::default(),
             history_offset: None,
+            history_draft: None,
             clock: None,
             clock_text: None,
             clock_next_at: 0,
@@ -2281,7 +2335,15 @@ impl LauncherApp {
         if matches!(message, Message::ExtensionFilesChosen { .. }) {
             self.choosing_files = false;
         }
-        let task = self.update_inner(message);
+        let mut task = self.update_inner(message);
+        // A form that has just opened puts the keyboard on its first field,
+        // whichever of the many paths opened it.
+        if let Page::Preferences(page) = &mut self.page
+            && page.focus_pending
+        {
+            page.focus_first();
+            task = Task::batch([task, form_focus(page)]);
+        }
         let recording = self.recording_shortcut();
         if recording != self.shortcuts_inhibited {
             self.shortcuts_inhibited = recording;
@@ -2406,6 +2468,7 @@ impl LauncherApp {
                 self.error = None;
                 // Typing starts history over from the newest search.
                 self.history_offset = None;
+                self.history_draft = None;
                 self.search_task()
             }
             Message::RootItemEdited(result) => self.root_item_edited(result),
@@ -2892,17 +2955,23 @@ impl LauncherApp {
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
-                let task = match action.id.as_deref() {
+                match action.id.as_deref() {
                     Some(APP_OPEN) => {
                         self.panel = None;
-                        return self.update(Message::LaunchSelected);
+                        self.update(Message::LaunchSelected)
                     }
-                    Some(APP_COPY_NAME) => iced::clipboard::write(item.name().to_owned()),
+                    Some(APP_COPY_NAME) => {
+                        let name = item.name().to_owned();
+                        self.panel = None;
+                        self.copy_with_hud(name)
+                    }
                     Some(APP_COPY_PATH) => {
                         let Some(path) = item.path() else {
                             return Task::none();
                         };
-                        iced::clipboard::write(path.to_string_lossy().into_owned())
+                        let path = path.to_string_lossy().into_owned();
+                        self.panel = None;
+                        self.copy_with_hud(path)
                     }
                     Some(id) if id.starts_with(APP_DESKTOP_ACTION) => {
                         let action_id = &id[APP_DESKTOP_ACTION.len()..];
@@ -2922,12 +2991,10 @@ impl LauncherApp {
                             item.key().to_owned(),
                         );
                         self.panel = None;
-                        return task;
+                        task
                     }
-                    _ => return Task::none(),
-                };
-                self.panel = None;
-                Task::batch([task, focus_search()])
+                    _ => Task::none(),
+                }
             }
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
@@ -2967,11 +3034,15 @@ impl LauncherApp {
                 {
                     *slot = value;
                     page.notice = None;
+                    page.focus = Some(index);
                 }
                 Task::none()
             }
             Message::PreferenceTextEdited(index, action) => {
                 if let Page::Preferences(page) = &mut self.page {
+                    if action.is_edit() {
+                        page.focus = Some(index);
+                    }
                     page.edit_text_area(index, action);
                 }
                 Task::none()
@@ -3266,6 +3337,7 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::TextCopied { text, result } => Self::text_copied(text, result),
             Message::ClipboardPasted(Err(reason)) => {
                 tracing::debug!(%reason, "paste refused; copying instead");
                 self.copy_selected_clipboard_entry()
@@ -3278,7 +3350,7 @@ impl LauncherApp {
                     Ok(text) => {
                         // Copy, then get out of the way: the user copied it
                         // to paste it somewhere else.
-                        let copy = iced::clipboard::write(text);
+                        let copy = hud::copy_text(self.backend.clone(), text);
                         let hud = crate::hud::Hud::new("Selection copied to clipboard");
                         Task::batch([copy, self.show_hud(hud)])
                     }
@@ -3592,10 +3664,28 @@ impl LauncherApp {
                         }
                         Key::Named(Named::Enter) => self.update(Message::PreferencesSubmit),
                         Key::Named(Named::Escape) => self.update(Message::Back),
-                        Key::Named(Named::Tab) if modifiers.shift() => {
-                            iced::widget::operation::focus_previous()
+                        Key::Named(Named::Tab) => {
+                            let Page::Preferences(page) = &mut self.page else {
+                                return Task::none();
+                            };
+                            page.step_focus(!modifiers.shift());
+                            form_focus(page)
                         }
-                        Key::Named(Named::Tab) => iced::widget::operation::focus_next(),
+                        // A checkbox or a dropdown with the keyboard on it:
+                        // Space ticks or steps, the arrows step.
+                        _ if page.focus.is_some_and(|index| !page.is_text(index)) => {
+                            use crate::preferences_page::FieldKey;
+                            let field_key = match key.as_ref() {
+                                Key::Named(Named::Space) => FieldKey::Toggle,
+                                Key::Named(Named::ArrowDown) => FieldKey::Next,
+                                Key::Named(Named::ArrowUp) => FieldKey::Previous,
+                                _ => return Task::none(),
+                            };
+                            if let Page::Preferences(page) = &mut self.page {
+                                page.field_key(field_key);
+                            }
+                            Task::none()
+                        }
                         _ => Task::none(),
                     };
                 }
@@ -3630,6 +3720,12 @@ impl LauncherApp {
                         },
                         Message::ExtensionEventSent,
                     );
+                }
+                // A panel action's shortcut works whether or not the panel is
+                // open: the panel says what the chord does, and the chord
+                // should not need the panel to do it.
+                if !panel_key && let Some(task) = self.advertised_chord(key, modifiers) {
+                    return task;
                 }
                 if !panel_key
                     && let Page::Extension(page) = &self.page
@@ -3773,7 +3869,7 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::StoreDetail(_)) {
                     return self.store_detail_key(key);
                 }
-                if let Page::Files(page) = &mut self.page {
+                if !panel_key && let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
@@ -3797,7 +3893,7 @@ impl LauncherApp {
                     }
                     return Task::none();
                 }
-                if let Page::Windows(page) = &mut self.page {
+                if !panel_key && let Page::Windows(page) = &mut self.page {
                     if modifiers.control() && key.as_ref() == Key::Character("q") {
                         return self.close_selected_window();
                     }
@@ -3888,6 +3984,9 @@ impl LauncherApp {
                 // launcher, because a panel opened by mistake should cost one
                 // key and not the whole window.
                 if self.panel.is_some() {
+                    if let Some(task) = self.advertised_chord(key, modifiers) {
+                        return task;
+                    }
                     match key.as_ref() {
                         Key::Named(Named::ArrowDown) => {
                             return self.update(Message::PanelMove(Direction::Down));
@@ -3953,6 +4052,13 @@ impl LauncherApp {
                 if let Some(task) = self.history_up(up) {
                     return task;
                 }
+                let down = match key.as_ref() {
+                    Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                    _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                };
+                if let Some(task) = self.history_down(down) {
+                    return task;
+                }
 
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
@@ -3968,6 +4074,15 @@ impl LauncherApp {
                         return self.update(Message::QueryChanged(String::new()));
                     }
                     Key::Named(Named::Escape) => return self.update(Message::Dismiss),
+                    // A message (a script's line, an error) stands in place
+                    // of the results: Enter puts them back rather than
+                    // launching a row nobody can see.
+                    Key::Named(Named::Enter)
+                        if self.error.is_some() && matches!(self.page, Page::Root) =>
+                    {
+                        self.error = None;
+                        return focus_search();
+                    }
                     Key::Named(Named::Enter) => return self.update(Message::LaunchSelected),
                     _ => {}
                 }
@@ -5807,6 +5922,88 @@ impl LauncherApp {
         )
     }
 
+    /// Runs the panel action whose advertised shortcut was pressed, if one
+    /// was: over the open panel, or over the panel Ctrl+B would open. A
+    /// chord that only moves (the keybinding scheme's) or that no action
+    /// claims changes nothing and is left to the rest of the key handler.
+    fn advertised_chord(
+        &mut self,
+        key: &iced::keyboard::Key,
+        modifiers: iced::keyboard::Modifiers,
+    ) -> Option<Task<Message>> {
+        if !(modifiers.control() || modifiers.alt() || modifiers.logo())
+            || chord_direction(self.keybinding, key.as_ref(), modifiers).is_some()
+            || matches!(
+                self.page,
+                Page::Extension(_) | Page::Settings(_) | Page::Preferences(_)
+            )
+        {
+            return None;
+        }
+        let name = pressed_key_name(key)?;
+        let pressed = action_panel::Pressed {
+            key: &name,
+            ctrl: modifiers.control(),
+            shift: modifiers.shift(),
+            alt: modifiers.alt(),
+            logo: modifiers.logo(),
+        };
+        let opened_here = self.panel.is_none();
+        if opened_here {
+            // Opened as Ctrl+B opens it, but not shown: what it would focus
+            // or fetch for showing is dropped.
+            let _ = self.update(Message::TogglePanel);
+            if self.panel.is_none() {
+                self.panel = self.files_panel_now();
+            }
+        }
+        let Some(row) = self
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_answering(&pressed))
+        else {
+            if opened_here {
+                self.panel = None;
+            }
+            return None;
+        };
+        let panel = self.panel.as_mut()?;
+        panel.selected = isize::try_from(row).ok()?;
+        let sections = panel.sections.clone();
+        let task = self.update(Message::PanelActivate);
+        // An action that left the panel as it was (one that copies and
+        // stays, say) leaves no panel the person never opened; one that
+        // turned it into something else (the shortcut recorder) keeps it.
+        let untouched = self
+            .panel
+            .as_ref()
+            .is_some_and(|panel| panel.recorder.is_none() && panel.sections == sections);
+        if opened_here && untouched {
+            self.panel = None;
+            return Some(Task::batch([task, focus_search()]));
+        }
+        Some(task)
+    }
+
+    /// Search Files' panel for the selected file, without the engine's
+    /// answer about it: the panel itself waits for that answer before it
+    /// opens, but a shortcut only needs to know which action it names.
+    fn files_panel_now(&self) -> Option<PanelState> {
+        let Page::Files(page) = &self.page else {
+            return None;
+        };
+        let path = &page.selected_row()?.path;
+        let assumed = crate::backend::FileActions {
+            mime: self.file_mime.clone(),
+            has_opener: true,
+            can_set_wallpaper: true,
+            can_paste: true,
+        };
+        Some(PanelState::new(file_actions::file_panel_sections(
+            path, &assumed,
+        )))
+    }
+
     /// Enter in an extension's view: the first action on offer.
     fn activate_extension_action(&mut self) -> Task<Message> {
         let Page::Extension(page) = &self.page else {
@@ -5830,6 +6027,27 @@ impl LauncherApp {
             }
         })
         .discard()
+    }
+
+    /// A checkbox in a form, ringed in the accent colour while the keyboard
+    /// is on it: it cannot take Iced's focus, so it draws none of its own.
+    fn form_focus_ring<'a>(
+        &self,
+        focused: bool,
+        field: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let accent = self.palette().accent.to_iced();
+        container(field)
+            .padding(4)
+            .style(move |_: &Theme| container::Style {
+                border: Border {
+                    color: if focused { accent } else { Color::TRANSPARENT },
+                    width: 2.0,
+                    radius: 6.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
     }
 
     fn preferences_body<'a>(
@@ -5876,20 +6094,26 @@ impl LauncherApp {
                     PreferenceInputKind::Text | PreferenceInputKind::Password,
                     FieldValue::Text(text),
                 ) => text_input(&field.placeholder, text)
+                    .id(crate::preferences_page::field_id(index))
                     .secure(matches!(field.kind, PreferenceInputKind::Password))
                     .font(self.font())
                     .on_input(move |text| Message::PreferenceEdited(index, FieldValue::Text(text)))
-                    .on_submit(Message::PreferencesSubmit)
+                    // No `on_submit`: the key handler submits the form on
+                    // Enter, and `listen_with` delivers it whether or not the
+                    // field captured it, so a field that also submitted made
+                    // every Enter submit twice.
                     .padding(8)
                     .into(),
-                (PreferenceInputKind::Checkbox { label }, FieldValue::Checked(checked)) => {
-                    iced::widget::checkbox(*checked)
-                        .label(label.clone())
-                        .on_toggle(move |checked| {
-                            Message::PreferenceEdited(index, FieldValue::Checked(checked))
-                        })
-                        .into()
-                }
+                (PreferenceInputKind::Checkbox { label }, FieldValue::Checked(checked)) => self
+                    .form_focus_ring(
+                        page.focus == Some(index),
+                        iced::widget::checkbox(*checked)
+                            .label(label.clone())
+                            .on_toggle(move |checked| {
+                                Message::PreferenceEdited(index, FieldValue::Checked(checked))
+                            })
+                            .into(),
+                    ),
                 (PreferenceInputKind::Dropdown { options }, FieldValue::Choice(choice)) => {
                     let titles: Vec<String> =
                         options.iter().map(|(title, _)| title.clone()).collect();
@@ -5900,6 +6124,9 @@ impl LauncherApp {
                             .map(|(title, _)| title.clone())
                     });
                     let options = options.clone();
+                    // Ringed through its own border, so it lines up with the
+                    // text fields above it.
+                    let ring = (page.focus == Some(index)).then(|| self.palette().accent.to_iced());
                     iced::widget::pick_list(titles, selected, move |title: String| {
                         let value = options
                             .iter()
@@ -5907,10 +6134,19 @@ impl LauncherApp {
                             .map(|(_, value)| value.clone());
                         Message::PreferenceEdited(index, FieldValue::Choice(value))
                     })
+                    .style(move |theme: &Theme, status| {
+                        let mut style = iced::widget::pick_list::default(theme, status);
+                        if let Some(accent) = ring {
+                            style.border.color = accent;
+                            style.border.width = 2.0;
+                        }
+                        style
+                    })
                     .into()
                 }
                 (PreferenceInputKind::TextArea, _) => match page.editors.get(&index) {
                     Some(editor) => iced::widget::text_editor(editor)
+                        .id(crate::preferences_page::field_id(index))
                         .placeholder(field.placeholder.as_str())
                         .font(self.font())
                         .height(Length::Fixed(120.0))
@@ -7669,7 +7905,11 @@ mod tests {
         assert_eq!(app.selected_row(), Some(RootRow::Calculator));
         let task = app.update(Message::LaunchSelected);
         let writes = settle(&mut app, task);
-        assert_eq!(writes, ["1.524 m"]);
+        assert_eq!(
+            writes,
+            ["1.524"],
+            "the value, as the C++ copies answer.text"
+        );
         let kept = backend.calculations.lock().unwrap().clone();
         assert_eq!(kept.len(), 1);
         assert_eq!(
@@ -7898,7 +8138,8 @@ mod tests {
                         Action::Clipboard(clipboard::Action::Write { contents, .. }) => {
                             Some(contents)
                         }
-                        Action::Widget(_) => None,
+                        // A copy that hides the launcher exits one with no engine.
+                        Action::Widget(_) | Action::Exit => None,
                         other => panic!("copy issued an unexpected action: {other:?}"),
                     }
                 })
@@ -8182,6 +8423,9 @@ mod tests {
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
+        /// Whether the engine copies text; what it copied.
+        copies: bool,
+        copied: std::sync::Mutex<Vec<String>>,
         remembered: std::sync::Mutex<Vec<()>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
@@ -9067,6 +9311,16 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened_shortcuts.lock().unwrap().push((id, arguments));
+                Ok(())
+            })
+        }
+
+        fn copy_text(&self, text: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if !self.copies {
+                    return Err("Copying needs a clipboard".to_owned());
+                }
+                self.copied.lock().unwrap().push(text);
                 Ok(())
             })
         }
@@ -11650,6 +11904,13 @@ mod tests {
         assert_eq!(app.query, "term");
         let stored = compass_core::root_view::SearchHistory::load_file(&history);
         assert_eq!(stored.queries(), ["term"]);
+
+        // A query being typed is not lost to the up arrow: down brings it back.
+        let _ = app.update(Message::QueryChanged("zzz".into()));
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(app.query, "term");
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(app.query, "zzz", "{}", app.state_line());
     }
 
     const FAVORITES_HEADING_FOR_TESTS: &str = "Favorites";
@@ -12779,6 +13040,73 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_b_opens_the_file_panel_and_its_shortcuts_work_with_it_closed() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![file_row("/home/me/sunset.png", "Images")],
+            file_info: crate::backend::FileActions {
+                mime: Some("image/png".into()),
+                has_opener: true,
+                can_set_wallpaper: true,
+                can_paste: true,
+            },
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "search files", "commands:search-files");
+
+        let task = app.update(chord("b", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert!(
+            panel_titles(&app).contains(&"Copy file path".to_owned()),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(chord("b", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert!(app.panel.is_none(), "and Ctrl+B closes it again");
+
+        // Copy file is Ctrl+Shift+C; it needs no panel.
+        let task = app.update(chord("C", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.file_calls.lock().unwrap().as_slice(),
+            [("copy", "/home/me/sunset.png".to_owned())]
+        );
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn ctrl_shift_c_copies_a_root_rows_deeplink_without_opening_the_panel() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        open_builtin_row(&mut app, "clipboard history");
+        assert!(app.panel.is_none());
+        let task = app.update(chord("C", Modifiers::CTRL | Modifiers::SHIFT));
+        assert_eq!(
+            settle(&mut app, task),
+            ["compass://launch/commands/clipboard-history"]
+        );
+        assert!(app.panel.is_none(), "no panel the person never opened");
+        // A chord no action claims leaves the panel shut and the list alone.
+        let selected = app.selected;
+        let task = app.update(chord("y", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert!(app.panel.is_none());
+        assert_eq!(app.selected, selected);
+    }
+
+    /// Searches root for `query`, leaving its first row selected.
+    fn open_builtin_row(app: &mut LauncherApp, query: &str) {
+        app.query = query.into();
+        app.search();
+        assert!(app.selected_row().is_some(), "{}", app.state_line());
+    }
+
+    #[test]
     fn search_files_panel_is_the_cpps_file_actions() {
         let dir = tempfile::tempdir().unwrap();
         let backend = Arc::new(TestBackend {
@@ -12971,6 +13299,286 @@ mod tests {
         assert_eq!(command.id(), id);
         let task = app.update(Message::LaunchSelected);
         settle(app, task);
+    }
+
+    /// One Enter in the form's text field holding `field_text`, delivered as
+    /// the runtime delivers it: whatever the field publishes for the press,
+    /// then the `KeyPressed` that `listen_with` hands the key handler whether
+    /// or not the field captured it.
+    fn enter_once_in_form(app: &mut LauncherApp, field_text: &str) {
+        let mut messages: Vec<Message> = {
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            ui.click(field_text)
+                .unwrap_or_else(|_| panic!("no field holds {field_text:?}: {}", app.state_line()));
+            ui.tap_key(iced::keyboard::Key::Named(
+                iced::keyboard::key::Named::Enter,
+            ));
+            ui.into_messages().collect()
+        };
+        messages.push(pressed(iced::keyboard::key::Named::Enter));
+        // Both reach `update` before the engine answers the first: the
+        // runtime queues them from the same event, and a save or a run is a
+        // round trip to the engine.
+        let tasks: Vec<_> = messages
+            .into_iter()
+            .map(|message| app.update(message))
+            .collect();
+        for task in tasks {
+            settle(app, task);
+        }
+    }
+
+    #[test]
+    fn a_new_form_puts_the_keyboard_on_its_first_field_and_tab_reaches_the_checkbox() {
+        use crate::preferences_page::FieldValue;
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.query = "create snippet".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        let focusing = task_actions(task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        assert_eq!(page.focus, Some(0), "the name field, as the form opens");
+        assert!(!page.focus_pending);
+        assert!(focusing > 0, "and a focus operation went out with it");
+
+        let word = page
+            .fields
+            .iter()
+            .position(|f| f.name == crate::snippets_page::WORD_FIELD)
+            .unwrap();
+        let before = page.values[word].clone();
+        for _ in 0..word {
+            let _ = app.update(pressed(Named::Tab));
+        }
+        let Page::Preferences(page) = &app.page else {
+            panic!("left the form");
+        };
+        assert_eq!(page.focus, Some(word), "Tab reaches the checkbox");
+        let _ = app.update(pressed(Named::Space));
+        let Page::Preferences(page) = &app.page else {
+            panic!("left the form");
+        };
+        assert_ne!(page.values[word], before, "Space ticks it");
+        assert!(matches!(page.values[word], FieldValue::Checked(_)));
+        let _ = app.update(pressed(Named::Tab));
+        let Page::Preferences(page) = &app.page else {
+            panic!("left the form");
+        };
+        assert_eq!(page.focus, Some(0), "and Tab wraps round to the top");
+    }
+
+    #[test]
+    fn the_alias_and_arguments_forms_focus_their_field_and_say_what_enter_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let _ = app.update(Message::TogglePanel);
+        let alias = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Set alias"))
+            .expect("the panel offers an alias");
+        let _ = app.update(Message::PanelClicked(alias));
+        let Page::Preferences(page) = &app.page else {
+            panic!("no alias form: {}", app.state_line());
+        };
+        assert_eq!(page.focus, Some(0));
+        assert_eq!(
+            crate::preferences_page::Purpose::Arguments.hint(),
+            "Enter: run    Esc: back",
+            "arguments are this run's and are not saved"
+        );
+    }
+
+    /// How many actions other than messages a task carries: the widget
+    /// operations, such as focusing a field.
+    fn task_actions(task: Task<Message>) -> usize {
+        use iced::futures::{StreamExt, executor::block_on};
+        let Some(stream) = iced_winit::runtime::task::into_stream(task) else {
+            return 0;
+        };
+        block_on(stream.collect::<Vec<_>>())
+            .into_iter()
+            .filter(|action| matches!(action, iced_winit::runtime::Action::Widget(_)))
+            .count()
+    }
+
+    #[test]
+    fn one_enter_saves_a_new_shortcut_once() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        open_builtin(&mut app, "create shortcut", "commands:create-shortcut");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        let position = |name: &str| page.fields.iter().position(|f| f.name == name).unwrap();
+        let (name, link) = (position("name"), position("link"));
+        let _ = app.update(Message::PreferenceEdited(
+            name,
+            FieldValue::Text("Wiki".into()),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            link,
+            FieldValue::Text("https://en.wikipedia.org/wiki/{page}".into()),
+        ));
+        enter_once_in_form(&mut app, "Wiki");
+        assert_eq!(
+            backend.drafts.lock().unwrap().len(),
+            1,
+            "{}",
+            app.state_line()
+        );
+    }
+
+    #[test]
+    fn one_enter_opens_a_quicklink_with_arguments_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.query = "crate docs".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("serde".into()),
+        ));
+        enter_once_in_form(&mut app, "serde");
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().as_slice(),
+            [("sct-docs".to_owned(), vec!["serde".to_owned()])]
+        );
+    }
+
+    #[test]
+    fn one_enter_runs_a_script_with_arguments_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "disk report".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("/home".into()),
+        ));
+        enter_once_in_form(&mut app, "/home");
+        assert_eq!(
+            backend.script_runs.lock().unwrap().as_slice(),
+            [("report.sh".to_owned(), vec!["/home".to_owned()])]
+        );
+    }
+
+    #[test]
+    fn one_enter_runs_an_extension_command_with_its_arguments_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            wants: vec![crate::backend::PreferenceInput {
+                name: "name".into(),
+                title: "Name".into(),
+                description: String::new(),
+                placeholder: "Name".into(),
+                required: true,
+                kind: crate::backend::PreferenceInputKind::Text,
+                value: None,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let task = app.update(Message::QueryChanged("greeting".into()));
+        settle(&mut app, task);
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("Ada".into()),
+        ));
+        enter_once_in_form(&mut app, "Ada");
+        assert_eq!(
+            backend.given.lock().unwrap().len(),
+            2,
+            "the first try, which asked for the argument, and one run with it"
+        );
+    }
+
+    #[test]
+    fn one_enter_in_the_alias_form_saves_it_and_launches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = Arc::new(LaunchedEntries::default());
+        let mut app = app(dir.path()).with_launcher(launcher.clone());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let firefox = app.selected_row().expect("a row");
+        let id = app.root_id(firefox).expect("a root item");
+        let _ = app.update(Message::TogglePanel);
+        let alias = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Set alias"))
+            .expect("the panel offers an alias");
+        let task = app.update(Message::PanelClicked(alias));
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("ff".into()),
+        ));
+        enter_once_in_form(&mut app, "ff");
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        assert_eq!(
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.alias.as_deref()),
+            Some("ff")
+        );
+        assert!(
+            launcher.0.lock().unwrap().is_empty(),
+            "saving the alias launched the selected row too"
+        );
+    }
+
+    #[test]
+    fn one_ctrl_enter_saves_a_snippet_once_and_a_plain_enter_none() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "create snippet", "commands:create-snippet");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no snippet form: {}", app.state_line());
+        };
+        let position = |name: &str| page.fields.iter().position(|f| f.name == name).unwrap();
+        let (name, content) = (position("name"), position("content"));
+        let _ = app.update(Message::PreferenceEdited(
+            name,
+            FieldValue::Text("Thanks".into()),
+        ));
+        let _ = app.update(Message::PreferenceTextEdited(
+            content,
+            iced::widget::text_editor::Action::Edit(iced::widget::text_editor::Edit::Paste(
+                Arc::new("Thank you!".into()),
+            )),
+        ));
+        let before = backend.snippet_drafts.lock().unwrap().len();
+        enter_once_in_form(&mut app, "Thanks");
+        assert_eq!(
+            backend.snippet_drafts.lock().unwrap().len(),
+            before,
+            "Enter is a newline in a form with a text area"
+        );
+        let task = app.update(ctrl_enter());
+        settle(&mut app, task);
+        assert_eq!(backend.snippet_drafts.lock().unwrap().len(), before + 1);
     }
 
     fn opener(id: &str, name: &str, default: bool) -> crate::backend::OpenerRow {
@@ -14405,6 +15013,94 @@ mod tests {
     }
 
     #[test]
+    fn full_output_scrolls_from_the_keyboard_copies_and_shows_a_failure() {
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _backend) = scripts_app(dir.path());
+        app.page = Page::ScriptOutput(crate::script_page::ScriptOutputPage::new(
+            "report.sh".into(),
+            Vec::new(),
+            "Disk Report".into(),
+            7,
+        ));
+        let Page::ScriptOutput(page) = &mut app.page else {
+            unreachable!()
+        };
+        page.apply(
+            7,
+            crate::backend::ScriptOutputState {
+                output: "\u{1b}[31mdisk full\u{1b}[0m\nline 2\n".into(),
+                finished: true,
+                exit_code: Some(3),
+                elapsed_ms: 100,
+            },
+        );
+        assert!(page.failed());
+        assert_eq!(page.heading(), "Failed after 0.1s (exit code 3)");
+
+        for key in [
+            Named::ArrowDown,
+            Named::ArrowUp,
+            Named::PageDown,
+            Named::PageUp,
+            Named::Home,
+            Named::End,
+        ] {
+            assert_eq!(
+                task_actions(app.update(pressed(key))),
+                1,
+                "{key:?} scrolls the output"
+            );
+        }
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let copy = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Copy output"))
+            .unwrap_or_else(|| panic!("no Copy output: {}", app.state_line()));
+        let task = app.update(Message::PanelClicked(copy));
+        assert_eq!(settle(&mut app, task), ["disk full\nline 2\n"]);
+    }
+
+    #[test]
+    fn after_a_compact_script_enter_does_not_run_it_again_and_typing_searches() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "count things".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert!(app.error.is_some(), "{}", app.state_line());
+        let runs = backend.script_runs.lock().unwrap().len();
+        let started = app.update(Message::ScriptStarted {
+            id: "count.sh".into(),
+            arguments: Vec::new(),
+            result: Ok(Some(7)),
+        });
+        assert!(
+            task_actions(started) > 0,
+            "the search field gets the keyboard back"
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.script_runs.lock().unwrap().len(),
+            runs,
+            "not run again"
+        );
+        assert!(app.error.is_none(), "the results are back");
+
+        app.error = Some("count.sh".into());
+        let task = app.update(Message::QueryChanged("touch".into()));
+        settle(&mut app, task);
+        assert!(app.error.is_none(), "typing replaces the line with results");
+        assert_eq!(app.query, "touch");
+    }
+
+    #[test]
     fn a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, backend) = scripts_app(dir.path());
@@ -15258,8 +15954,9 @@ mod tests {
 
         assert_eq!(
             clipboard.changes.lock().unwrap().as_slice(),
-            ["pin 1 true", "pin 2 false", "remove 1"],
-            "the pin flips each entry's own state, and removal follows the reload's selection"
+            ["pin 1 true", "pin 2 false", "remove 2"],
+            "the pin flips each entry's own state, and the selection stays on its entry \
+             through each reload, so Ctrl+X removes the entry the person was on"
         );
         assert_eq!(
             clipboard.queries.lock().unwrap().len(),
@@ -15706,6 +16403,34 @@ mod tests {
             app.hud_content().map(|hud| hud.text.as_str()),
             Some("Force quit Files")
         );
+    }
+
+    #[test]
+    fn a_copy_goes_through_the_engine_and_through_the_window_only_where_it_cannot() {
+        let dir = tempfile::tempdir().unwrap();
+        for copies in [true, false] {
+            let backend = Arc::new(TestBackend {
+                copies,
+                ..TestBackend::default()
+            });
+            let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+            app.query = "5 ft to m".into();
+            app.search();
+            assert_eq!(app.selected_row(), Some(RootRow::Calculator));
+            app.backend = Some(backend.clone());
+            let task = app.update(Message::LaunchSelected);
+            let window_writes = settle(&mut app, task);
+            if copies {
+                assert_eq!(
+                    backend.copied.lock().unwrap().as_slice(),
+                    ["1.524"],
+                    "the engine's clipboard outlives the window; the value, not `1.524 m`"
+                );
+                assert!(window_writes.is_empty(), "{window_writes:?}");
+            } else {
+                assert_eq!(window_writes, ["1.524"], "the window's, as a fallback");
+            }
+        }
     }
 
     #[test]

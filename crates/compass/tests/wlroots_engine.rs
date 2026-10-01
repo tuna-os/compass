@@ -220,8 +220,9 @@ fn on_sway_a_shortcut_expands_the_selected_text() {
     );
     // The holder has handed its source to the compositor, but the selection
     // is only offered once the compositor has processed it: read until it is.
+    // A URL template percent-encodes what it puts in (PARITY, Shortcuts 11).
     let want = Response::Text {
-        text: "https://example.com/?q=selected words&also=selected words".into(),
+        text: "https://example.com/?q=selected%20words&also=selected%20words".into(),
     };
     let deadline = std::time::Instant::now() + WAIT;
     let mut expanded = expand();
@@ -581,6 +582,23 @@ fn on_sway_a_paste_is_copied_and_pressed_into_the_focused_window() {
         "{:?}",
         editor.keys()
     );
+}
+
+#[test]
+fn on_sway_the_engine_copies_text_and_keeps_it_without_a_window() {
+    let Some(sway) = Sway::start("on_sway_the_engine_copies_text") else {
+        return;
+    };
+    let _seat = support::seat_keyboard(&sway);
+    let engine = Engine::start(&sway, "sway");
+    assert_eq!(
+        engine.request(Request::CopyText {
+            text: "88.07 zoë".into()
+        }),
+        Response::Ack
+    );
+    // No launcher window ever existed: the source is the engine's own.
+    assert_eq!(clipboard_text(&sway), "88.07 zoë");
 }
 
 #[test]

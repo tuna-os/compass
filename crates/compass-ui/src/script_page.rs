@@ -140,9 +140,16 @@ impl ScriptOutputPage {
             };
         }
         match self.state.exit_code {
-            Some(code) => format!("Done in {seconds}s (exit={code})"),
+            Some(0) => format!("Done in {seconds}s (exit=0)"),
+            Some(code) => format!("Failed after {seconds}s (exit code {code})"),
             None => format!("Stopped after {seconds}s"),
         }
+    }
+
+    /// Whether the run has ended in failure: a non-zero exit, or stopped.
+    #[must_use]
+    pub fn failed(&self) -> bool {
+        self.state.finished && self.state.exit_code != Some(0)
     }
 }
 

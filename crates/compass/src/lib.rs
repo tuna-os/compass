@@ -606,14 +606,18 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         }
 
         Command::Deeplink { url } => {
-            // The OAuth redirect and the store's extensions links; every other
-            // deeplink the C++ takes (themes, commands) is refused by name
-            // rather than silently dropped.
+            // The OAuth redirect, then everything the engine opens; any other
+            // deeplink is refused by name rather than silently dropped.
             if compass_worker_host::oauth_service::Redirect::parse(&url).is_ok() {
                 ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
                 return Ok(ExitCode::from(EXIT_OK));
             }
-            if compass_core::settings_catalog::parse_settings_link(&url).is_some() {
+            // What the engine's OpenDeeplink takes: a launch link
+            // (`compass://launch/<provider>/<entrypoint>`), a settings link
+            // and a store link, so the CLI refuses nothing the engine opens.
+            if compass_core::root_items::parse_launch_link(&url).is_some()
+                || compass_core::settings_catalog::parse_settings_link(&url).is_some()
+            {
                 ipc::send_ack(&socket, compass_ipc::Request::OpenDeeplink { url }).await?;
                 return Ok(ExitCode::from(EXIT_OK));
             }
