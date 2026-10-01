@@ -4232,6 +4232,21 @@ impl LauncherApp {
                 .into()
         };
 
+        // At the root the status bar stays on the card: the list scrolls in
+        // what the card has left, rather than pushing the bar off its foot.
+        let root_footer = matches!(self.page, Page::Root)
+            && self.confirm.is_none()
+            && self.power_confirm.is_none();
+        let body: Element<Message> = if root_footer {
+            let room = f32::from(geometry.card_max_height)
+                - 2.0 * f32::from(geometry.card_padding)
+                - f32::from(geometry.field_height)
+                - preview::FOOTER_HEIGHT
+                - if self.field_rule { 1.0 } else { 0.0 };
+            container(body).max_height(room).into()
+        } else {
+            body
+        };
         // Flow's hairline rule under the query field (#84). A one-pixel
         // container rather than a border on the field, because the field has
         // its own rounded border in the other presets and a rule has to span
@@ -4258,10 +4273,10 @@ impl LauncherApp {
         // `scheduleNextClockTick` sets the navigation title, and on the
         // right what Enter does and how to reach the other actions, as
         // dmenu's footer and Raycast's action bar say it.
-        let card_content = match &self.page {
-            Page::Root if self.confirm.is_none() && self.power_confirm.is_none() => card_content
-                .push(self.footer(self.clock_text.as_deref(), self.root_primary_action())),
-            _ => card_content,
+        let card_content = if root_footer {
+            card_content.push(self.footer(self.clock_text.as_deref(), self.root_primary_action()))
+        } else {
+            card_content
         };
 
         // The panel floats over the list rather than replacing it. The old

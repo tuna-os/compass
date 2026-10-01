@@ -113,6 +113,14 @@ pub(crate) fn reveal_settings_focus<T>() -> iced::Task<T> {
     reveal(SETTINGS_BODY, SETTINGS_FOCUS, 12.0)
 }
 
+/// The onboarding's theme list, opened from the keyboard.
+pub(crate) const ONBOARDING_MENU: &str = "onboarding-menu";
+
+/// Scrolls the onboarding's theme list to its highlighted theme.
+pub(crate) fn reveal_onboarding_option<T>() -> iced::Task<T> {
+    reveal(ONBOARDING_MENU, SETTINGS_FOCUS, 4.0)
+}
+
 /// Scrolls the settings sidebar so its selected row is in view.
 pub(crate) fn reveal_settings_page<T>() -> iced::Task<T> {
     reveal(SETTINGS_SIDEBAR, SETTINGS_SIDEBAR_SELECTION, 8.0)

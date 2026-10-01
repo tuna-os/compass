@@ -14,6 +14,9 @@ use crate::file_preview::{Content, FilePreview};
 pub(super) const LIST_PORTION: u16 = 2;
 pub(super) const PANE_PORTION: u16 = 3;
 
+/// A footer's height: one 12 px line and its padding.
+pub(super) const FOOTER_HEIGHT: f32 = 30.0;
+
 impl LauncherApp {
     /// The preview pane: the file drawn or quoted, then its metadata unless
     /// `metadata` is off (dmenu's `--no-metadata`).
@@ -130,7 +133,9 @@ impl LauncherApp {
             .push(label("Ctrl+B", false));
         container(line)
             .width(Length::Fill)
-            .padding(Padding::new(6.0).left(14).right(14))
+            .height(Length::Fixed(FOOTER_HEIGHT))
+            .align_y(Alignment::Center)
+            .padding(Padding::new(0.0).left(14).right(14))
             .into()
     }
 }
