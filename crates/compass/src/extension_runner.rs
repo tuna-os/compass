@@ -84,7 +84,7 @@ pub const LIFETIME: Duration = Duration::from_secs(300);
 pub const STORAGE_DATABASE: &str = "compass-extension-storage.db";
 
 /// How long the runtime has to answer `load`.
-const LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+pub const LOAD_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What runs extensions: Node and the runtime bundle.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,6 +439,7 @@ pub fn start(
         files,
         commands,
         context,
+        launcher,
     } = host;
 
     // The runtime creates these itself, but a sandbox can only grant a path
@@ -493,7 +494,7 @@ pub fn start(
         command_name: command.name.clone(),
         extension_id: command.extension_id.clone(),
         extension_name: command.extension_name.clone(),
-        owner_or_author_name: command.author.clone(),
+        owner_or_author_name: command.owner_or_author().to_owned(),
         arguments,
         preferences,
         launch_context: context.as_ref().map_or(serde_json::Value::Null, |context| {
@@ -561,6 +562,7 @@ pub fn start(
                     files,
                     commands,
                     assets,
+                    launcher,
                 },
                 storage,
                 ShellClipboard {
@@ -617,6 +619,22 @@ pub struct Host {
     /// The launch context and fallback text another command launched this
     /// one with.
     pub context: Option<crate::extension_commands::Context>,
+    /// The launcher window, where a no-view command's HUD and failures go,
+    /// or `None` to send them only as desktop notifications.
+    pub launcher: Option<Launcher>,
+}
+
+/// Hands the launcher window a command (a HUD line, a failure), answering
+/// whether it took it. A no-view command has no view to show its failure
+/// in, and a desktop notification is lost where no notification daemon
+/// runs; the launcher is there whenever Compass is.
+#[derive(Clone)]
+pub struct Launcher(pub Arc<dyn Fn(compass_ipc::WindowCommand) -> bool + Send + Sync>);
+
+impl std::fmt::Debug for Launcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Launcher")
+    }
 }
 
 /// `opts.capabilities`, as `ExtensionCommandRuntime` fills it: no browser
@@ -660,6 +678,7 @@ struct Served {
     files: Option<Arc<crate::file_search::FileSearch>>,
     commands: Option<crate::extension_commands::EngineCommands>,
     assets: PathBuf,
+    launcher: Option<Launcher>,
 }
 
 fn serve(
@@ -682,6 +701,7 @@ fn serve(
         files,
         commands,
         assets,
+        launcher,
     } = served;
     let title = title.as_str();
     let clipboard_handle = clipboard.handle.clone();
@@ -712,6 +732,7 @@ fn serve(
             view: view.as_ref().map(|view| view.state.clone()),
             selection,
             assets: Some(assets),
+            launcher: if view.is_none() { launcher } else { None },
         },
         CommandInfo {
             name: name.to_owned(),
@@ -776,6 +797,10 @@ fn serve(
         view.attach(session.events());
     }
     let mut ended = None;
+    // The last call this host refused, with why: an extension that lets the
+    // refusal escape crashes with whatever its runtime makes of it, which
+    // has been no more than "undefined".
+    let mut refused_last: Option<String> = None;
     loop {
         let turn = match session.pump_once() {
             Ok(turn) => turn,
@@ -792,6 +817,7 @@ fn serve(
             Turn::Closed => break,
             Turn::Crashed { reason } => {
                 tracing::warn!(command = title, %reason, "extension command crashed");
+                let reason = crash_reason(&reason, refused_last.take());
                 ended = Some(format!("{title} crashed: {reason}"));
                 break;
             }
@@ -821,11 +847,13 @@ fn serve(
                     .err(),
                     None => Some("the authorization request was lost".to_owned()),
                 };
-                if let Some(reason) = refused
-                    && let Err(err) = session.fail_deferred(&deferral, &reason)
-                {
-                    tracing::warn!(command = title, error = %err, "could not refuse an authorization");
-                    break;
+                if let Some(reason) = refused {
+                    tracing::warn!(command = title, %reason, "refused an authorization");
+                    if let Err(err) = session.fail_deferred(&deferral, &reason) {
+                        tracing::warn!(command = title, error = %err, "could not refuse an authorization");
+                        break;
+                    }
+                    refused_last = Some(reason);
                 }
             }
             Turn::Deferred { method, deferral } if method == "HostCommand/run" => {
@@ -874,6 +902,18 @@ fn serve(
     OAUTH.abandon(&session_id);
     if let Some(view) = view {
         view.end(ended);
+    } else if let Some(reason) = ended {
+        shell.shell().fail(&reason, "");
+    }
+}
+
+/// What a crash says: the runtime's reason, unless it said nothing useful,
+/// and then the refusal that most likely caused it.
+fn crash_reason(reason: &str, refused: Option<String>) -> String {
+    let said_nothing = matches!(reason.trim(), "" | "undefined" | "null" | "[object Object]");
+    match refused {
+        Some(refused) if said_nothing => refused,
+        _ => reason.to_owned(),
     }
 }
 
@@ -1146,6 +1186,8 @@ struct HeadlessShell {
     /// The extension's `assets` directory, which a notification's icon may
     /// name a file in.
     assets: Option<PathBuf>,
+    /// The launcher window, for a no-view run.
+    launcher: Option<Launcher>,
 }
 
 /// `getSelectedText`'s answer, verbatim from the C++, when nothing is
@@ -1213,6 +1255,31 @@ impl HeadlessShell {
         self.post(desktop_notification(title, body, None, None));
     }
 
+    /// Hands the launcher `command`; answers whether it took it.
+    fn tell_launcher(&self, command: compass_ipc::WindowCommand) -> bool {
+        self.launcher
+            .as_ref()
+            .is_some_and(|launcher| (launcher.0)(command))
+    }
+
+    /// A no-view run's failure: in the launcher, as its error line and in its
+    /// HUD, and as a desktop notification too, which outlasts the HUD.
+    fn fail(&self, title: &str, message: &str) {
+        let told = self.tell_launcher(compass_ipc::WindowCommand::Failure {
+            title: title.to_owned(),
+            message: message.to_owned(),
+        });
+        if !told {
+            tracing::info!(
+                command = self.title,
+                title,
+                message,
+                "no launcher to tell of a failure"
+            );
+        }
+        self.notify(title, message);
+    }
+
     fn post(&self, notification: notify_rust::Notification) {
         let (title, body) = (notification.summary.clone(), notification.body.clone());
         let Some(handle) = &self.handle else {
@@ -1253,7 +1320,7 @@ impl Shell for HeadlessShell {
         // A no-view command's success toast is the same news as the HUD it
         // usually shows next; only a failure is worth interrupting for.
         if style == ToastStyle::Danger {
-            self.notify(title, message);
+            self.fail(title, message);
         } else {
             tracing::info!(command = self.title, title, message, "toast");
         }
@@ -1272,7 +1339,13 @@ impl Shell for HeadlessShell {
     fn close_window(&self, _options: CloseWindow) {}
 
     fn show_hud(&self, text: &str) {
-        self.notify(&self.title, text);
+        let shown = self.tell_launcher(compass_ipc::WindowCommand::Hud {
+            text: text.to_owned(),
+            icon: None,
+        });
+        if !shown {
+            self.notify(&self.title, text);
+        }
     }
 
     fn pop_to_root(&self, _clear_search: bool) {}
@@ -1900,6 +1973,25 @@ mod tests {
     }
 
     #[test]
+    fn a_crash_that_says_nothing_is_told_by_the_refusal_before_it() {
+        let refused = Some("No web browser is installed to sign in with".to_owned());
+        assert_eq!(
+            crash_reason("undefined", refused.clone()),
+            "No web browser is installed to sign in with"
+        );
+        assert_eq!(
+            crash_reason("  ", refused.clone()),
+            refused.clone().unwrap()
+        );
+        assert_eq!(
+            crash_reason("Error: boom\n    at x", refused),
+            "Error: boom\n    at x",
+            "a crash with its own reason keeps it"
+        );
+        assert_eq!(crash_reason("undefined", None), "undefined");
+    }
+
+    #[test]
     fn a_notification_carries_the_urgency_and_an_icon_file() {
         use compass_worker_host::ui_shell_service::Urgency;
         use notify_rust::Hint;
@@ -1943,6 +2035,7 @@ mod tests {
             default_disabled: false,
             extension_name: "ssh".to_owned(),
             author: "me".to_owned(),
+            owner: None,
             is_raycast: false,
             preferences: Vec::new(),
             arguments: Vec::new(),

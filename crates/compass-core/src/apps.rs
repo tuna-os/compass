@@ -1035,6 +1035,23 @@ impl AppIndex {
         &self.extensions
     }
 
+    /// The installed command a `raycast://extensions/<owner>/<name>/<command>`
+    /// link names: by the extension's manifest name, its owner or author, and
+    /// the command's name.
+    #[must_use]
+    pub fn extension_by_link(
+        &self,
+        owner_or_author: &str,
+        extension_name: &str,
+        command: &str,
+    ) -> Option<&crate::extension_commands::ExtensionCommand> {
+        self.extensions.iter().find(|candidate| {
+            candidate.extension_name == extension_name
+                && candidate.name == command
+                && candidate.is_by(owner_or_author)
+        })
+    }
+
     /// The quicklinks root search lists, in the store's order.
     #[must_use]
     pub fn shortcuts(&self) -> &[crate::shortcut_service::CachedShortcut] {

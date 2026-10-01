@@ -159,13 +159,13 @@ impl LauncherApp {
                         .finished(index, Err(NEEDS_ENGINE.to_owned()));
                     return Task::none();
                 };
-                let (store, author, name) = (
+                let (store, owner, name) = (
                     recommendation.store,
-                    recommendation.author.to_owned(),
+                    recommendation.owner.to_owned(),
                     recommendation.name.to_owned(),
                 );
                 Task::perform(
-                    async move { backend.store_install(store, author, name).await },
+                    async move { backend.store_install(store, owner, name).await },
                     move |result| Message::OnboardingInstalled(index, result),
                 )
             }

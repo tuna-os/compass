@@ -209,12 +209,12 @@ fn all_requests() -> Vec<Request> {
         },
         Request::StoreExtension {
             store: compass_ipc::StoreKind::Vicinae,
-            author: "zoë".into(),
+            owner: "zoë".into(),
             name: "clock".into(),
         },
         Request::StoreInstall {
             store: compass_ipc::StoreKind::Vicinae,
-            author: "zoë".into(),
+            owner: "zoë".into(),
             name: "clock".into(),
         },
         Request::StoreUninstall {
@@ -499,6 +499,7 @@ fn store_entry() -> compass_ipc::StoreEntry {
         update_available: true,
         compat: Some(1),
         author_avatar: Some("https://example.com/zoë.png".into()),
+        owner: "zoe".into(),
     }
 }
 

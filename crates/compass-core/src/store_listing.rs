@@ -88,6 +88,10 @@ pub struct Listing {
     pub author_name: String,
     /// Its author's avatar.
     pub author_avatar: Option<String>,
+    /// The handle the store files it under, which fetching, installing and
+    /// linking to it go by: an organisation's for a Raycast extension one
+    /// owns, else the author's.
+    pub owner: String,
     /// Its title.
     pub title: String,
     /// What it does.
@@ -137,6 +141,7 @@ impl Listing {
             author: extension.author.handle.clone(),
             author_name: extension.author.name.clone(),
             author_avatar: non_empty(&extension.author.avatar_url),
+            owner: extension.author.handle.clone(),
             title: extension.title.clone(),
             description: extension.description.clone(),
             icon_light: extension.icons.light.clone(),
@@ -185,6 +190,7 @@ impl Listing {
             author: extension.author.handle.clone(),
             author_name: extension.author.name.clone(),
             author_avatar: extension.author.avatar.clone(),
+            owner: extension.owner_handle().to_owned(),
             title: extension.title.clone(),
             description: extension.description.clone(),
             icon_light: extension.icons.light.clone(),
@@ -241,26 +247,34 @@ pub fn readme_source_url(url: &str) -> String {
 }
 
 /// A deeplink into a store extension's detail page:
-/// `compass://extensions/<author>/<name>` (or `vicinae://`, which extensions
+/// `compass://extensions/<owner>/<name>` (or `vicinae://`, which extensions
 /// and the Vicinae store emit), or its `raycast://` and
 /// `com.raycast:` spellings, which open the Raycast store's page.
+///
+/// With a third segment it names one of the extension's commands, as
+/// Raycast's `raycast://extensions/<owner>/<name>/<command>` (what
+/// `createDeeplink` makes) does: the launcher runs it when it is installed,
+/// and shows the store page when it is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtensionLink {
     /// Whether the Raycast store is meant.
     pub raycast: bool,
-    /// The author's handle.
-    pub author: String,
+    /// The handle the store files it under: for Raycast, its owner's, which
+    /// for an organisation's extension is not its author's.
+    pub owner: String,
     /// The extension's name in the store.
     pub name: String,
+    /// The command's name, for a link to a command.
+    pub command: Option<String>,
 }
 
 /// The usage sentence the C++ answers a malformed extensions link with.
 pub const EXTENSION_LINK_USAGE: &str = "Usage: compass://extensions/<author>/<extension-name>";
 
 /// Reads an extensions deeplink, as `IpcCommandHandler` does for the
-/// `extensions` command: two path segments, percent-decoded. `None` for a
-/// URL that is not an extensions link at all; `Some(Err(..))` for one with
-/// the wrong number of segments.
+/// `extensions` command: two path segments, or three for a command,
+/// percent-decoded. `None` for a URL that is not an extensions link at all;
+/// `Some(Err(..))` for one with the wrong number of segments.
 #[must_use]
 pub fn parse_extension_link(url: &str) -> Option<Result<ExtensionLink, &'static str>> {
     let (scheme, rest) = url.split_once(':')?;
@@ -284,13 +298,16 @@ pub fn parse_extension_link(url: &str) -> Option<Result<ExtensionLink, &'static 
                 .into_owned()
         })
         .collect();
-    let [author, name] = segments.as_slice() else {
-        return Some(Err(EXTENSION_LINK_USAGE));
+    let (owner, name, command) = match segments.as_slice() {
+        [owner, name] => (owner, name, None),
+        [owner, name, command] => (owner, name, Some(command.clone())),
+        _ => return Some(Err(EXTENSION_LINK_USAGE)),
     };
     Some(Ok(ExtensionLink {
         raycast,
-        author: author.clone(),
+        owner: owner.clone(),
         name: name.clone(),
+        command,
     }))
 }
 
@@ -380,13 +397,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_extensions_link_names_the_store_author_and_extension() {
+    fn an_extensions_link_names_the_store_owner_and_extension() {
         assert_eq!(
             parse_extension_link("vicinae://extensions/zoë/clock"),
             Some(Ok(ExtensionLink {
                 raycast: false,
-                author: "zoë".into(),
-                name: "clock".into()
+                owner: "zoë".into(),
+                name: "clock".into(),
+                command: None,
             }))
         );
         assert_eq!(
@@ -398,18 +416,33 @@ mod tests {
             parse_extension_link("raycast://extensions/thomas/spotify-player?x=1"),
             Some(Ok(ExtensionLink {
                 raycast: true,
-                author: "thomas".into(),
-                name: "spotify-player".into()
+                owner: "thomas".into(),
+                name: "spotify-player".into(),
+                command: None,
             }))
+        );
+        assert_eq!(
+            parse_extension_link("raycast://extensions/raycast/github/my-pull-requests"),
+            Some(Ok(ExtensionLink {
+                raycast: true,
+                owner: "raycast".into(),
+                name: "github".into(),
+                command: Some("my-pull-requests".into()),
+            })),
+            "Raycast's command deeplink names the owner, the extension and the command"
         );
         assert_eq!(
             parse_extension_link("com.raycast:/extensions/a%20b/c")
                 .and_then(Result::ok)
-                .map(|link| link.author),
+                .map(|link| link.owner),
             Some("a b".into())
         );
         assert_eq!(
             parse_extension_link("vicinae://extensions/x"),
+            Some(Err(EXTENSION_LINK_USAGE))
+        );
+        assert_eq!(
+            parse_extension_link("vicinae://extensions/a/b/c/d"),
             Some(Err(EXTENSION_LINK_USAGE))
         );
         assert_eq!(parse_extension_link("raycast://oauth?code=c"), None);

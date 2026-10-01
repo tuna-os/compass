@@ -61,7 +61,7 @@ type Probe = (KeyCombo, oneshot::Sender<Option<String>>);
 
 /// How long the recorder waits for the backend's answer to a probe before
 /// taking the combination.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl Default for Control {
     fn default() -> Self {

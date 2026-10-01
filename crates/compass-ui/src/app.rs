@@ -901,6 +901,9 @@ pub struct LauncherApp {
     selected: usize,
     /// The last launch failure, shown until the query changes.
     error: Option<String>,
+    /// A failure that came while the launcher was hidden, for the error line
+    /// when it is next shown: a summon searches again, which clears `error`.
+    error_for_summon: Option<String>,
     /// How to launch. See [`AppFlags::launcher`].
     launcher: Arc<dyn AppLauncher>,
     backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
@@ -1336,6 +1339,7 @@ impl LauncherApp {
             selected: 0,
             panel: None,
             error: None,
+            error_for_summon: None,
             launcher: Arc::new(NullLauncher),
             backend: None,
             search_generation: 0,
@@ -1970,6 +1974,17 @@ impl LauncherApp {
             return Task::none();
         }
 
+        if let UiCommand::Failure { title, message } = &command {
+            let task = self.command_failed(title, message);
+            let open = self.is_visible() && !self.closing;
+            self.answer(if open {
+                UiOutcome::Shown
+            } else {
+                UiOutcome::Hidden
+            });
+            return task;
+        }
+
         if let UiCommand::Hud { text, icon } = &command {
             let hud = crate::hud::Hud {
                 text: text.clone(),
@@ -2008,7 +2023,9 @@ impl LauncherApp {
             | UiCommand::Deeplink(_) => true,
             UiCommand::Hide => false,
             // Answered in `obey` without touching the window.
-            UiCommand::Describe | UiCommand::Hud { .. } => return Task::none(),
+            UiCommand::Describe | UiCommand::Hud { .. } | UiCommand::Failure { .. } => {
+                return Task::none();
+            }
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
                     || (self.pending_window.is_some() && !self.pending_hide)
@@ -2454,9 +2471,13 @@ impl LauncherApp {
                 self.answer(UiOutcome::Shown);
                 // Covers boot and every summon: `conceal` closes the window, so
                 // a summon opens a new one whose field starts unfocused.
+                let search = self.search_task();
+                if let Some(failure) = self.error_for_summon.take() {
+                    self.error = Some(failure);
+                }
                 Task::batch([
                     focus_search(),
-                    self.search_task(),
+                    search,
                     self.refresh_shortcuts_task(),
                     self.refresh_scripts_task(),
                     self.refresh_rhai_scripts_task(),
@@ -2860,6 +2881,12 @@ impl LauncherApp {
                     return Task::none();
                 }
                 match result {
+                    // The engine held the request until its deadline and
+                    // nothing changed: ask again, keeping what is on screen.
+                    Ok(state) if page.is_unchanged(&state) => {
+                        let after = page.version;
+                        self.extension_poll(session, after)
+                    }
                     Ok(state) => {
                         let ended = state.ended;
                         // A script that popped itself: back to the root
@@ -3184,15 +3211,7 @@ impl LauncherApp {
                 let Err(reason) = result else {
                     return Task::none();
                 };
-                // The launcher hid before the command ran, so a refusal said
-                // only inside it would wait unseen for the next summon: the
-                // HUD says it now.
-                let hidden = self.closing || self.window.is_none();
-                self.error = Some(reason.clone());
-                if hidden {
-                    return self.put_up_hud_for_engine(crate::hud::Hud::new(reason)).1;
-                }
-                Task::none()
+                self.command_failed(&reason, "")
             }
             Message::FilesQueryChanged(query) => {
                 if let Page::Files(page) = &mut self.page {
@@ -5469,6 +5488,27 @@ impl LauncherApp {
         )
     }
 
+    /// A command the launcher let go of failed. The launcher may have hidden
+    /// before it did, so a refusal said only inside it would wait unseen for
+    /// the next summon: it is kept as the error line, and the HUD says it now.
+    /// The HUD has room for one short line, so it gets the reason alone.
+    fn command_failed(&mut self, title: &str, message: &str) -> Task<Message> {
+        let hidden = self.closing || self.window.is_none();
+        self.error = Some(if message.is_empty() {
+            title.to_owned()
+        } else {
+            format!("{title}: {message}")
+        });
+        if hidden {
+            self.error_for_summon.clone_from(&self.error);
+            let line = if message.is_empty() { title } else { message };
+            return self
+                .put_up_hud_for_engine(crate::hud::Hud::new(line.to_owned()))
+                .1;
+        }
+        Task::none()
+    }
+
     /// Asks the engine for `session`'s next state after `after`.
     fn extension_poll(&self, session: u64, after: u64) -> Task<Message> {
         let Some(backend) = self.backend.clone() else {
@@ -7003,7 +7043,8 @@ mod tests {
             store_rows: std::sync::Mutex::new(vec![crate::backend::StoreRow {
                 id: first.id(),
                 name: first.name.into(),
-                author: first.author.into(),
+                author: first.owner.into(),
+                owner: first.owner.into(),
                 title: first.title.into(),
                 ..crate::backend::StoreRow::default()
             }]),
@@ -7816,8 +7857,10 @@ mod tests {
         /// The store's rows; an install marks one installed and writes its
         /// manifest into `store_dir`, as the engine would.
         store_rows: std::sync::Mutex<Vec<crate::backend::StoreRow>>,
-        /// Each install asked for: the store, the author and the name.
+        /// Each install asked for: the store, the owner and the name.
         installs: std::sync::Mutex<Vec<(crate::backend::Store, String, String)>>,
+        /// The handles detail pages and installs were asked by, in order.
+        store_owners: std::sync::Mutex<Vec<String>>,
         /// Where installs land.
         store_dir: Option<std::path::PathBuf>,
         /// The store browses asked, in order.
@@ -8307,10 +8350,15 @@ mod tests {
         fn store_extension(
             &self,
             _store: crate::backend::Store,
-            _author: String,
+            owner: String,
             name: String,
         ) -> crate::backend::BackendFuture<'_, crate::backend::StoreDetail> {
             Box::pin(async move {
+                // Only a named owner: the action audit watches this
+                // backend's fields, and its rows name none.
+                if !owner.is_empty() {
+                    self.store_owners.lock().unwrap().push(owner);
+                }
                 let row = self
                     .store_rows
                     .lock()
@@ -8331,14 +8379,19 @@ mod tests {
         fn store_install(
             &self,
             store: crate::backend::Store,
-            author: String,
+            owner: String,
             name: String,
         ) -> crate::backend::BackendFuture<'_, (String, String)> {
             Box::pin(async move {
                 self.installs
                     .lock()
                     .unwrap()
-                    .push((store, author, name.clone()));
+                    .push((store, owner.clone(), name.clone()));
+                // Only a named owner: the action audit watches this
+                // backend's fields, and its rows name none.
+                if !owner.is_empty() {
+                    self.store_owners.lock().unwrap().push(owner);
+                }
                 let mut rows = self.store_rows.lock().unwrap();
                 let row = rows
                     .iter_mut()
@@ -9496,6 +9549,41 @@ mod tests {
         let mut ui = iced_test::simulator(app.view());
         assert!(ui.find("hello").is_ok(), "{}", app.state_line());
         assert!(ui.find("Offline — retrying").is_ok());
+    }
+
+    /// The engine answers a view read it held until its deadline with the
+    /// version the launcher already has. That is "nothing new": the page
+    /// keeps what it shows and asks again, rather than redrawing or stopping.
+    #[test]
+    fn a_held_view_read_that_comes_back_unchanged_just_asks_again() {
+        let (mut app, _backend, _dir) = open_extension_view(greeting_list(true));
+        let Page::Extension(page) = &mut app.page else {
+            panic!("no extension view: {}", app.state_line());
+        };
+        page.selected = 1;
+        let (session, version) = (page.session, page.version);
+        let unchanged = crate::backend::ExtensionViewState {
+            version,
+            view: Some(Box::new(compass_extension_api::View::List(
+                compass_extension_api::view::ListView::default(),
+            ))),
+            ..crate::backend::ExtensionViewState::default()
+        };
+        let next = task_messages(app.update(Message::ExtensionViewLoaded {
+            session,
+            result: Ok(unchanged),
+        }));
+        assert!(
+            next.iter()
+                .any(|message| matches!(message, Message::ExtensionViewLoaded { .. })),
+            "it asks again"
+        );
+        let Page::Extension(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.status, crate::extension_page::Status::Ready);
+        assert_eq!(page.shown.len(), 2, "the list on screen is kept");
+        assert_eq!(page.selected, 1, "and so is the selection");
     }
 
     #[test]
@@ -13282,6 +13370,8 @@ mod tests {
             id: format!("store.vicinae.{name}"),
             name: name.into(),
             author: "zoe".into(),
+            // Filed under an organisation, as Raycast's own extensions are.
+            owner: "clockworks".into(),
             title: title.into(),
             description: format!("{title} does things"),
             downloads: "12".into(),
@@ -13596,6 +13686,11 @@ mod tests {
         };
         assert_eq!(page.query, "tim", "the search is kept");
         assert_eq!(page.rows[0].title, "Timer");
+        assert_eq!(
+            backend.store_owners.lock().unwrap().as_slice(),
+            ["clockworks"],
+            "the detail page is asked for by the owner the store files it under, not the author"
+        );
         let asked = backend.store_queries.lock().unwrap().clone();
         assert!(
             asked
@@ -15318,6 +15413,41 @@ mod tests {
         assert_eq!(
             app.hud_content().map(|hud| hud.text.as_str()),
             Some("Next Track")
+        );
+    }
+
+    /// A no-view command that failed after the launcher hid: the reason is in
+    /// the HUD now, and on the launcher's error line when it is next shown,
+    /// not only in a desktop notification nobody may be there to post.
+    #[test]
+    fn a_no_view_commands_failure_is_said_in_the_hud_and_kept_for_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path())).with_hud(true);
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.update(Message::Command(UiCommand::Failure {
+            title: "Could not complete New Window".into(),
+            message: "AppleScript is only supported on macOS".into(),
+        }));
+        assert_eq!(outcomes.try_recv().ok(), Some(UiOutcome::Hidden));
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("AppleScript is only supported on macOS"),
+            "the HUD has room for the reason"
+        );
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Could not complete New Window: AppleScript is only supported on macOS")
+        );
+        // The next summon opens a window and searches again.
+        let _ = app.update(Message::Opened(window::Id::unique()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(
+            ui.find("Could not complete New Window: AppleScript is only supported on macOS")
+                .is_ok(),
+            "the launcher shows it: {}",
+            app.state_line()
         );
     }
 

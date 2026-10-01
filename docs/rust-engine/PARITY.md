@@ -994,8 +994,12 @@ Declared differences:
 - The surface is a fixed 336×48 with the pill centred in it, rather than sized to the pill: a layer
   surface's size is asked for before anything is laid out, and the rest of it is transparent and
   takes no input.
-- An extension's `showHUD` is still a desktop notification: the extension host runs outside the
-  window's reach (`HeadlessShell`), and the launcher has hidden by then.
+- A no-view extension's `showHUD` goes to the launcher's HUD (`HeadlessShell` is handed the
+  launcher window), falling back to a desktop notification where there is no HUD. Its failure
+  toasts and its crash go to the launcher as `WindowCommand::Failure` (IPC v23): the reason in the
+  HUD now and the launcher's error line when it is next shown, since the launcher has hidden by
+  then and a desktop notification is lost where no notification daemon runs. The notification is
+  still posted too, and outlasts the HUD.
 - Where there is no HUD, the engine's HUDs become a transient notification rather than nothing.
 - Set Default Terminal's HUD has no icon (the C++'s is a green `$` symbol, which the builtin set does
   not have).
@@ -3745,7 +3749,8 @@ root search forgets it. What differs:
 | 10 | The list is fetched with `PreferCache` and reused while Qt's disk cache keeps it. | The Vicinae list is kept in memory for ten minutes; the Raycast pages for the session, as the C++. | — |
 | 11 | The Raycast API is always `backend.raycast.com`. | `COMPASS_RAYCAST_API_URL` overrides it, as `COMPASS_API_URL` already overrides the Vicinae API, so tests serve both stores locally. | `raycast_store::api_base_url` |
 | 12 | Only the store builtins' links open (`openTarget`). | `OpenUrl` opens any `http(s)` link with the default browser (anything else is refused), and the launcher now uses it for links clicked in Markdown, including an extension view's, which were only logged before. | `only_web_urls_are_opened` |
-| 13 | Deep links (`vicinae://extensions/<author>/<name>` into a detail host; `raycast://` and `com.raycast:` into the Raycast store's) exist, and a link with the wrong number of segments answers the usage sentence. | The same: `compass deeplink <url>` (or a bare `compass <url>`) sends IPC v16 `OpenDeeplink`, the engine pushes `WindowCommand::Deeplink` to the window, which opens the detail page; Escape goes to that store's list rather than the root. | `an_extensions_link_names_the_store_author_and_extension`, `an_extensions_deeplink_goes_to_the_window_and_a_malformed_one_is_refused`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
+| 13 | Deep links (`vicinae://extensions/<author>/<name>` into a detail host; `raycast://` and `com.raycast:` into the Raycast store's) exist, and a link with the wrong number of segments answers the usage sentence. | The same: `compass deeplink <url>` (or a bare `compass <url>`) sends IPC v16 `OpenDeeplink`, the engine pushes `WindowCommand::Deeplink` to the window, which opens the detail page; Escape goes to that store's list rather than the root. A third segment, Raycast's `raycast://extensions/<owner>/<name>/<command>` (what `createDeeplink` makes), runs the installed command it names, found by owner or author, and opens the store page when it is not installed. | `an_extensions_link_names_the_store_owner_and_extension`, `a_command_link_finds_the_installed_command_by_owner_or_author`, `an_extensions_deeplink_goes_to_the_window_and_a_malformed_one_is_refused`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
+| 14 | A Raycast extension's detail and install URLs are built from `author.handle`, so an organisation's extension (GitHub, Linear and Todoist are filed under `raycast`, `linear` and `doist`) is a 404 and cannot be opened or installed. | They are built from the listing's `owner.handle`, falling back to the author's; the row carries both (IPC v23 `StoreEntry.owner`) and shows the author. The installed id (`store.raycast.<name>`) has no handle in it, so existing installs are unchanged. The runtime's `ownerOrAuthorName` is the manifest's `owner` when it has one, as Raycast's is. | `an_organisations_extension_is_addressed_by_its_owner_not_its_author`, `an_organisations_raycast_extension_opens_and_installs_by_its_owner` |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 

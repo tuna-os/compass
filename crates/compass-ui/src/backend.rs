@@ -400,25 +400,27 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err("The extension stores need the Compass engine".to_owned()) })
     }
 
-    /// One store extension's detail page.
+    /// One store extension's detail page, by the handle the store files it
+    /// under ([`StoreRow::owner`]) and its name.
     fn store_extension(
         &self,
         store: Store,
-        author: String,
+        owner: String,
         name: String,
     ) -> BackendFuture<'_, StoreDetail> {
-        let _ = (store, author, name);
+        let _ = (store, owner, name);
         Box::pin(async { Err("The extension stores need the Compass engine".to_owned()) })
     }
 
-    /// Downloads and installs a store extension, answering its id and title.
+    /// Downloads and installs a store extension, by [`StoreRow::owner`] and
+    /// its name, answering its id and title.
     fn store_install(
         &self,
         store: Store,
-        author: String,
+        owner: String,
         name: String,
     ) -> BackendFuture<'_, (String, String)> {
-        let _ = (store, author, name);
+        let _ = (store, owner, name);
         Box::pin(async { Err("Installing extensions needs the Compass engine".to_owned()) })
     }
 
@@ -831,6 +833,10 @@ pub struct StoreRow {
     pub compat: Option<u8>,
     /// Its author's avatar URL.
     pub author_avatar: Option<String>,
+    /// The handle the store files it under, which opening and installing it
+    /// go by: an organisation's for a Raycast extension one owns (`raycast`
+    /// for GitHub, whose author is `thomaslombart`), else the author's.
+    pub owner: String,
 }
 
 /// One store extension's detail page.

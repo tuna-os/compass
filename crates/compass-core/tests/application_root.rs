@@ -384,3 +384,49 @@ fn a_rescan_takes_installed_and_removed_applications_and_keeps_the_rest() {
     let hit = &index.search_root("Editor", None)[0];
     assert_eq!(index.items()[hit.index].key(), "editor.desktop");
 }
+
+/// `raycast://extensions/<owner>/<name>/<command>`, which Raycast's
+/// `createDeeplink` makes, names an organisation's extension by its owner;
+/// the installed copy is still found by its author.
+#[test]
+fn a_command_link_finds_the_installed_command_by_owner_or_author() {
+    let apps = tempfile::tempdir().unwrap();
+    let installed = tempfile::tempdir().unwrap();
+    let ext = installed.path().join("store.raycast.github");
+    std::fs::create_dir_all(&ext).unwrap();
+    std::fs::write(
+        ext.join("package.json"),
+        r#"{"name": "github", "title": "GitHub", "author": "thomaslombart", "owner": "raycast",
+            "commands": [{"name": "my-pull-requests", "title": "My Pull Requests", "mode": "view"}]}"#,
+    )
+    .unwrap();
+    let index = AppIndex::builder()
+        .dir(apps.path())
+        .extension_dirs([installed.path()])
+        .build();
+    let by_owner = index
+        .extension_by_link("raycast", "github", "my-pull-requests")
+        .expect("found by its owner");
+    assert_eq!(
+        by_owner.id,
+        "@thomaslombart/store.raycast.github:my-pull-requests"
+    );
+    assert_eq!(by_owner.owner_or_author(), "raycast");
+    assert_eq!(
+        index
+            .extension_by_link("thomaslombart", "github", "my-pull-requests")
+            .map(|command| command.id.as_str()),
+        Some(by_owner.id.as_str()),
+        "and by its author"
+    );
+    assert!(
+        index
+            .extension_by_link("someone-else", "github", "my-pull-requests")
+            .is_none()
+    );
+    assert!(
+        index
+            .extension_by_link("raycast", "github", "nothing")
+            .is_none()
+    );
+}

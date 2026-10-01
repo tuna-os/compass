@@ -97,8 +97,30 @@ use serde::{Deserialize, Serialize};
 /// [`Request::ExtensionAlertRemember`]), which the engine's consent to run a
 /// host program for an extension is asked with, and those grants listed and
 /// revoked beside the Rhai scripts' ([`Request::ListScriptGrants`],
-/// [`Request::RevokeScriptGrant`]).
-pub const PROTOCOL_VERSION: u16 = 22;
+/// [`Request::RevokeScriptGrant`]); version 23, a store extension's owner
+/// beside its author ([`StoreEntry::owner`]), which the Raycast store keys an
+/// organisation's extension by, and which [`Request::StoreExtension`] and
+/// [`Request::StoreInstall`] now carry, and a no-view command's failure
+/// said in the launcher ([`WindowCommand::Failure`]).
+pub const PROTOCOL_VERSION: u16 = 23;
+
+/// How long the engine holds an [`Request::ExtensionView`] open waiting for a
+/// change before it answers with the version it has.
+///
+/// A client must allow longer than this for the answer, or a view that is
+/// simply idle reads as a failure: [`long_poll_deadline`] says how much
+/// longer.
+pub const EXTENSION_VIEW_HOLD: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// What a client adds to a request the engine may hold, for the engine's own
+/// work and the round trip.
+pub const LONG_POLL_MARGIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long a client waits for a request the engine holds for up to `hold`.
+#[must_use]
+pub const fn long_poll_deadline(hold: std::time::Duration) -> std::time::Duration {
+    hold.saturating_add(LONG_POLL_MARGIN)
+}
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,8 +313,8 @@ pub enum Request {
     },
     /// What a view command's session shows, once it differs from `after`.
     ///
-    /// Held open until the session's version passes `after` or a timeout,
-    /// then answered with [`Response::ExtensionView`] either way; the
+    /// Held open until the session's version passes `after` or
+    /// [`EXTENSION_VIEW_HOLD`] passes, then answered with [`Response::ExtensionView`] either way; the
     /// launcher asks again with the version it got. A session that is not
     /// running is a bad request.
     ExtensionView {
@@ -581,8 +603,8 @@ pub enum Request {
     StoreExtension {
         /// Which store.
         store: StoreKind,
-        /// Its author's handle.
-        author: String,
+        /// [`StoreEntry::owner`].
+        owner: String,
         /// Its name in the store.
         name: String,
     },
@@ -592,8 +614,8 @@ pub enum Request {
     StoreInstall {
         /// Which store.
         store: StoreKind,
-        /// Its author's handle.
-        author: String,
+        /// [`StoreEntry::owner`].
+        owner: String,
         /// Its name in the store.
         name: String,
     },
@@ -1819,6 +1841,11 @@ pub struct StoreEntry {
     pub compat: Option<u8>,
     /// Its author's avatar URL, when the store has one. (v16.)
     pub author_avatar: Option<String>,
+    /// The handle the store files it under, which its detail page, its
+    /// install and its deeplinks are addressed by: an organisation's for a
+    /// Raycast extension an organisation owns (`raycast/github`, whose
+    /// author is a person), else the author's. (v23.)
+    pub owner: String,
 }
 
 /// One extension's detail page.
@@ -1979,6 +2006,16 @@ pub enum WindowCommand {
         text: String,
         /// A builtin icon's name or an emoji.
         icon: Option<String>,
+    },
+    /// A command the launcher let go of failed: a no-view extension command
+    /// that refused or crashed after the launcher hid. The launcher keeps it
+    /// as its error line, there when it is next shown, and says it in the
+    /// HUD now where it has one. Answered with the launcher's state. (v23.)
+    Failure {
+        /// What failed, e.g. "Could not complete New Window".
+        title: String,
+        /// Why, e.g. "AppleScript is only supported on macOS"; may be empty.
+        message: String,
     },
 }
 

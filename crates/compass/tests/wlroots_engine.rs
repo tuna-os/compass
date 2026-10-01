@@ -317,7 +317,8 @@ fn on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors() {
             ext.join("machine.js"),
             "const React = require('react');
              const { Detail, getSelectedText, WindowManagement } = require('@vicinae/api');
-             const said = (p) => p.then((v) => JSON.stringify(v), (e) => 'error: ' + String(e));
+             const said = (p) => p.then((v) => JSON.stringify(v),
+               (e) => e instanceof Error ? 'error: ' + e.message : 'not an Error: ' + String(e));
              module.exports.default = () => {
                const [text, setText] = React.useState('');
                React.useEffect(() => {

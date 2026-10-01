@@ -1,0 +1,98 @@
+{
+  "id": "89648e03-cceb-4205-9f40-75fcb039a4c6",
+  "name": "github",
+  "platforms": [
+    "macOS",
+    "Windows"
+  ],
+  "author": {
+    "id": "2e9fabe2-f70f-4907-9bed-b78ea4bde44b",
+    "name": "Thomas Lombart",
+    "handle": "thomaslombart",
+    "username": "thomaslombart",
+    "avatar": "https://files.raycast.com/goncaog0hpye49ez4racdnrwcoaj"
+  },
+  "owner": {
+    "id": "45ec6a50-8cbe-4e3e-b0a8-e63355a3428b",
+    "name": "Raycast",
+    "handle": "raycast",
+    "avatar": "https://files.raycast.com/xr57mqo1x6k3rpb0j29xn7acgf72"
+  },
+  "store_url": "https://www.raycast.com/raycast/github",
+  "download_count": 207468,
+  "title": "GitHub",
+  "description": "Work with issues, pull requests, manage workflows, search repositories and stay on top of notifications",
+  "commit_sha": "4dee315bb203eaae0a5e7bfdc1718274eb6e2295",
+  "categories": [
+    "Developer Tools",
+    "Productivity",
+    "AI Extensions"
+  ],
+  "metadata_count": 9,
+  "updated_at": 1790258695,
+  "source_url": "https://github.com/raycast/extensions/tree/4dee315bb203eaae0a5e7bfdc1718274eb6e2295/extensions/github/",
+  "readme_url": "https://github.com/raycast/extensions/tree/4dee315bb203eaae0a5e7bfdc1718274eb6e2295/extensions/github/README.md",
+  "readme_assets_path": "https://github.com/raycast/extensions/raw/4dee315bb203eaae0a5e7bfdc1718274eb6e2295/extensions/github//",
+  "icons": {
+    "light": "https://files.raycast.com/b4q93jdkd9638vlubd48x2jqgcge",
+    "dark": "https://files.raycast.com/ku8mgycmt6fk1czfvd7a8hak3bu9"
+  },
+  "commands": [
+    {
+      "id": "a803da1e-c7b2-4707-b4e3-7a3004681481",
+      "name": "my-pull-requests",
+      "title": "My Pull Requests",
+      "subtitle": "",
+      "description": "List pull requests you created, participated in, or were mentioned in.",
+      "mode": "view",
+      "keywords": [],
+      "icons": {
+        "light": null,
+        "dark": null
+      }
+    },
+    {
+      "id": "0c3ec466-5302-4dc6-b0fa-8dd383aced5f",
+      "name": "search-pull-requests",
+      "title": "Search Pull Requests",
+      "subtitle": "",
+      "description": "Search recent pull requests globally in all repositories.",
+      "mode": "view",
+      "keywords": [],
+      "icons": {
+        "light": null,
+        "dark": null
+      }
+    },
+    {
+      "id": "e49da458-b0fb-4ee6-900e-58d715f889e6",
+      "name": "create-pull-request",
+      "title": "Create Pull Request",
+      "subtitle": "",
+      "description": "Create a pull request in one of your GitHub repositories.",
+      "mode": "view",
+      "keywords": [],
+      "icons": {
+        "light": null,
+        "dark": null
+      }
+    }
+  ],
+  "download_url": "https://example.com/raycast/github.zip",
+  "contributors": [
+    {
+      "id": "54fe130f-bd8f-465d-80d7-10f23588a27c",
+      "name": "Dhruv Suthar",
+      "handle": "0xdhrv",
+      "username": "0xdhrv",
+      "avatar": "https://files.raycast.com/sx6c0szhxmvw5crdhzj0vmankbb3"
+    },
+    {
+      "id": "01e008fc-f581-4109-b595-a423bd1b8b76",
+      "name": "Georgios Kotziabassis",
+      "handle": "aeorge",
+      "username": "aeorge",
+      "avatar": "https://files.raycast.com/yduic8x6nquauflbknv53rbxvino"
+    }
+  ]
+}

@@ -10,7 +10,25 @@ use compass_ui::backend::{
     WindowBackend, WindowRow,
 };
 
+/// How long an ordinary request may take: one the engine answers from what
+/// it holds. A request the engine may hold longer has its own deadline below.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How long reading an extension's view may take: the engine holds the
+/// request until the view changes or [`compass_ipc::EXTENSION_VIEW_HOLD`]
+/// passes, so an idle view is answered only then.
+const VIEW_TIMEOUT: Duration = compass_ipc::long_poll_deadline(compass_ipc::EXTENSION_VIEW_HOLD);
+
+/// How long starting an extension command may take: the engine waits for
+/// the runtime to take the command, for up to
+/// [`crate::extension_runner::LOAD_TIMEOUT`].
+const START_TIMEOUT: Duration =
+    compass_ipc::long_poll_deadline(crate::extension_runner::LOAD_TIMEOUT);
+
+/// How long asking the desktop about a shortcut may take: the engine waits
+/// for the backend's answer for up to [`crate::global_shortcuts::PROBE_TIMEOUT`].
+const PROBE_TIMEOUT: Duration =
+    compass_ipc::long_poll_deadline(crate::global_shortcuts::PROBE_TIMEOUT);
 
 /// How long the update check may take: the engine may be asking the release
 /// feed, which it allows 15 seconds.
@@ -50,6 +68,7 @@ fn store_row(entry: compass_ipc::StoreEntry) -> compass_ui::backend::StoreRow {
         update_available: entry.update_available,
         compat: entry.compat,
         author_avatar: entry.author_avatar,
+        owner: entry.owner,
     }
 }
 
@@ -571,9 +590,10 @@ impl ApplicationBackend for DaemonBackend {
     fn probe_shortcut(&self, trigger: String) -> BackendFuture<'_, Option<String>> {
         Box::pin(async move {
             match self
-                .ask(
+                .ask_within(
                     Request::ProbeShortcut { trigger },
                     "Asking the desktop about the shortcut",
+                    PROBE_TIMEOUT,
                 )
                 .await?
             {
@@ -895,13 +915,13 @@ impl ApplicationBackend for DaemonBackend {
     fn store_extension(
         &self,
         store: compass_ui::backend::Store,
-        author: String,
+        owner: String,
         name: String,
     ) -> BackendFuture<'_, compass_ui::backend::StoreDetail> {
         Box::pin(async move {
             let request = Request::StoreExtension {
                 store: store_kind(store),
-                author,
+                owner,
                 name,
             };
             match self
@@ -926,13 +946,13 @@ impl ApplicationBackend for DaemonBackend {
     fn store_install(
         &self,
         store: compass_ui::backend::Store,
-        author: String,
+        owner: String,
         name: String,
     ) -> BackendFuture<'_, (String, String)> {
         Box::pin(async move {
             let request = Request::StoreInstall {
                 store: store_kind(store),
-                author,
+                owner,
                 name,
             };
             match self
@@ -1401,9 +1421,10 @@ impl ApplicationBackend for DaemonBackend {
             let arguments_json =
                 arguments.map(|arguments| serde_json::Value::Object(arguments).to_string());
             match self
-                .ask(
+                .ask_within(
                     Request::RunExtensionCommand { id, arguments_json },
                     "Running the command",
+                    START_TIMEOUT,
                 )
                 .await?
             {
@@ -1431,9 +1452,10 @@ impl ApplicationBackend for DaemonBackend {
     fn extension_view(&self, session: u64, after: u64) -> BackendFuture<'_, ExtensionViewState> {
         Box::pin(async move {
             match self
-                .ask(
+                .ask_within(
                     Request::ExtensionView { session, after },
                     "Reading the view",
+                    VIEW_TIMEOUT,
                 )
                 .await?
             {
@@ -2154,6 +2176,20 @@ fn launch_arguments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every request the engine may hold is given longer than the engine
+    /// holds it, so the answer, and not the deadline, ends the wait.
+    #[test]
+    fn a_held_request_outlasts_the_engines_hold() {
+        for (deadline, hold) in [
+            (VIEW_TIMEOUT, compass_ipc::EXTENSION_VIEW_HOLD),
+            (START_TIMEOUT, crate::extension_runner::LOAD_TIMEOUT),
+            (PROBE_TIMEOUT, crate::global_shortcuts::PROBE_TIMEOUT),
+        ] {
+            assert!(deadline > hold, "{deadline:?} is not longer than {hold:?}");
+            assert!(deadline > REQUEST_TIMEOUT);
+        }
+    }
 
     #[test]
     fn an_engine_refusal_reads_as_a_sentence() {

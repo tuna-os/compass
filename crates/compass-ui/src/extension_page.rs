@@ -179,6 +179,14 @@ impl ExtensionPage {
         }
     }
 
+    /// Whether `state` only repeats what the page shows: the engine's answer
+    /// to a poll it held for its whole hold with nothing new. The page asks
+    /// again rather than redrawing.
+    #[must_use]
+    pub fn is_unchanged(&self, state: &crate::backend::ExtensionViewState) -> bool {
+        state.version == self.version && !state.ended && state.problem.is_none()
+    }
+
     /// Takes the engine's latest answer.
     pub fn apply(&mut self, state: crate::backend::ExtensionViewState) {
         self.version = state.version;

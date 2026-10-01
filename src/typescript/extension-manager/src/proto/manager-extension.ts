@@ -28,7 +28,14 @@ export class RpcTransport {
 			const handler = this.requestMap.get(msg.id);
 
 			if (handler) {
-				if (msg.error) handler.reject(msg.error);
+				// An Error, as Raycast rejects with: an extension reads
+				// `.message`, and a bare string has none.
+				if (msg.error)
+					handler.reject(
+						new Error(
+							typeof msg.error === 'string' ? msg.error : JSON.stringify(msg.error),
+						),
+					);
 				else handler.resolve(msg.result);
 				this.requestMap.delete(msg.id);
 			}

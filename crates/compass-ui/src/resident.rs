@@ -64,6 +64,14 @@ pub enum UiCommand {
         /// A builtin icon name or an emoji.
         icon: Option<String>,
     },
+    /// A command the launcher let go of failed: keep it as the error line,
+    /// and say it in the HUD now when the launcher is hidden.
+    Failure {
+        /// What failed.
+        title: String,
+        /// Why; may be empty.
+        message: String,
+    },
 }
 
 /// What the window reports back, as the state it ended in.
