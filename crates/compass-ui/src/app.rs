@@ -5709,8 +5709,8 @@ impl LauncherApp {
         .discard()
     }
 
-    /// A checkbox or dropdown in a form, ringed in the accent colour while the
-    /// keyboard is on it: neither takes Iced's focus, so neither draws one.
+    /// A checkbox in a form, ringed in the accent colour while the keyboard
+    /// is on it: it cannot take Iced's focus, so it draws none of its own.
     fn form_focus_ring<'a>(
         &self,
         focused: bool,
@@ -5804,17 +5804,25 @@ impl LauncherApp {
                             .map(|(title, _)| title.clone())
                     });
                     let options = options.clone();
-                    self.form_focus_ring(
-                        page.focus == Some(index),
-                        iced::widget::pick_list(titles, selected, move |title: String| {
-                            let value = options
-                                .iter()
-                                .find(|(t, _)| *t == title)
-                                .map(|(_, value)| value.clone());
-                            Message::PreferenceEdited(index, FieldValue::Choice(value))
-                        })
-                        .into(),
-                    )
+                    // Ringed through its own border, so it lines up with the
+                    // text fields above it.
+                    let ring = (page.focus == Some(index)).then(|| self.palette().accent.to_iced());
+                    iced::widget::pick_list(titles, selected, move |title: String| {
+                        let value = options
+                            .iter()
+                            .find(|(t, _)| *t == title)
+                            .map(|(_, value)| value.clone());
+                        Message::PreferenceEdited(index, FieldValue::Choice(value))
+                    })
+                    .style(move |theme: &Theme, status| {
+                        let mut style = iced::widget::pick_list::default(theme, status);
+                        if let Some(accent) = ring {
+                            style.border.color = accent;
+                            style.border.width = 2.0;
+                        }
+                        style
+                    })
+                    .into()
                 }
                 (PreferenceInputKind::TextArea, _) => match page.editors.get(&index) {
                     Some(editor) => iced::widget::text_editor(editor)
