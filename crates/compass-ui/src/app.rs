@@ -3717,6 +3717,12 @@ impl LauncherApp {
                     Key::Named(Named::ArrowUp) => {
                         return self.update(Message::MoveSelection(Direction::Up));
                     }
+                    // Text in the field is cleared first, and only an empty
+                    // field hides: `NavigationController::goBack` at the
+                    // root search, as Raycast does.
+                    Key::Named(Named::Escape) if !self.query.is_empty() => {
+                        return self.update(Message::QueryChanged(String::new()));
+                    }
                     Key::Named(Named::Escape) => return self.update(Message::Dismiss),
                     Key::Named(Named::Enter) => return self.update(Message::LaunchSelected),
                     _ => {}
@@ -6905,6 +6911,19 @@ mod tests {
         let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
         assert!(!app.showing_onboarding(), "Finish hides the flow");
         assert!(!onboarding::should_show(&path, false), "and records it");
+    }
+
+    #[test]
+    fn escape_clears_the_search_text_before_it_hides() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let _ = app.update(Message::QueryChanged("fire".into()));
+        app.window_focused = true;
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert_eq!(app.query, "", "the first Escape clears the text");
+        assert!(app.window_focused, "and does not hide");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.window_focused, "the second hides");
     }
 
     #[test]
