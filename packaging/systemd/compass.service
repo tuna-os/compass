@@ -7,6 +7,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
+# scripts/packaging/install-rust-engine.sh writes the installed binary's absolute path here.
 ExecStart=compass start --hidden
 Restart=on-failure
 RestartSec=5

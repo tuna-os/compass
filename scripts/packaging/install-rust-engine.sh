@@ -80,9 +80,17 @@ install -Dm644 "$repo_root/extra/compass.svg" \
   "$share/icons/hicolor/scalable/apps/$app_id.svg"
 
 # An opt-in user unit (`systemctl --user enable --now compass`). Flatpak does
-# not export units, so the copy in /app is inert.
-install -Dm644 "$repo_root/packaging/systemd/compass.service" \
-  "$root/lib/systemd/user/compass.service"
+# not export units, so the copy in /app is inert. ExecStart gets the installed
+# binary's absolute path: systemd searches only its own fixed directories for
+# a bare name, which misses /usr/local, /opt and every other prefix.
+install -d "$root/lib/systemd/user"
+sed "s|^ExecStart=compass |ExecStart=$prefix/bin/compass |" \
+  "$repo_root/packaging/systemd/compass.service" >"$root/lib/systemd/user/compass.service"
+chmod 644 "$root/lib/systemd/user/compass.service"
+if ! grep -q "^ExecStart=$prefix/bin/compass " "$root/lib/systemd/user/compass.service"; then
+  echo "compass.service: ExecStart was not rewritten to $prefix/bin/compass" >&2
+  exit 1
+fi
 
 # The Icon.* set extensions draw with, found through $XDG_DATA_DIRS as
 # compass/builtin-icons (compass_core::builtin_icon).

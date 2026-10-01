@@ -28,6 +28,40 @@ keyboard shortcut to bring it back.
 The examples on this page use the `compass` command. From the Flatpak, run it as
 `flatpak run org.tunaos.compass`, for example `flatpak run org.tunaos.compass toggle`.
 
+## Start Compass when you log in
+
+Opening Compass from the application grid starts it for the rest of the session. To start it at
+login instead, enable its systemd user unit:
+
+```sh
+systemctl --user enable --now compass
+```
+
+The unit starts with `graphical-session.target` and needs `WAYLAND_DISPLAY` in the systemd user
+environment. GNOME and KDE Plasma provide both. Plain Sway does neither by default, so either
+start Sway through [uwsm](https://github.com/Vladimir-csp/uwsm) or
+[sway-systemd](https://github.com/alebastr/sway-systemd), or add these lines to the end of
+`~/.config/sway/config`:
+
+```text
+exec systemctl --user import-environment WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+exec systemctl --user start sway-session.target
+```
+
+with a `~/.config/systemd/user/sway-session.target` that binds to the graphical session:
+
+```ini
+[Unit]
+Description=Sway session
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
+```
+
+Hyprland and niri sessions started through their own systemd integration (or uwsm) already
+provide the target and the environment. Without systemd, run `compass start --hidden` from your
+compositor's autostart instead, for example `exec compass start --hidden` in Sway.
+
 ## Set a keyboard shortcut
 
 The launcher opens with `compass toggle`, which shows it or hides it. Compass has to be running
@@ -138,7 +172,18 @@ Compass reads theme files in the same format as Vicinae, so a Vicinae theme work
 
 ## Privacy
 
-Compass sends no telemetry. It checks for updates on GitHub, and you can turn that check off.
+Compass sends no telemetry. On its own, it makes two kinds of request:
+
+- It asks Compass's GitHub releases whether a newer version is out, at most every six hours. Turn
+  this off with **Check for updates** in Settings, or `launcher.check_for_updates` in the
+  configuration file.
+- For the calculator's currency conversions, it downloads the European Central Bank's daily
+  exchange rates from `www.ecb.europa.eu`, once a day while it runs. To stop this, set
+  `COMPASS_DISABLE_AUTO_RATE_REFRESH=1` in Compass's environment; currency conversions then use
+  the last rates downloaded, if any.
+
+Everything else happens only when you ask for it, such as browsing the Vicinae Store or the
+Raycast Store and installing an extension. What an installed extension does is up to it.
 
 ## Troubleshooting
 
