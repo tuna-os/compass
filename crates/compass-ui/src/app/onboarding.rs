@@ -191,7 +191,8 @@ impl LauncherApp {
         let action = |label: &'a str, message: Message| {
             button(text(label).font(self.font()).size(13))
                 .on_press(message)
-                .padding(Padding::new(6.0).left(14).right(14))
+                .padding(crate::adwaita::CONTROL_PADDING)
+                .style(move |_: &Theme, status| crate::adwaita::button(palette, status))
         };
 
         let mut content = column![].spacing(8).align_x(Alignment::Center);
@@ -217,6 +218,10 @@ impl LauncherApp {
                         Message::OnboardingTheme
                     )
                     .text_size(13)
+                    .font(self.font())
+                    .padding(crate::adwaita::CONTROL_PADDING)
+                    .style(move |_: &Theme, status| crate::adwaita::dropdown(palette, status))
+                    .menu_style(move |_: &Theme| crate::design::dropdown_menu(palette))
                     .width(Length::Fixed(200.0)),
                 ]
                 .align_y(Alignment::Center);
@@ -249,7 +254,8 @@ impl LauncherApp {
                                 .can_install()
                                 .then_some(Message::OnboardingInstall(index)),
                         )
-                        .padding(Padding::new(6.0).left(14).right(14));
+                        .padding(crate::adwaita::CONTROL_PADDING)
+                        .style(move |_: &Theme, status| crate::adwaita::button(palette, status));
                     rows = rows.push(
                         row![
                             column![
@@ -292,11 +298,10 @@ impl LauncherApp {
             content = content.push(self.notice(notice));
         }
 
+        // The step that is not this one in the control colour, 3:1 on the
+        // card, rather than a faint text colour nobody can count.
         let accent = palette.accent.to_iced();
-        let dim = iced::Color {
-            a: 0.2,
-            ..palette.text.to_iced()
-        };
+        let dim = palette.control().to_iced();
         let mut dots = row![].spacing(7);
         for position in 0..page.flow.count() {
             let color = if position == page.flow.position() {
@@ -326,10 +331,11 @@ impl LauncherApp {
         let footer = row![
             container(back).width(Length::Fill),
             dots,
-            container(action(
-                page.flow.primary_label(),
-                Message::OnboardingContinue
-            ))
+            container(
+                action(page.flow.primary_label(), Message::OnboardingContinue).style(
+                    move |_: &Theme, status| crate::adwaita::suggested_button(palette, status)
+                )
+            )
             .width(Length::Fill)
             .align_x(Alignment::End),
         ]

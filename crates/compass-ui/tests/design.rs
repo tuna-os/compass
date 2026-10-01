@@ -44,7 +44,7 @@ fn hex_round_trips_the_values_as_they_are_written_in_adwaita() {
     assert_eq!(Rgb::new(0x35, 0x84, 0xe4).hex(), "#3584e4");
     assert_eq!(design::LIGHT.surface.hex(), "#fafafa");
     assert_eq!(design::DARK.surface.hex(), "#242424");
-    assert_eq!(design::LIGHT.accent.hex(), "#3584e4");
+    assert_eq!(design::LIGHT.accent.hex(), "#1c71d8");
 }
 
 #[test]

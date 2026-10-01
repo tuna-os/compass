@@ -18,7 +18,7 @@ use iced::widget::button as btn;
 use iced::widget::{container, pick_list, rule, text_input, toggler};
 use iced::{Background, Border, Color, Shadow};
 
-use crate::design::{Palette, Rgb};
+use crate::design::Palette;
 
 /// A button's and an entry's corner radius.
 pub const CONTROL_RADIUS: f32 = 6.0;
@@ -37,6 +37,8 @@ pub const ROW_PADDING: [f32; 2] = [8.0, 12.0];
 pub const ROW_MIN_CONTENT: f32 = 34.0;
 /// The gap between controls, and between a group's title and its list.
 pub const SPACING: f32 = 12.0;
+/// A focus ring's width.
+pub const FOCUS_RING_WIDTH: f32 = 2.0;
 
 /// `alpha(currentColor, a)`: the palette's text at opacity `a`.
 fn ink(palette: Palette, a: f32) -> Color {
@@ -64,11 +66,17 @@ pub fn button(palette: Palette, status: btn::Status) -> btn::Style {
         btn::Status::Active => (0.10, 1.0),
         btn::Status::Hovered => (0.15, 1.0),
         btn::Status::Pressed => (0.30, 1.0),
-        btn::Status::Disabled => (0.10, 0.5),
+        btn::Status::Disabled => (0.05, 0.0),
     };
     btn::Style {
         background: Some(Background::Color(ink(palette, fill))),
-        text_color: ink(palette, text),
+        // A disabled button says why in its label ("Installed"), so its
+        // label stays readable: the secondary text colour, not a faded one.
+        text_color: if text > 0.0 {
+            ink(palette, text)
+        } else {
+            palette.muted.to_iced()
+        },
         border: Border {
             radius: CONTROL_RADIUS.into(),
             ..Border::default()
@@ -117,8 +125,8 @@ pub fn switch(palette: Palette, status: toggler::Status) -> toggler::Style {
     let track = match (on, hovered) {
         (true, false) => accent,
         (true, true) => mix(accent, knob, 0.1),
-        (false, false) => ink(palette, 0.15),
-        (false, true) => ink(palette, 0.20),
+        (false, false) => palette.control().to_iced(),
+        (false, true) => mix(palette.control().to_iced(), palette.text.to_iced(), 0.15),
     };
     let fade = |colour: Color| {
         if disabled {
@@ -146,8 +154,9 @@ pub fn switch(palette: Palette, status: toggler::Status) -> toggler::Style {
     }
 }
 
-/// An entry: the neutral fill, no frame, and a 2 px accent ring while it has
-/// the focus.
+/// An entry: the neutral fill, a 1 px frame in the control colour so the
+/// field can be found without it (WCAG 1.4.11), and a 2 px accent ring while
+/// it has the focus.
 #[must_use]
 pub fn entry(palette: Palette, status: text_input::Status) -> text_input::Style {
     let (fill, focused) = match status {
@@ -159,12 +168,16 @@ pub fn entry(palette: Palette, status: text_input::Status) -> text_input::Style 
     text_input::Style {
         background: Background::Color(ink(palette, fill)),
         border: Border {
-            color: Color { a: 0.5, ..accent },
-            width: if focused { 2.0 } else { 0.0 },
+            color: if focused {
+                accent
+            } else {
+                palette.control().to_iced()
+            },
+            width: if focused { FOCUS_RING_WIDTH } else { 1.0 },
             radius: CONTROL_RADIUS.into(),
         },
         icon: palette.muted.to_iced(),
-        placeholder: ink(palette, 0.5),
+        placeholder: palette.muted.to_iced(),
         value: palette.text.to_iced(),
         selection: Color { a: 0.3, ..accent },
     }
@@ -180,7 +193,7 @@ pub fn dropdown(palette: Palette, status: pick_list::Status) -> pick_list::Style
     };
     pick_list::Style {
         text_color: palette.text.to_iced(),
-        placeholder_color: ink(palette, 0.5),
+        placeholder_color: palette.muted.to_iced(),
         handle_color: palette.text.to_iced(),
         background: Background::Color(ink(palette, fill)),
         border: Border {
@@ -190,20 +203,10 @@ pub fn dropdown(palette: Palette, status: pick_list::Status) -> pick_list::Style
     }
 }
 
-/// A boxed list's fill: Adwaita's `card_bg_color`.
-///
-/// White over the light window, and a lift of the text colour over the dark
-/// one. A palette's `field` is the first, but in a dark palette it is the
-/// sunken search field, darker than the card it sits on, which would read as
-/// a hole rather than a card.
+/// A boxed list's fill: Adwaita's `card_bg_color` ([`Palette::card`]).
 #[must_use]
 pub fn card(palette: Palette) -> Color {
-    let lighter = |c: Rgb| u16::from(c.r) + u16::from(c.g) + u16::from(c.b);
-    if lighter(palette.field) >= lighter(palette.surface) {
-        palette.field.to_iced()
-    } else {
-        mix(palette.surface.to_iced(), palette.text.to_iced(), 0.08)
-    }
+    palette.card().to_iced()
 }
 
 /// A boxed list (`.boxed-list`, an `AdwPreferencesGroup`'s rows): the card
@@ -274,16 +277,12 @@ mod tests {
     }
 
     #[test]
-    fn only_a_focused_entry_has_a_ring() {
-        assert!(entry(DARK, text_input::Status::Active).border.width.abs() < f32::EPSILON);
+    fn an_entry_is_framed_and_a_focused_one_has_an_accent_ring() {
+        let idle = entry(DARK, text_input::Status::Active);
+        assert!((idle.border.width - 1.0).abs() < f32::EPSILON);
+        assert_eq!(idle.border.color, DARK.control().to_iced());
         let focused = entry(DARK, text_input::Status::Focused { is_hovered: false });
-        assert!((focused.border.width - 2.0).abs() < f32::EPSILON);
-        assert_eq!(
-            Color {
-                a: 1.0,
-                ..focused.border.color
-            },
-            DARK.accent.to_iced()
-        );
+        assert!((focused.border.width - FOCUS_RING_WIDTH).abs() < f32::EPSILON);
+        assert_eq!(focused.border.color, DARK.accent.to_iced());
     }
 }

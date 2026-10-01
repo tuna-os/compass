@@ -144,36 +144,121 @@ pub struct Palette {
     pub backdrop_alpha: f32,
 }
 
+/// The contrast WCAG AA asks of text (1.4.3).
+pub const TEXT_CONTRAST: f64 = 4.5;
+/// The contrast WCAG AA asks of a control's boundary and of a focus ring
+/// (1.4.11).
+pub const UI_CONTRAST: f64 = 3.0;
+
+impl From<Rgb> for compass_core::contrast::Rgb {
+    fn from(rgb: Rgb) -> Self {
+        Self::new(rgb.r, rgb.g, rgb.b)
+    }
+}
+
+impl From<compass_core::contrast::Rgb> for Rgb {
+    fn from(rgb: compass_core::contrast::Rgb) -> Self {
+        Self::new(rgb.r, rgb.g, rgb.b)
+    }
+}
+
+/// `color`, moved as little as it takes to reach `ratio` against every one
+/// of `backgrounds`.
+fn readable(color: Rgb, backgrounds: &[Rgb], ratio: f64) -> Rgb {
+    let backgrounds: Vec<compass_core::contrast::Rgb> =
+        backgrounds.iter().map(|&rgb| rgb.into()).collect();
+    compass_core::contrast::ensure_contrast(color.into(), &backgrounds, ratio).into()
+}
+
+impl Palette {
+    /// A boxed list's fill: Adwaita's `card_bg_color`.
+    ///
+    /// White over the light window, and a lift of the text colour over the
+    /// dark one. A palette's `field` is the first, but in a dark palette it is
+    /// the sunken search field, darker than the card it sits on, which would
+    /// read as a hole rather than a card.
+    #[must_use]
+    pub fn card(&self) -> Rgb {
+        let lightness = |c: Rgb| u16::from(c.r) + u16::from(c.g) + u16::from(c.b);
+        if lightness(self.field) >= lightness(self.surface) {
+            self.field
+        } else {
+            compass_core::contrast::mix(self.surface.into(), self.text.into(), 0.08).into()
+        }
+    }
+
+    /// The backgrounds text and controls are drawn on: the card, the search
+    /// field and the boxed lists.
+    #[must_use]
+    pub fn backgrounds(&self) -> [Rgb; 3] {
+        [self.surface, self.field, self.card()]
+    }
+
+    /// What marks out a control that is not filled with the accent: an
+    /// entry's frame, a switch's track when off, the page dots.
+    ///
+    /// The hairline `border` is decoration and may be faint; this is the
+    /// same colour pushed to 3:1 against every background, which is what
+    /// WCAG asks of a control's boundary.
+    #[must_use]
+    pub fn control(&self) -> Rgb {
+        readable(self.border, &self.backgrounds(), UI_CONTRAST)
+    }
+
+    /// The palette with every pair the launcher draws brought up to WCAG AA,
+    /// moving each colour as little as it takes.
+    ///
+    /// Text, secondary text and the accent (used for notices and focus
+    /// rings) reach 4.5:1 against the card, the field and the boxed lists;
+    /// the selection's fill reaches 4.5:1 against the text drawn on it. A
+    /// palette that already reads comes back unchanged.
+    #[must_use]
+    pub fn accessible(self) -> Self {
+        let backgrounds = self.backgrounds();
+        Self {
+            text: readable(self.text, &backgrounds, TEXT_CONTRAST),
+            muted: readable(self.muted, &backgrounds, TEXT_CONTRAST),
+            accent: readable(self.accent, &backgrounds, TEXT_CONTRAST),
+            selection: readable(self.selection, &[self.selection_text], TEXT_CONTRAST),
+            ..self
+        }
+    }
+}
+
 /// Adwaita light.
 ///
 /// Transcribed from GNOME's named palette: `@window_bg_color` #fafafa,
-/// `@view_bg_color` #ffffff, `@accent_bg_color` #3584e4.
+/// `@view_bg_color` #ffffff. The selection and the accent are
+/// `@accent_color` #1c71d8 rather than `@accent_bg_color` #3584e4: white on
+/// #3584e4 is 3.77:1, short of the 4.5:1 a selected row's text needs.
 pub const LIGHT: Palette = Palette {
     surface: Rgb::new(0xfa, 0xfa, 0xfa),
     field: Rgb::new(0xff, 0xff, 0xff),
     text: Rgb::new(0x1e, 0x1e, 0x1e),
     muted: Rgb::new(0x5e, 0x5c, 0x64),
-    selection: Rgb::new(0x35, 0x84, 0xe4),
+    selection: Rgb::new(0x1c, 0x71, 0xd8),
     selection_text: Rgb::new(0xff, 0xff, 0xff),
     border: Rgb::new(0xd8, 0xd8, 0xd4),
-    accent: Rgb::new(0x35, 0x84, 0xe4),
+    accent: Rgb::new(0x1c, 0x71, 0xd8),
     backdrop: Rgb::new(0x00, 0x00, 0x00),
     backdrop_alpha: 0.25,
 };
 
 /// Adwaita dark.
 ///
-/// `@window_bg_color` #242424, `@view_bg_color` #1e1e1e, and the lighter
-/// `@accent_bg_color` #3584e4 keeps its hue across both because GNOME's does.
+/// `@window_bg_color` #242424, `@view_bg_color` #1e1e1e, the selection in the
+/// same #1c71d8 as light (white on it is 4.77:1), and the dark
+/// `@accent_color` #78aeed for rings and notices. The secondary text is
+/// lighter than Adwaita's #9a9996, which is 4.24:1 on a boxed list.
 pub const DARK: Palette = Palette {
     surface: Rgb::new(0x24, 0x24, 0x24),
     field: Rgb::new(0x1e, 0x1e, 0x1e),
     text: Rgb::new(0xff, 0xff, 0xff),
-    muted: Rgb::new(0x9a, 0x99, 0x96),
-    selection: Rgb::new(0x35, 0x84, 0xe4),
+    muted: Rgb::new(0xa3, 0xa2, 0x9f),
+    selection: Rgb::new(0x1c, 0x71, 0xd8),
     selection_text: Rgb::new(0xff, 0xff, 0xff),
     border: Rgb::new(0x3d, 0x3d, 0x3d),
-    accent: Rgb::new(0x62, 0xa0, 0xea),
+    accent: Rgb::new(0x78, 0xae, 0xed),
     backdrop: Rgb::new(0x00, 0x00, 0x00),
     backdrop_alpha: 0.35,
 };

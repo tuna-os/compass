@@ -1212,11 +1212,19 @@ fn card_background(surface: design::Rgb, tint: bool) -> iced::Color {
     }
 }
 
-fn query_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    // The enclosing field owns the fill and rounded border.
+/// The search field's and the panel filter's text: the enclosing field owns
+/// the fill and the rounded border, and the placeholder is the secondary
+/// text colour, which the palette holds at 4.5:1. Iced's own placeholder is
+/// a faded text colour, 3.03:1 on the light field.
+fn query_input_style(
+    theme: &Theme,
+    status: text_input::Status,
+    palette: design::Palette,
+) -> text_input::Style {
     text_input::Style {
         background: Color::TRANSPARENT.into(),
         border: Border::default(),
+        placeholder: palette.muted.to_iced(),
         ..text_input::default(theme, status)
     }
 }
@@ -3935,7 +3943,7 @@ impl LauncherApp {
         let input = text_input(placeholder, value)
             .id(SEARCH_INPUT)
             .font(self.font())
-            .style(query_input_style)
+            .style(move |theme: &Theme, status| query_input_style(theme, status, palette))
             .on_input_maybe(on_input)
             .padding(Padding::new(0.0).left(14).right(14))
             .size(f32::from(geometry.query_size));
@@ -5132,7 +5140,7 @@ impl LauncherApp {
                     .left(design::panel_metric("inset"))
                     .right(design::panel_metric("inset")),
             )
-            .style(query_input_style)
+            .style(move |theme: &Theme, status| query_input_style(theme, status, palette))
             .size(f32::from(geometry.title_size));
         let filter = container(filter)
             .height(design::panel_metric("filter-height"))
@@ -16746,12 +16754,12 @@ mod view_tests {
                 text_input::Status::Focused { is_hovered: true },
                 text_input::Status::Disabled,
             ] {
-                let style = query_input_style(&theme, status);
+                let style = query_input_style(&theme, status, design::LIGHT);
                 let default = text_input::default(&theme, status);
                 assert_eq!(style.background, Color::TRANSPARENT.into());
                 assert_eq!(style.border.width, 0.0);
                 assert_eq!(style.value, default.value);
-                assert_eq!(style.placeholder, default.placeholder);
+                assert_eq!(style.placeholder, design::LIGHT.muted.to_iced());
                 assert_eq!(style.selection, default.selection);
             }
         }

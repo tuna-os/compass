@@ -210,12 +210,22 @@ impl Theme {
         }
     }
 
-    /// Palette for this theme at the given appearance.
+    /// Palette for this theme at the given appearance, brought up to WCAG
+    /// AA ([`Palette::accessible`]).
     ///
-    /// System returns the Adwaita palette; the others return curated palettes
-    /// with readable contrast for selection, focus, muted and error states.
+    /// System returns the Adwaita palette; the others return curated
+    /// palettes, and a theme file its own. Each is drawn as its author wrote
+    /// it except where a pair falls short: a selection white text cannot be
+    /// read on, a secondary text too faint for its background. Doing it here
+    /// rather than in each palette means a theme file someone writes
+    /// tomorrow is held to the same line.
     #[must_use]
     pub fn palette(self, appearance: Appearance) -> Palette {
+        self.declared_palette(appearance).accessible()
+    }
+
+    /// The palette as the theme declares it.
+    fn declared_palette(self, appearance: Appearance) -> Palette {
         match self {
             Self::User(theme) => theme.palette,
             Self::System => crate::design::palette(appearance),
@@ -384,58 +394,92 @@ mod tests {
     use super::*;
     use crate::design::Appearance;
 
-    fn luminance(rgb: crate::design::Rgb) -> f32 {
-        let to_linear = |c: u8| {
-            let s = f32::from(c) / 255.0;
-            if s <= 0.04045 {
-                s / 12.92
-            } else {
-                ((s + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * to_linear(rgb.r) + 0.7152 * to_linear(rgb.g) + 0.0722 * to_linear(rgb.b)
+    fn contrast(a: Rgb, b: Rgb) -> f64 {
+        compass_core::contrast::contrast_ratio(a.into(), b.into())
     }
 
-    fn contrast(a: crate::design::Rgb, b: crate::design::Rgb) -> f32 {
-        let l1 = luminance(a);
-        let l2 = luminance(b);
-        let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
-        (lighter + 0.05) / (darker + 0.05)
+    /// Every bundled theme: the curated ones in both appearances, and each
+    /// file in `extra/themes`.
+    fn bundled() -> Vec<(String, Palette)> {
+        let mut palettes = Vec::new();
+        for theme in Theme::ALL {
+            for appearance in Appearance::ALL {
+                palettes.push((
+                    format!("{} {}", theme.name(), appearance.name()),
+                    theme.palette(appearance),
+                ));
+            }
+        }
+        let files = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extra/themes");
+        let loaded = load_user_themes(&[files]);
+        assert!(loaded.len() > 20, "the bundled theme files are read");
+        for theme in loaded {
+            palettes.push((theme.name().to_owned(), theme.palette(Appearance::Light)));
+        }
+        palettes
     }
 
     #[test]
-    fn all_curated_themes_have_readable_contrast() {
-        // #153: cover selection, focus, disabled/muted text, icons with readable contrast
-        // WCAG AA normal text 4.5:1, large/UI 3:1 — we check the stricter where it matters
-        for theme in Theme::ALL {
-            for appearance in [Appearance::Dark, Appearance::Light] {
-                let p = theme.palette(appearance);
-                // text on surface
-                let text_c = contrast(p.text, p.surface);
-                assert!(
-                    text_c >= 4.5,
-                    "{:?} {:?} text/surface {text_c:.2} < 4.5 — palette {p:?}",
-                    theme,
-                    appearance
+    fn every_bundled_theme_meets_wcag_aa() {
+        use crate::design::{TEXT_CONTRAST, UI_CONTRAST};
+        let mut failures = Vec::new();
+        for (name, p) in bundled() {
+            let mut check = |what: &str, ratio: f64, needed: f64| {
+                if ratio < needed {
+                    failures.push(format!("{name}: {what} {ratio:.2} < {needed}"));
+                }
+            };
+            for (place, background) in [("card", p.surface), ("field", p.field), ("list", p.card())]
+            {
+                check(
+                    &format!("text/{place}"),
+                    contrast(p.text, background),
+                    TEXT_CONTRAST,
                 );
-                // selection_text on selection — Adwaita blue is 3.77, so require 3:1 for UI
-                let sel_c = contrast(p.selection_text, p.selection);
-                assert!(
-                    sel_c >= 3.0,
-                    "{:?} {:?} selection_text/selection {sel_c:.2} < 3.0 — {p:?}",
-                    theme,
-                    appearance
+                check(
+                    &format!("muted/{place}"),
+                    contrast(p.muted, background),
+                    TEXT_CONTRAST,
                 );
-                // muted on surface — secondary text, require 2.4 (Solarized is 2.48)
-                let muted_c = contrast(p.muted, p.surface);
-                assert!(
-                    muted_c >= 2.4,
-                    "{:?} {:?} muted/surface {muted_c:.2} < 2.4 — {p:?}",
-                    theme,
-                    appearance
+                check(
+                    &format!("accent/{place}"),
+                    contrast(p.accent, background),
+                    UI_CONTRAST,
+                );
+                check(
+                    &format!("control/{place}"),
+                    contrast(p.control(), background),
+                    UI_CONTRAST,
                 );
             }
+            check(
+                "selection text",
+                contrast(p.selection_text, p.selection),
+                TEXT_CONTRAST,
+            );
         }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn adwaita_is_already_accessible_and_selects_in_its_accent_colour() {
+        use crate::design::{DARK, LIGHT};
+        assert_eq!(LIGHT.accessible(), LIGHT);
+        assert_eq!(DARK.accessible(), DARK);
+        assert_eq!(LIGHT.selection.hex(), "#1c71d8");
+    }
+
+    #[test]
+    fn a_theme_that_falls_short_is_raised_and_keeps_its_hue() {
+        // White on Gruvbox's red is 3.3:1 as declared.
+        let declared = Theme::Gruvbox.declared_palette(Appearance::Dark);
+        let drawn = Theme::Gruvbox.palette(Appearance::Dark);
+        assert!(contrast(declared.selection_text, declared.selection) < 4.5);
+        assert_ne!(drawn.selection, declared.selection);
+        assert!(
+            drawn.selection.r > drawn.selection.g,
+            "still red: {drawn:?}"
+        );
     }
 
     #[test]
