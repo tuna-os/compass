@@ -511,6 +511,16 @@ impl PanelState {
         self.sections.get(row.section)?.actions.get(row.action?)
     }
 
+    /// The row of the action whose shortcut is the key `pressed`.
+    #[must_use]
+    pub fn row_answering(&self, pressed: &action_panel::Pressed<'_>) -> Option<usize> {
+        self.rows.iter().position(|row| {
+            row.action
+                .and_then(|action| self.sections.get(row.section)?.actions.get(action))
+                .is_some_and(|action| action.answers_to(pressed))
+        })
+    }
+
     /// The row of the action called `title`, for a test to click.
     #[cfg(test)]
     fn row_titled(&self, title: &str) -> Option<usize> {
@@ -753,6 +763,34 @@ enum Page {
 /// A key press as an extension shortcut: its modifiers and the key's name
 /// as `jsx.d.ts` spells it. `None` for a press with no Control, Alt or Super,
 /// which is typing or navigation, never a shortcut.
+/// A key's name as panel shortcuts spell it: a character lower-cased, or
+/// the named key (`enter`, `up`, `delete`, ...). `None` for a key no
+/// shortcut names.
+fn pressed_key_name(key: &iced::keyboard::Key) -> Option<String> {
+    use iced::keyboard::{Key, key::Named};
+    Some(match key.as_ref() {
+        Key::Character(c) => c.to_lowercase(),
+        Key::Named(named) => match named {
+            Named::Enter => "enter",
+            Named::Delete => "delete",
+            Named::Backspace => "backspace",
+            Named::Tab => "tab",
+            Named::Space => "space",
+            Named::ArrowUp => "up",
+            Named::ArrowDown => "down",
+            Named::ArrowLeft => "left",
+            Named::ArrowRight => "right",
+            Named::Home => "home",
+            Named::End => "end",
+            Named::PageUp => "pageup",
+            Named::PageDown => "pagedown",
+            _ => return None,
+        }
+        .to_owned(),
+        Key::Unidentified => return None,
+    })
+}
+
 fn extension_chord(
     key: &iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
@@ -3433,6 +3471,12 @@ impl LauncherApp {
                         Message::ExtensionEventSent,
                     );
                 }
+                // A panel action's shortcut works whether or not the panel is
+                // open: the panel says what the chord does, and the chord
+                // should not need the panel to do it.
+                if !panel_key && let Some(task) = self.advertised_chord(key, modifiers) {
+                    return task;
+                }
                 if !panel_key
                     && let Page::Extension(page) = &self.page
                     && let Some(handler) = extension_chord(key, modifiers)
@@ -3568,7 +3612,7 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::StoreDetail(_)) {
                     return self.store_detail_key(key);
                 }
-                if let Page::Files(page) = &mut self.page {
+                if !panel_key && let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
@@ -3592,7 +3636,7 @@ impl LauncherApp {
                     }
                     return Task::none();
                 }
-                if let Page::Windows(page) = &mut self.page {
+                if !panel_key && let Page::Windows(page) = &mut self.page {
                     if modifiers.control() && key.as_ref() == Key::Character("q") {
                         return self.close_selected_window();
                     }
@@ -3683,6 +3727,9 @@ impl LauncherApp {
                 // launcher, because a panel opened by mistake should cost one
                 // key and not the whole window.
                 if self.panel.is_some() {
+                    if let Some(task) = self.advertised_chord(key, modifiers) {
+                        return task;
+                    }
                     match key.as_ref() {
                         Key::Named(Named::ArrowDown) => {
                             return self.update(Message::PanelMove(Direction::Down));
@@ -5541,6 +5588,88 @@ impl LauncherApp {
             async move { backend.extension_pop(session).await },
             Message::ExtensionEventSent,
         )
+    }
+
+    /// Runs the panel action whose advertised shortcut was pressed, if one
+    /// was: over the open panel, or over the panel Ctrl+B would open. A
+    /// chord that only moves (the keybinding scheme's) or that no action
+    /// claims changes nothing and is left to the rest of the key handler.
+    fn advertised_chord(
+        &mut self,
+        key: &iced::keyboard::Key,
+        modifiers: iced::keyboard::Modifiers,
+    ) -> Option<Task<Message>> {
+        if !(modifiers.control() || modifiers.alt() || modifiers.logo())
+            || chord_direction(self.keybinding, key.as_ref(), modifiers).is_some()
+            || matches!(
+                self.page,
+                Page::Extension(_) | Page::Settings(_) | Page::Preferences(_)
+            )
+        {
+            return None;
+        }
+        let name = pressed_key_name(key)?;
+        let pressed = action_panel::Pressed {
+            key: &name,
+            ctrl: modifiers.control(),
+            shift: modifiers.shift(),
+            alt: modifiers.alt(),
+            logo: modifiers.logo(),
+        };
+        let opened_here = self.panel.is_none();
+        if opened_here {
+            // Opened as Ctrl+B opens it, but not shown: what it would focus
+            // or fetch for showing is dropped.
+            let _ = self.update(Message::TogglePanel);
+            if self.panel.is_none() {
+                self.panel = self.files_panel_now();
+            }
+        }
+        let Some(row) = self
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_answering(&pressed))
+        else {
+            if opened_here {
+                self.panel = None;
+            }
+            return None;
+        };
+        let panel = self.panel.as_mut()?;
+        panel.selected = isize::try_from(row).ok()?;
+        let sections = panel.sections.clone();
+        let task = self.update(Message::PanelActivate);
+        // An action that left the panel as it was (one that copies and
+        // stays, say) leaves no panel the person never opened; one that
+        // turned it into something else (the shortcut recorder) keeps it.
+        let untouched = self
+            .panel
+            .as_ref()
+            .is_some_and(|panel| panel.recorder.is_none() && panel.sections == sections);
+        if opened_here && untouched {
+            self.panel = None;
+            return Some(Task::batch([task, focus_search()]));
+        }
+        Some(task)
+    }
+
+    /// Search Files' panel for the selected file, without the engine's
+    /// answer about it: the panel itself waits for that answer before it
+    /// opens, but a shortcut only needs to know which action it names.
+    fn files_panel_now(&self) -> Option<PanelState> {
+        let Page::Files(page) = &self.page else {
+            return None;
+        };
+        let path = &page.selected_row()?.path;
+        let assumed = crate::backend::FileActions {
+            mime: self.file_mime.clone(),
+            has_opener: true,
+            can_set_wallpaper: true,
+            can_paste: true,
+        };
+        Some(PanelState::new(file_actions::file_panel_sections(
+            path, &assumed,
+        )))
     }
 
     /// Enter in an extension's view: the first action on offer.
@@ -12218,6 +12347,73 @@ mod tests {
         app.query.clear();
         app.search();
         assert!(app.results.is_empty(), "an empty query offers no fallback");
+    }
+
+    #[test]
+    fn ctrl_b_opens_the_file_panel_and_its_shortcuts_work_with_it_closed() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![file_row("/home/me/sunset.png", "Images")],
+            file_info: crate::backend::FileActions {
+                mime: Some("image/png".into()),
+                has_opener: true,
+                can_set_wallpaper: true,
+                can_paste: true,
+            },
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "search files", "commands:search-files");
+
+        let task = app.update(chord("b", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert!(
+            panel_titles(&app).contains(&"Copy file path".to_owned()),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(chord("b", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert!(app.panel.is_none(), "and Ctrl+B closes it again");
+
+        // Copy file is Ctrl+Shift+C; it needs no panel.
+        let task = app.update(chord("C", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.file_calls.lock().unwrap().as_slice(),
+            [("copy", "/home/me/sunset.png".to_owned())]
+        );
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn ctrl_shift_c_copies_a_root_rows_deeplink_without_opening_the_panel() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        open_builtin_row(&mut app, "clipboard history");
+        assert!(app.panel.is_none());
+        let task = app.update(chord("C", Modifiers::CTRL | Modifiers::SHIFT));
+        assert_eq!(
+            settle(&mut app, task),
+            ["compass://launch/commands/clipboard-history"]
+        );
+        assert!(app.panel.is_none(), "no panel the person never opened");
+        // A chord no action claims leaves the panel shut and the list alone.
+        let selected = app.selected;
+        let task = app.update(chord("y", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert!(app.panel.is_none());
+        assert_eq!(app.selected, selected);
+    }
+
+    /// Searches root for `query`, leaving its first row selected.
+    fn open_builtin_row(app: &mut LauncherApp, query: &str) {
+        app.query = query.into();
+        app.search();
+        assert!(app.selected_row().is_some(), "{}", app.state_line());
     }
 
     #[test]

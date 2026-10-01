@@ -44,6 +44,69 @@ impl Action {
         self.shortcut = Some(shortcut.into());
         self
     }
+
+    /// Whether the key pressed is this action's shortcut.
+    #[must_use]
+    pub fn answers_to(&self, pressed: &Pressed<'_>) -> bool {
+        self.shortcut
+            .as_deref()
+            .is_some_and(|shortcut| shortcut_matches(shortcut, pressed))
+    }
+}
+
+/// A key as it was pressed: its name (a character lower-cased, or a named
+/// key: `enter`, `up`, `delete`, ...) and the modifiers held with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Pressed<'a> {
+    /// The key.
+    pub key: &'a str,
+    /// Control.
+    pub ctrl: bool,
+    /// Shift.
+    pub shift: bool,
+    /// Alt.
+    pub alt: bool,
+    /// Super.
+    pub logo: bool,
+}
+
+/// Whether `shortcut`, as an action advertises it (`ctrl+shift+c`,
+/// `Ctrl+R`, `ctrl+enter`), is the key `pressed`. The modifiers must be
+/// exactly the ones named: Ctrl+Shift+C is not Ctrl+C.
+#[must_use]
+pub fn shortcut_matches(shortcut: &str, pressed: &Pressed<'_>) -> bool {
+    let mut wanted = Pressed::default();
+    let mut key = None;
+    for token in shortcut.split('+').map(str::trim) {
+        match token.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => wanted.ctrl = true,
+            "shift" => wanted.shift = true,
+            "alt" | "opt" | "option" => wanted.alt = true,
+            "super" | "meta" | "cmd" | "logo" => wanted.logo = true,
+            "" => return false,
+            other => key = Some(key_alias(other).to_owned()),
+        }
+    }
+    let Some(key) = key else {
+        return false;
+    };
+    (wanted.ctrl, wanted.shift, wanted.alt, wanted.logo)
+        == (pressed.ctrl, pressed.shift, pressed.alt, pressed.logo)
+        && key == key_alias(&pressed.key.to_lowercase())
+}
+
+/// One name for each key the shortcuts spell more than one way.
+fn key_alias(name: &str) -> &str {
+    match name {
+        "return" => "enter",
+        "arrowup" => "up",
+        "arrowdown" => "down",
+        "arrowleft" => "left",
+        "arrowright" => "right",
+        "del" => "delete",
+        "esc" => "escape",
+        other => other,
+    }
 }
 
 /// A named group of actions.
@@ -345,4 +408,43 @@ pub fn row_for_shortcut(rows: &[Row], sections: &[PanelSection], shortcut: &str)
 #[must_use]
 pub fn selection_after_filter(rows: &[Row]) -> isize {
     next_selectable(rows, -1, Step::Down, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pressed(key: &str, ctrl: bool, shift: bool) -> Pressed<'_> {
+        Pressed {
+            key,
+            ctrl,
+            shift,
+            ..Pressed::default()
+        }
+    }
+
+    #[test]
+    fn a_shortcut_matches_its_key_and_exactly_its_modifiers() {
+        assert!(shortcut_matches("ctrl+shift+c", &pressed("C", true, true)));
+        assert!(shortcut_matches("Ctrl+R", &pressed("r", true, false)));
+        assert!(shortcut_matches(
+            "ctrl+enter",
+            &pressed("enter", true, false)
+        ));
+        assert!(shortcut_matches(
+            "ctrl+return",
+            &pressed("enter", true, false)
+        ));
+        assert!(shortcut_matches(
+            "ctrl+shift+down",
+            &pressed("down", true, true)
+        ));
+        assert!(!shortcut_matches(
+            "ctrl+shift+c",
+            &pressed("c", true, false)
+        ));
+        assert!(!shortcut_matches("ctrl+c", &pressed("c", true, true)));
+        assert!(!shortcut_matches("enter", &pressed("enter", true, false)));
+        assert!(!shortcut_matches("ctrl+", &pressed("c", true, false)));
+    }
 }
