@@ -10,10 +10,20 @@ pub(crate) const PANEL_RESULTS: &str = "panel-results";
 pub(crate) const PANEL_SELECTION: &str = "panel-selection";
 pub(crate) const ROOT_RESULTS: &str = "root-results";
 pub(crate) const ROOT_SELECTION: &str = "root-selection";
+/// The settings page's scrollable body.
+pub(crate) const SETTINGS_BODY: &str = "settings-body";
+/// The control on a settings or onboarding page that has the keyboard.
+pub(crate) const SETTINGS_FOCUS: &str = "settings-focus";
+/// The settings sidebar's scrollable list.
+pub(crate) const SETTINGS_SIDEBAR: &str = "settings-sidebar";
+/// The selected row of the settings sidebar.
+pub(crate) const SETTINGS_SIDEBAR_SELECTION: &str = "settings-sidebar-selection";
 
 struct RevealSelection {
     scroll_id: &'static str,
     selection_id: &'static str,
+    /// Room kept between the target and the viewport's edge.
+    margin: f32,
     viewport: Option<(Rectangle, f32)>,
     selected: Option<Rectangle>,
 }
@@ -46,9 +56,9 @@ impl Operation for RevealSelection {
         let (Some((viewport, offset)), Some(selected)) = (self.viewport, self.selected) else {
             return Outcome::None;
         };
-        let top = selected.y - viewport.y;
-        let bottom = top + selected.height;
-        let next = if top < offset || selected.height > viewport.height {
+        let top = selected.y - viewport.y - self.margin;
+        let bottom = selected.y - viewport.y + selected.height + self.margin;
+        let next = if top < offset || bottom - top > viewport.height {
             top
         } else if bottom > offset + viewport.height {
             bottom - viewport.height
@@ -73,10 +83,25 @@ pub(crate) fn reveal_root_selection<T>() -> iced::Task<T> {
     reveal_selection(ROOT_RESULTS, ROOT_SELECTION)
 }
 
+/// Scrolls the settings page so the control with the keyboard is in view.
+pub(crate) fn reveal_settings_focus<T>() -> iced::Task<T> {
+    reveal(SETTINGS_BODY, SETTINGS_FOCUS, 12.0)
+}
+
+/// Scrolls the settings sidebar so its selected row is in view.
+pub(crate) fn reveal_settings_page<T>() -> iced::Task<T> {
+    reveal(SETTINGS_SIDEBAR, SETTINGS_SIDEBAR_SELECTION, 8.0)
+}
+
 fn reveal_selection<T>(scroll_id: &'static str, selection_id: &'static str) -> iced::Task<T> {
+    reveal(scroll_id, selection_id, 0.0)
+}
+
+fn reveal<T>(scroll_id: &'static str, selection_id: &'static str, margin: f32) -> iced::Task<T> {
     iced_winit::runtime::task::effect(iced_winit::runtime::Action::widget(RevealSelection {
         scroll_id,
         selection_id,
+        margin,
         viewport: None,
         selected: None,
     }))

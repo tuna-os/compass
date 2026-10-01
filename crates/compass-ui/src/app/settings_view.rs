@@ -14,8 +14,8 @@ use super::{
 use crate::adwaita;
 use crate::settings::SidebarKind;
 use crate::settings_page::{
-    DOCS_URL, HINT, ItemEntry, ProviderEntry, RecordTarget, SettingsMessage, SettingsPage, Shown,
-    alias_key, providers_of,
+    Control, DOCS_URL, HINT, ItemEntry, ProviderEntry, RecordTarget, SettingsMessage, SettingsPage,
+    Shown, alias_key, providers_of,
 };
 use crate::shortcut_recorder::{Outcome as RecorderOutcome, ShortcutRecorder};
 use compass_core::root_items::RootEdit;
@@ -26,6 +26,14 @@ const BODY_HEIGHT: f32 = 430.0;
 
 /// The sidebar's width.
 const SIDEBAR_WIDTH: f32 = 190.0;
+
+/// An id no field has: focusing it takes Iced's focus off every field, for
+/// when the keyboard is on a switch or a button.
+const NO_FIELD: &str = "settings-no-field";
+
+/// How far Page Up and Page Down scroll: the body less a row, so the row at
+/// the edge stays in view.
+const PAGE_SCROLL: f32 = BODY_HEIGHT - 50.0;
 
 fn settings(message: SettingsMessage) -> Message {
     Message::Settings(message)
@@ -84,21 +92,94 @@ impl LauncherApp {
         Some(focus_search())
     }
 
-    /// The view's keys: the arrows move through the sidebar, Tab through the
-    /// fields, Escape leaves.
+    /// The update's release notes, which About offers as a link.
+    fn release_url(&self) -> Option<String> {
+        self.update.as_ref().map(|offer| offer.release_url.clone())
+    }
+
+    /// The view's keys.
+    ///
+    /// From the search field the arrows move through the sidebar. Tab and
+    /// Shift+Tab walk the page's controls in the order they are drawn, the
+    /// arrows too once one has the keyboard; Space or Enter flips a switch,
+    /// presses a button or opens a dropdown, whose options the arrows then
+    /// move through. Page Up, Page Down, Home and End scroll the page (Home
+    /// and End stay the field's while text is being edited). Escape closes a
+    /// dropdown, then gives the keyboard back to the search field, then
+    /// leaves.
     pub(super) fn settings_page_key(&mut self, key: &Key, modifiers: Modifiers) -> Task<Message> {
+        use iced::widget::operation::{AbsoluteOffset, RelativeOffset, scroll_by, snap_to};
+        let release = self.release_url();
         let Page::Settings(page) = &mut self.page else {
             return Task::none();
         };
-        let direction = match key.as_ref() {
+        let editing = match &page.focused {
+            None => !page.query.is_empty(),
+            Some(control) => control.field_id().is_some(),
+        };
+        match key.as_ref() {
             Key::Named(Named::Escape) => {
+                if page.menu.take().is_some() {
+                    return Task::none();
+                }
+                if page.focused.take().is_some() {
+                    return focus_search();
+                }
                 self.page = Page::Root;
                 return focus_search();
             }
-            Key::Named(Named::Tab) if modifiers.shift() => {
-                return iced::widget::operation::focus_previous();
+            Key::Named(Named::Tab) => {
+                page.move_focus(!modifiers.shift(), release.as_deref());
+                return self.settings_focus_task();
             }
-            Key::Named(Named::Tab) => return iced::widget::operation::focus_next(),
+            Key::Named(Named::PageDown | Named::PageUp) => {
+                let down = key.as_ref() == Key::Named(Named::PageDown);
+                let y = if down { PAGE_SCROLL } else { -PAGE_SCROLL };
+                return scroll_by(crate::scroll::SETTINGS_BODY, AbsoluteOffset { x: 0.0, y });
+            }
+            Key::Named(Named::Home) if !editing => {
+                return snap_to(crate::scroll::SETTINGS_BODY, RelativeOffset::START);
+            }
+            Key::Named(Named::End) if !editing => {
+                return snap_to(crate::scroll::SETTINGS_BODY, RelativeOffset::END);
+            }
+            _ => {}
+        }
+        let activate = matches!(key.as_ref(), Key::Named(Named::Enter | Named::Space));
+        if page.menu.is_some() {
+            match key.as_ref() {
+                Key::Named(Named::ArrowDown) => page.move_menu(1),
+                Key::Named(Named::ArrowUp) => page.move_menu(-1),
+                _ if activate => {
+                    let choice = page.menu_choice();
+                    page.menu = None;
+                    return match choice {
+                        Some((key, value)) => {
+                            self.change_setting(key, serde_json::Value::String(value))
+                        }
+                        None => Task::none(),
+                    };
+                }
+                _ => return Task::none(),
+            }
+            return crate::scroll::reveal_settings_focus();
+        }
+        if let Some(control) = page.focused.clone() {
+            let direction = match key.as_ref() {
+                Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                _ => None,
+            };
+            if let Some(direction) = direction {
+                page.move_focus(direction == Direction::Down, release.as_deref());
+                return self.settings_focus_task();
+            }
+            if activate && control.field_id().is_none() {
+                return self.activate_settings_control(control);
+            }
+            return Task::none();
+        }
+        let direction = match key.as_ref() {
             Key::Named(Named::ArrowDown) => Some(Direction::Down),
             Key::Named(Named::ArrowUp) => Some(Direction::Up),
             _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
@@ -108,6 +189,78 @@ impl LauncherApp {
             page.notice = None;
         }
         Task::none()
+    }
+
+    /// Puts Iced's focus where the page's is: in the control's field, or in
+    /// no field for a switch or a button, or in the search field; and
+    /// scrolls the control into view.
+    fn settings_focus_task(&self) -> Task<Message> {
+        let Page::Settings(page) = &self.page else {
+            return Task::none();
+        };
+        let Some(control) = &page.focused else {
+            return focus_search();
+        };
+        let keyboard = match control.field_id() {
+            Some(id) => iced::widget::operation::focus(id),
+            None => iced::widget::operation::focus(NO_FIELD),
+        };
+        Task::batch([keyboard, crate::scroll::reveal_settings_focus()])
+    }
+
+    /// Space or Enter on a control that is not a field.
+    fn activate_settings_control(&mut self, control: Control) -> Task<Message> {
+        let Page::Settings(page) = &mut self.page else {
+            return Task::none();
+        };
+        let item_enabled = |page: &SettingsPage, id: &str| {
+            page.providers
+                .iter()
+                .flat_map(|provider| &provider.items)
+                .find(|item| item.id == id)
+                .is_some_and(|item| item.enabled)
+        };
+        match control {
+            Control::Setting(key) => {
+                let Some(setting) = settings_catalog::find(&key) else {
+                    return Task::none();
+                };
+                match setting.kind {
+                    Kind::Toggle => {
+                        let on = page.value(&setting).as_bool().unwrap_or(false);
+                        self.change_setting(key, serde_json::Value::Bool(!on))
+                    }
+                    Kind::Choice(_) | Kind::Theme => {
+                        page.open_menu();
+                        crate::scroll::reveal_settings_focus()
+                    }
+                    Kind::Shortcut => {
+                        self.settings_message(SettingsMessage::Record(RecordTarget::Setting(key)))
+                    }
+                    _ => Task::none(),
+                }
+            }
+            Control::ProviderSwitch(id) => {
+                let enabled = page
+                    .providers
+                    .iter()
+                    .find(|provider| provider.id == id)
+                    .is_some_and(|provider| provider.enabled);
+                self.settings_message(SettingsMessage::ProviderToggled(id, !enabled))
+            }
+            Control::ItemSwitch(id) => {
+                let enabled = item_enabled(page, &id);
+                self.settings_message(SettingsMessage::ItemToggled(id, !enabled))
+            }
+            Control::ItemShortcut(id) => {
+                self.settings_message(SettingsMessage::Record(RecordTarget::Item(id)))
+            }
+            Control::ItemPreferences(id) => {
+                self.settings_message(SettingsMessage::OpenPreferences(id))
+            }
+            Control::Link(url) => self.settings_message(SettingsMessage::OpenUrl(url)),
+            Control::ItemAlias(_) => Task::none(),
+        }
     }
 
     /// A key while a shortcut is recorded: the recorder takes it.
@@ -148,18 +301,20 @@ impl LauncherApp {
             RecorderOutcome::Probe(trigger) => self.probe_shortcut(trigger),
             RecorderOutcome::Back => {
                 page.recorder = None;
-                focus_search()
+                self.settings_focus_task()
             }
             RecorderOutcome::Save(shortcut) => {
                 page.recorder = None;
-                match target {
+                let focus = self.settings_focus_task();
+                let saved = match target {
                     RecordTarget::Setting(key) => {
                         self.change_setting(key, serde_json::Value::String(shortcut))
                     }
                     RecordTarget::Item(id) => {
                         self.edit_settings_item(id, RootEdit::Shortcut(shortcut))
                     }
-                }
+                };
+                Task::batch([saved, focus])
             }
         }
     }
@@ -183,6 +338,13 @@ impl LauncherApp {
             SettingsMessage::Changed(key, value) => self.change_setting(key, value),
             SettingsMessage::DraftEdited(key, draft) => {
                 if let Page::Settings(page) = &mut self.page {
+                    // A field clicked into has the keyboard: Tab goes on
+                    // from it.
+                    page.focused = Some(match key.strip_prefix("alias:") {
+                        Some(id) => Control::ItemAlias(id.to_owned()),
+                        None => Control::Setting(key.clone()),
+                    });
+                    page.menu = None;
                     page.drafts.insert(key, draft);
                 }
                 Task::none()
@@ -327,6 +489,7 @@ impl LauncherApp {
         let Some(setting) = settings_catalog::find(&key) else {
             return Task::none();
         };
+        page.menu = None;
         if let Err(reason) = page.apply(&key, value.clone()) {
             page.notice = Some(reason);
             return Task::none();
@@ -482,9 +645,12 @@ impl LauncherApp {
         column![
             row![
                 self.settings_sidebar(page),
-                container(scrollable(container(content).padding(Padding::new(12.0))))
-                    .width(Length::Fill)
-                    .height(Length::Fill),
+                container(
+                    scrollable(container(content).padding(Padding::new(12.0)))
+                        .id(crate::scroll::SETTINGS_BODY)
+                )
+                .width(Length::Fill)
+                .height(Length::Fill),
             ]
             .height(Length::Fixed(BODY_HEIGHT)),
             container(footer).padding(Padding::new(6.0).left(14)),
@@ -522,14 +688,21 @@ impl LauncherApp {
             .width(Length::Fill)
             .padding(Padding::new(8.0).left(12))
             .style(move |_: &iced::Theme| adwaita::sidebar_row(palette, selected));
-            list = list.push(
-                mouse_area(label).on_press(settings(SettingsMessage::SidebarSelected(position))),
-            );
+            let row =
+                mouse_area(label).on_press(settings(SettingsMessage::SidebarSelected(position)));
+            list = list.push(if selected {
+                Element::from(container(row).id(crate::scroll::SETTINGS_SIDEBAR_SELECTION))
+            } else {
+                row.into()
+            });
         }
-        container(scrollable(container(list).padding(Padding::new(8.0))))
-            .width(Length::Fixed(SIDEBAR_WIDTH))
-            .height(Length::Fill)
-            .into()
+        container(
+            scrollable(container(list).padding(Padding::new(8.0)))
+                .id(crate::scroll::SETTINGS_SIDEBAR),
+        )
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Length::Fill)
+        .into()
     }
 
     fn settings_heading(&self, label: String) -> Element<'_, Message> {
@@ -620,6 +793,89 @@ impl LauncherApp {
         .into()
     }
 
+    /// `control` with its focus ring, drawn while the page's keyboard is on
+    /// `target`. A field draws its own ring, so it only takes the room; the
+    /// control with the keyboard is also what the page scrolls to, unless an
+    /// open dropdown's highlighted option is.
+    fn settings_ring<'a>(
+        &self,
+        page: &SettingsPage,
+        target: &Control,
+        control: impl Into<Element<'a, Message>>,
+        radius: f32,
+    ) -> Element<'a, Message> {
+        let focused = page.has_focus(target);
+        let ring = adwaita::ringed(
+            control,
+            self.palette(),
+            focused && target.field_id().is_none(),
+            radius,
+        );
+        if focused && page.menu.is_none() {
+            ring.id(crate::scroll::SETTINGS_FOCUS).into()
+        } else {
+            ring.into()
+        }
+    }
+
+    /// An open dropdown's options, under its row: the highlighted one in
+    /// the selection's colours and the current one ticked.
+    fn settings_menu<'a>(
+        &self,
+        key: &str,
+        options: Vec<(String, String)>,
+        current: &str,
+        highlighted: usize,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let mut list = column![].spacing(2);
+        for (index, (value, label)) in options.into_iter().enumerate() {
+            let selected = index == highlighted;
+            let ticked = value.eq_ignore_ascii_case(current);
+            let colour = if selected {
+                palette.selection_text
+            } else {
+                palette.text
+            }
+            .to_iced();
+            let line = row![
+                text(label)
+                    .font(self.font())
+                    .size(13)
+                    .color(colour)
+                    .width(Length::Fill),
+                text(if ticked { "✓" } else { "" })
+                    .font(self.font())
+                    .size(13)
+                    .color(colour),
+            ]
+            .align_y(iced::Alignment::Center);
+            let option = container(line)
+                .width(Length::Fill)
+                .padding(Padding::new(6.0).left(12).right(12))
+                .style(move |_: &iced::Theme| iced::widget::container::Style {
+                    background: selected.then(|| palette.selection.to_iced().into()),
+                    border: iced::Border {
+                        radius: adwaita::CONTROL_RADIUS.into(),
+                        ..iced::Border::default()
+                    },
+                    ..iced::widget::container::Style::default()
+                });
+            let option = mouse_area(option).on_press(settings(SettingsMessage::Changed(
+                key.to_owned(),
+                serde_json::Value::String(value),
+            )));
+            list = list.push(if selected {
+                Element::from(container(option).id(crate::scroll::SETTINGS_FOCUS))
+            } else {
+                option.into()
+            });
+        }
+        container(list)
+            .padding(Padding::new(4.0).left(12).right(12).bottom(8))
+            .into()
+    }
+
     /// A flat, Adwaita-style button.
     fn settings_button<'a>(&self, label: String, size: f32) -> iced::widget::Button<'a, Message> {
         let palette = self.palette();
@@ -633,6 +889,22 @@ impl LauncherApp {
         &'a self,
         page: &'a SettingsPage,
         setting: &Setting,
+    ) -> Element<'a, Message> {
+        let target = Control::Setting(setting.key.clone());
+        let radius = if setting.kind == Kind::Toggle {
+            adwaita::SWITCH_SIZE / 2.0
+        } else {
+            adwaita::CONTROL_RADIUS
+        };
+        let control = self.settings_bare_control(page, setting, &target);
+        self.settings_ring(page, &target, control, radius)
+    }
+
+    fn settings_bare_control<'a>(
+        &'a self,
+        page: &'a SettingsPage,
+        setting: &Setting,
+        target: &Control,
     ) -> Element<'a, Message> {
         let palette = self.palette();
         let key = setting.key.clone();
@@ -729,6 +1001,7 @@ impl LauncherApp {
                     setting.placeholder
                 };
                 text_input(placeholder, &page.text_of(setting))
+                    .id(target.field_id().unwrap_or_default())
                     .font(self.font())
                     .size(13)
                     .padding(adwaita::ENTRY_PADDING)
@@ -752,14 +1025,31 @@ impl LauncherApp {
         settings_shown
             .iter()
             .map(|setting| {
-                (
-                    setting.section,
-                    self.settings_row(
-                        setting.label.to_owned(),
-                        setting.description.to_owned(),
-                        self.settings_control(page, setting),
-                    ),
-                )
+                let row = self.settings_row(
+                    setting.label.to_owned(),
+                    setting.description.to_owned(),
+                    self.settings_control(page, setting),
+                );
+                let open = page
+                    .menu
+                    .filter(|_| page.has_focus(&Control::Setting(setting.key.clone())));
+                let row = match open {
+                    Some(highlighted) => {
+                        let current = page.value(setting);
+                        column![
+                            row,
+                            self.settings_menu(
+                                &setting.key,
+                                page.options(setting),
+                                current.as_str().unwrap_or_default(),
+                                highlighted,
+                            )
+                        ]
+                        .into()
+                    }
+                    None => row,
+                };
+                (setting.section, row)
             })
             .collect()
     }
@@ -814,13 +1104,18 @@ impl LauncherApp {
                             text(super::release_check::title(offer))
                                 .font(self.font())
                                 .size(13),
-                            self.settings_button("View Release Notes".to_owned(), 13.0)
-                                .style(move |_: &iced::Theme, status| {
-                                    adwaita::suggested_button(palette, status)
-                                })
-                                .on_press(settings(SettingsMessage::OpenUrl(
-                                    offer.release_url.clone()
-                                ))),
+                            self.settings_ring(
+                                page,
+                                &Control::Link(offer.release_url.clone()),
+                                self.settings_button("View Release Notes".to_owned(), 13.0)
+                                    .style(move |_: &iced::Theme, status| {
+                                        adwaita::suggested_button(palette, status)
+                                    })
+                                    .on_press(settings(SettingsMessage::OpenUrl(
+                                        offer.release_url.clone()
+                                    ))),
+                                adwaita::CONTROL_RADIUS,
+                            ),
                         ]
                         .spacing(adwaita::SPACING)
                         .align_y(iced::Alignment::Center),
@@ -828,12 +1123,22 @@ impl LauncherApp {
                 }
                 body = body.push(
                     row![
-                        self.settings_button("Documentation".to_owned(), 13.0)
-                            .on_press(settings(SettingsMessage::OpenUrl(DOCS_URL.to_owned()))),
-                        self.settings_button("Report a Bug".to_owned(), 13.0)
-                            .on_press(settings(SettingsMessage::OpenUrl(
-                                compass_core::bug_report::CREATE_ISSUE_URL.to_owned()
-                            ))),
+                        self.settings_ring(
+                            page,
+                            &Control::Link(DOCS_URL.to_owned()),
+                            self.settings_button("Documentation".to_owned(), 13.0)
+                                .on_press(settings(SettingsMessage::OpenUrl(DOCS_URL.to_owned()))),
+                            adwaita::CONTROL_RADIUS,
+                        ),
+                        self.settings_ring(
+                            page,
+                            &Control::Link(compass_core::bug_report::CREATE_ISSUE_URL.to_owned()),
+                            self.settings_button("Report a Bug".to_owned(), 13.0)
+                                .on_press(settings(SettingsMessage::OpenUrl(
+                                    compass_core::bug_report::CREATE_ISSUE_URL.to_owned()
+                                ))),
+                            adwaita::CONTROL_RADIUS,
+                        ),
                     ]
                     .spacing(adwaita::SPACING),
                 );
@@ -883,11 +1188,17 @@ impl LauncherApp {
         let header = self.settings_row(
             provider.title.clone(),
             format!("{} · {} items", provider.provenance, provider.items.len()),
-            toggler(provider.enabled)
-                .size(adwaita::SWITCH_SIZE)
-                .style(move |_: &iced::Theme, status| adwaita::switch(palette, status))
-                .on_toggle(move |on| settings(SettingsMessage::ProviderToggled(id.clone(), on)))
-                .into(),
+            self.settings_ring(
+                page,
+                &Control::ProviderSwitch(provider.id.clone()),
+                toggler(provider.enabled)
+                    .size(adwaita::SWITCH_SIZE)
+                    .style(move |_: &iced::Theme, status| adwaita::switch(palette, status))
+                    .on_toggle(move |on| {
+                        settings(SettingsMessage::ProviderToggled(id.clone(), on))
+                    }),
+                adwaita::SWITCH_SIZE / 2.0,
+            ),
         );
         let mut body = column![self.settings_boxed(vec![header])].spacing(adwaita::SPACING * 1.5);
         let own = SettingsPage::provider_settings(&provider.id);
@@ -930,33 +1241,59 @@ impl LauncherApp {
                 || "Record Shortcut".to_owned(),
                 |combo| combo.display_tokens().join(" "),
             );
+        let alias_target = Control::ItemAlias(id.clone());
         let mut controls = row![
-            text_input("Alias", &alias_text)
-                .font(self.font())
-                .size(12)
-                .padding(adwaita::ENTRY_PADDING)
-                .width(Length::Fixed(90.0))
-                .style(move |_: &iced::Theme, status| adwaita::entry(palette, status))
-                .on_input(move |draft| settings(SettingsMessage::DraftEdited(alias.clone(), draft)))
-                .on_submit(settings(SettingsMessage::DraftSubmitted(submit))),
-            self.settings_button(shortcut, 12.0)
-                .on_press(settings(SettingsMessage::Record(RecordTarget::Item(
-                    id.clone()
-                )))),
+            self.settings_ring(
+                page,
+                &alias_target,
+                text_input("Alias", &alias_text)
+                    .id(alias_target.field_id().unwrap_or_default())
+                    .font(self.font())
+                    .size(12)
+                    .padding(adwaita::ENTRY_PADDING)
+                    .width(Length::Fixed(90.0))
+                    .style(move |_: &iced::Theme, status| adwaita::entry(palette, status))
+                    .on_input(move |draft| {
+                        settings(SettingsMessage::DraftEdited(alias.clone(), draft))
+                    })
+                    .on_submit(settings(SettingsMessage::DraftSubmitted(submit))),
+                adwaita::CONTROL_RADIUS,
+            ),
+            self.settings_ring(
+                page,
+                &Control::ItemShortcut(id.clone()),
+                self.settings_button(shortcut, 12.0)
+                    .on_press(settings(SettingsMessage::Record(RecordTarget::Item(
+                        id.clone()
+                    )))),
+                adwaita::CONTROL_RADIUS,
+            ),
         ]
         .spacing(adwaita::SPACING / 2.0)
         .align_y(iced::Alignment::Center);
         if item.has_preferences {
             controls = controls.push(
-                self.settings_button("Preferences".to_owned(), 12.0)
-                    .on_press(settings(SettingsMessage::OpenPreferences(id.clone()))),
+                self.settings_ring(
+                    page,
+                    &Control::ItemPreferences(id.clone()),
+                    self.settings_button("Preferences".to_owned(), 12.0)
+                        .on_press(settings(SettingsMessage::OpenPreferences(id.clone()))),
+                    adwaita::CONTROL_RADIUS,
+                ),
             );
         }
         controls = controls.push(
-            toggler(item.enabled)
-                .size(adwaita::SWITCH_SIZE)
-                .style(move |_: &iced::Theme, status| adwaita::switch(palette, status))
-                .on_toggle(move |on| settings(SettingsMessage::ItemToggled(toggle_id.clone(), on))),
+            self.settings_ring(
+                page,
+                &Control::ItemSwitch(id.clone()),
+                toggler(item.enabled)
+                    .size(adwaita::SWITCH_SIZE)
+                    .style(move |_: &iced::Theme, status| adwaita::switch(palette, status))
+                    .on_toggle(move |on| {
+                        settings(SettingsMessage::ItemToggled(toggle_id.clone(), on))
+                    }),
+                adwaita::SWITCH_SIZE / 2.0,
+            ),
         );
         let mut rows = vec![self.settings_row(item.title.clone(), String::new(), controls.into())];
         let own = SettingsPage::item_settings(&item.id);

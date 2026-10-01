@@ -22,7 +22,7 @@ use crate::settings::{ProviderInfo, SidebarKind, SidebarModel};
 pub const PLACEHOLDER: &str = "Search settings...";
 
 /// The line under the pages saying what the keys do.
-pub const HINT: &str = "↑↓: pages    Tab: fields    Esc: back";
+pub const HINT: &str = "↑↓: pages    Tab: controls    Space: change    Esc: back";
 
 /// Why a change could not be kept: no engine to write it, and no file to
 /// write it to.
@@ -38,6 +38,47 @@ pub enum RecordTarget {
     Setting(String),
     /// A root item's shortcut, by its `provider:entrypoint` id.
     Item(String),
+}
+
+/// A control on a settings page that the keyboard can reach, in the order
+/// [`SettingsPage::controls`] lists them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Control {
+    /// A setting's switch, dropdown, shortcut button or field, by its key.
+    Setting(String),
+    /// A provider's switch, by its id.
+    ProviderSwitch(String),
+    /// A root item's alias field, by the item's id.
+    ItemAlias(String),
+    /// A root item's shortcut button.
+    ItemShortcut(String),
+    /// A root item's Preferences button.
+    ItemPreferences(String),
+    /// A root item's switch.
+    ItemSwitch(String),
+    /// A link button (About), by its URL.
+    Link(String),
+}
+
+impl Control {
+    /// The id of its text field, when it is one: typing goes there, so it
+    /// takes Iced's own focus as well as the page's.
+    #[must_use]
+    pub fn field_id(&self) -> Option<String> {
+        use settings_catalog::Kind;
+        match self {
+            Self::Setting(key) => settings_catalog::find(key)
+                .filter(|setting| {
+                    matches!(
+                        setting.kind,
+                        Kind::Number { .. } | Kind::Text | Kind::Paths | Kind::Names | Kind::Font
+                    )
+                })
+                .map(|_| format!("settings-field:{key}")),
+            Self::ItemAlias(id) => Some(format!("settings-field:{}", alias_key(id))),
+            _ => None,
+        }
+    }
 }
 
 /// The settings view's messages.
@@ -148,6 +189,10 @@ pub struct SettingsPage {
     pub recorder: Option<(RecordTarget, crate::shortcut_recorder::ShortcutRecorder)>,
     /// Why the last write failed, or what it needs.
     pub notice: Option<String>,
+    /// The control with the keyboard; `None` while the search field has it.
+    pub focused: Option<Control>,
+    /// The option highlighted in the focused dropdown, while it is open.
+    pub menu: Option<usize>,
 }
 
 impl SettingsPage {
@@ -172,6 +217,8 @@ impl SettingsPage {
             themes,
             recorder: None,
             notice: None,
+            focused: None,
+            menu: None,
         };
         if let Some(tab) = tab {
             page.open_tab(tab);
@@ -192,8 +239,17 @@ impl SettingsPage {
         if row < 0 {
             return false;
         }
-        self.selected = row;
+        self.select_row(row);
         true
+    }
+
+    /// Shows the sidebar's `row`, with the keyboard back in the search field.
+    fn select_row(&mut self, row: isize) {
+        if row != self.selected {
+            self.focused = None;
+            self.menu = None;
+        }
+        self.selected = row;
     }
 
     /// Filters the sidebar, keeping the selected page when it still shows.
@@ -203,18 +259,19 @@ impl SettingsPage {
         self.sidebar.set_query(query.clone(), &infos);
         self.query = query;
         let row = self.sidebar.index_of_key(&key);
-        self.selected = if row >= 0 && !key.is_empty() {
+        self.select_row(if row >= 0 && !key.is_empty() {
             row
         } else {
             self.sidebar.first_selectable_row()
-        };
+        });
     }
 
     /// Moves the sidebar selection one selectable row.
     pub fn step(&mut self, down: bool) {
-        self.selected = self
-            .sidebar
-            .step_row(self.selected, if down { 1 } else { -1 });
+        self.select_row(
+            self.sidebar
+                .step_row(self.selected, if down { 1 } else { -1 }),
+        );
     }
 
     /// Selects a clicked row, when it can be.
@@ -225,8 +282,119 @@ impl SettingsPage {
             .get(row)
             .is_some_and(crate::settings::SidebarRow::selectable)
         {
-            self.selected = row as isize;
+            self.select_row(row as isize);
         }
+    }
+
+    /// The controls the page on show has, in the order they are drawn;
+    /// `release_url` is the update's, when About offers one.
+    #[must_use]
+    pub fn controls(&self, release_url: Option<&str>) -> Vec<Control> {
+        if self.recorder.is_some() {
+            return Vec::new();
+        }
+        let settings = |list: Vec<Setting>| list.into_iter().map(|s| Control::Setting(s.key));
+        match self.shown() {
+            Shown::Nothing => Vec::new(),
+            Shown::Core(CorePage::About) => release_url
+                .map(str::to_owned)
+                .into_iter()
+                .chain([
+                    DOCS_URL.to_owned(),
+                    compass_core::bug_report::CREATE_ISSUE_URL.to_owned(),
+                ])
+                .map(Control::Link)
+                .collect(),
+            Shown::Core(CorePage::Keybindings) => Vec::new(),
+            Shown::Core(core) => settings(Self::core_settings(core)).collect(),
+            Shown::Provider(provider) => {
+                let mut controls = vec![Control::ProviderSwitch(provider.id.clone())];
+                controls.extend(settings(Self::provider_settings(&provider.id)));
+                for item in &provider.items {
+                    controls.push(Control::ItemAlias(item.id.clone()));
+                    controls.push(Control::ItemShortcut(item.id.clone()));
+                    if item.has_preferences {
+                        controls.push(Control::ItemPreferences(item.id.clone()));
+                    }
+                    controls.push(Control::ItemSwitch(item.id.clone()));
+                    controls.extend(settings(Self::item_settings(&item.id)));
+                }
+                controls
+            }
+        }
+    }
+
+    /// Tab (`forward`) or Shift+Tab: the next control, or back to the
+    /// search field past either end. Closes an open dropdown.
+    pub fn move_focus(&mut self, forward: bool, release_url: Option<&str>) {
+        let controls = self.controls(release_url);
+        self.focused = crate::focus::step(&controls, self.focused.as_ref(), forward);
+        self.menu = None;
+    }
+
+    /// Whether `control` has the keyboard.
+    #[must_use]
+    pub fn has_focus(&self, control: &Control) -> bool {
+        self.focused.as_ref() == Some(control)
+    }
+
+    /// A dropdown setting's options, as `(value, label)`.
+    #[must_use]
+    pub fn options(&self, setting: &Setting) -> Vec<(String, String)> {
+        match &setting.kind {
+            settings_catalog::Kind::Choice(options) => options
+                .iter()
+                .map(|(value, label)| ((*value).to_owned(), (*label).to_owned()))
+                .collect(),
+            settings_catalog::Kind::Theme => self.themes.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The focused dropdown's setting and its options, when one is focused.
+    #[must_use]
+    pub fn focused_choice(&self) -> Option<(Setting, Vec<(String, String)>)> {
+        let Some(Control::Setting(key)) = &self.focused else {
+            return None;
+        };
+        let setting = settings_catalog::find(key)?;
+        let options = self.options(&setting);
+        (!options.is_empty()).then_some((setting, options))
+    }
+
+    /// Opens the focused dropdown with its current value highlighted.
+    /// Returns whether one opened.
+    pub fn open_menu(&mut self) -> bool {
+        let Some((setting, options)) = self.focused_choice() else {
+            return false;
+        };
+        let value = self.value(&setting);
+        let current = value.as_str().unwrap_or_default();
+        self.menu = Some(
+            options
+                .iter()
+                .position(|(option, _)| option.eq_ignore_ascii_case(current))
+                .unwrap_or(0),
+        );
+        true
+    }
+
+    /// Moves the open dropdown's highlight by `delta`.
+    pub fn move_menu(&mut self, delta: isize) {
+        let len = self
+            .focused_choice()
+            .map_or(0, |(_, options)| options.len());
+        if let Some(at) = self.menu {
+            self.menu = Some(crate::focus::move_highlight(len, at, delta));
+        }
+    }
+
+    /// The open dropdown's highlighted choice, as `(setting key, value)`.
+    #[must_use]
+    pub fn menu_choice(&self) -> Option<(String, String)> {
+        let (setting, options) = self.focused_choice()?;
+        let (value, _) = options.into_iter().nth(self.menu?)?;
+        Some((setting.key, value))
     }
 
     /// The selected row's key.

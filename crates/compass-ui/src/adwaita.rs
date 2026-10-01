@@ -30,11 +30,13 @@ pub const ENTRY_PADDING: [f32; 2] = [8.5, 9.0];
 pub const SWITCH_SIZE: f32 = 26.0;
 /// A boxed list's corner radius.
 pub const LIST_RADIUS: f32 = 12.0;
-/// The padding inside a boxed list's row.
-pub const ROW_PADDING: [f32; 2] = [8.0, 12.0];
-/// The tallest control in a row, which sets the row's least height: 34 px
-/// plus the row's padding is Adwaita's 50 px action row.
-pub const ROW_MIN_CONTENT: f32 = 34.0;
+/// The padding inside a boxed list's row: Adwaita's 8 px, less the room a
+/// control keeps for its focus ring.
+pub const ROW_PADDING: [f32; 2] = [8.0 - FOCUS_RING_ROOM, 12.0];
+/// The tallest control in a row with its focus ring's room, which sets the
+/// row's least height: a 34 px control, its ring and the row's padding make
+/// Adwaita's 50 px action row.
+pub const ROW_MIN_CONTENT: f32 = 34.0 + 2.0 * FOCUS_RING_ROOM;
 /// The gap between controls, and between a group's title and its list.
 pub const SPACING: f32 = 12.0;
 /// A focus ring's width.
