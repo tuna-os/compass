@@ -88,7 +88,9 @@ pub const EXIT_FAILURE: u8 = 1;
 /// Usage errors exit 2 from inside `clap`; see [`cli::EXIT_CODE_HELP`].
 #[must_use]
 pub fn main() -> ExitCode {
-    let cli = Cli::parse_from(cli::with_deeplink(std::env::args_os().collect()));
+    let cli = Cli::parse_from(cli::with_default_command(cli::with_deeplink(
+        std::env::args_os().collect(),
+    )));
     let serving = matches!(cli.command, Command::Serve { .. });
     // Before anything creates a `compass` directory (the log file below
     // does), or the move away from `vicinae` would find it taken. Only the

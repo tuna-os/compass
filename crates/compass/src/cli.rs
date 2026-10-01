@@ -100,6 +100,31 @@ pub fn with_deeplink(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsStrin
     args
 }
 
+/// The command line with `start` added when it names no command, so a bare
+/// `compass` (`flatpak run org.tunaos.compass`, Software's Open button) opens
+/// the launcher as the desktop entry's `compass start` does. `--help` and
+/// `--version` stay as they are.
+#[must_use]
+pub fn with_default_command(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let mut at = 1;
+    while let Some(arg) = args.get(at).and_then(|arg| arg.to_str()) {
+        if ["-h", "--help", "-V", "--version"].contains(&arg) {
+            return args;
+        }
+        if GLOBAL_OPTIONS_WITH_VALUE.contains(&arg) {
+            at += 2;
+        } else if arg.starts_with('-') && arg != "-" {
+            at += 1;
+        } else {
+            return args;
+        }
+    }
+    if at >= args.len() {
+        args.push("start".into());
+    }
+    args
+}
+
 /// The global options that take their value as the next argument.
 const GLOBAL_OPTIONS_WITH_VALUE: [&str; 2] = ["--socket", "--engine"];
 
@@ -606,6 +631,26 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).expect("should parse")
+    }
+
+    #[test]
+    fn a_command_line_with_no_command_starts_the_launcher() {
+        let with = |args: &[&str]| {
+            with_default_command(args.iter().map(std::ffi::OsString::from).collect())
+        };
+        let start = |args: &[&str]| Cli::try_parse_from(with(args)).map(|cli| cli.command);
+        assert_eq!(
+            start(&["compass"]).ok(),
+            Some(Command::Start { hidden: false })
+        );
+        assert_eq!(
+            start(&["compass", "--socket", "/tmp/x.sock", "-v"]).ok(),
+            Some(Command::Start { hidden: false })
+        );
+        assert_eq!(start(&["compass", "toggle"]).ok(), Some(Command::Toggle));
+        for help in [["compass", "--help"], ["compass", "-V"]] {
+            assert_eq!(with(&help), help.map(std::ffi::OsString::from).to_vec());
+        }
     }
 
     #[test]
