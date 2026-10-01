@@ -472,15 +472,23 @@ fn on_sway_doctor_reports_the_wlroots_protocols_it_found() {
         "layer-shell: yes",
         "zwlr_foreign_toplevel_manager_v1",
         "data-control: yes",
-        "hotkey protocol: no",
         "virtual-keyboard: yes",
         "shortcuts-inhibit: yes",
-        "portal GlobalShortcuts: no",
-        "compositor IPC: none",
-        "no global hotkey",
+        "hotkey: bound in the compositor's configuration",
+        "compositor IPC: ",
     ] {
         assert!(detail.contains(part), "{part:?} not in {detail}");
     }
+    // Sway binds keys in its own config: neither a missing hotkey protocol
+    // nor a missing GlobalShortcuts portal is a fault there.
+    assert_eq!(check["status"], "ok", "{detail}");
+    let shortcuts = report["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["name"] == "portal.global-shortcuts")
+        .expect("the global shortcuts check");
+    assert_eq!(shortcuts["status"], "ok", "{shortcuts}");
 }
 
 /// Child role: print the regular selection's text, as a paste would read it.
