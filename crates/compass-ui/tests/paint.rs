@@ -716,3 +716,94 @@ fn the_calculator_answers_panel_paints_its_actions() {
         }
     }
 }
+
+/// THE LAUNCHER FITS A SMALL OUTPUT (TIL-04, P-01).
+///
+/// On a 1280×800 panel at 200 % (640×400 logical) the fixed 768×608 window
+/// was larger than the screen, and the compositor centred it, so the search
+/// field went off the top. The window is fitted to 624×384 now
+/// (`surface::fit`), and in it the card keeps clear of every edge, its
+/// shadow included, the search field and the first row are on screen, and
+/// the thirty rows scroll rather than push the card past the bottom.
+#[test]
+fn the_launcher_in_a_window_fitted_to_a_small_output_keeps_inside_it_and_scrolls() {
+    let available = iced::Size::new(640.0, 400.0);
+    let wanted = compass_ui::AppFlags::default().window_config.size;
+    let size = compass_ui::surface::fit(wanted, Some(available));
+    assert_eq!(size, iced::Size::new(624.0, 384.0));
+
+    for appearance in [Appearance::Light, Appearance::Dark] {
+        let (_dir, app) = launcher_with(appearance, 30);
+        let theme = app.theme();
+        let clear = app.style(&theme).background_color;
+        let (width, rgba) = paint_surface(&app, size, clear);
+        let height = rgba.len() as u32 / 4 / width;
+        let alpha = |x: u32, y: u32| rgba[((y * width + x) * 4 + 3) as usize];
+        let edges = (0..height)
+            .flat_map(|y| [(0, y), (width - 1, y)])
+            .chain((0..width).flat_map(|x| [(x, 0), (x, height - 1)]));
+        let opaque_edge = edges.into_iter().find(|&(x, y)| alpha(x, y) == 255);
+        assert_eq!(
+            opaque_edge, None,
+            "{appearance:?}: the card reaches the window's edge"
+        );
+
+        let mut ui = iced_test::Simulator::with_size(iced::Settings::default(), size, app.view());
+        for label in ["Application 00", "Application 01"] {
+            let found = ui.find(label).expect(label).bounds();
+            assert!(
+                found.x >= 0.0
+                    && found.y >= 0.0
+                    && found.x + found.width <= size.width
+                    && found.y + found.height <= size.height,
+                "{appearance:?}: {label:?} at {found:?} is outside {size:?}"
+            );
+        }
+        let last = ui.find("Application 29").expect("the last row").bounds();
+        assert!(
+            last.y >= size.height,
+            "{appearance:?}: the last row is laid out at {last:?}, inside the window: \
+             the list did not scroll"
+        );
+    }
+}
+
+/// A LONG SUBTITLE STAYS ON ITS ROW'S ONE LINE (P-07).
+///
+/// The row is `row_height` tall and Iced's text wraps, so LibreOffice's
+/// comment took two lines and ran into the row below. It is elided now: the
+/// subtitle is laid out one line tall, and the title and subtitle together fit
+/// the row.
+#[test]
+fn a_long_subtitle_is_one_line_and_stays_in_its_row() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let comment = "Launch applications to create text documents, spreadsheets, presentations, \
+                   drawings, formulas, and databases, or open recently used documents.";
+    std::fs::write(
+        dir.path().join("office.desktop"),
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Office Suite\nComment={comment}\nExec=/bin/true\n"
+        ),
+    )
+    .expect("write a desktop entry");
+    let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+    let _ = app.update(Message::QueryChanged("Office".to_owned()));
+    let mut ui = iced_test::Simulator::with_size(
+        iced::Settings::default(),
+        iced::Size::new(768.0, 608.0),
+        app.view(),
+    );
+    let title = ui.find("Office Suite").expect("the title").bounds();
+    let subtitle = ui.find(comment).expect("the subtitle").bounds();
+    let geometry = compass_ui::design::GEOMETRY;
+    let line = f32::from(geometry.subtitle_size) * 1.3;
+    assert!(
+        subtitle.height <= line + 1.0,
+        "the subtitle is {} tall: more than one line of {line}",
+        subtitle.height
+    );
+    assert!(
+        subtitle.y + subtitle.height - title.y <= f32::from(geometry.row_height),
+        "title and subtitle overflow the row: {title:?} {subtitle:?}"
+    );
+}

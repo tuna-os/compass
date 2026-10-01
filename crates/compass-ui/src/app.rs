@@ -106,7 +106,24 @@ fn focus_search() -> Task<Message> {
     iced::widget::operation::focus(SEARCH_INPUT)
 }
 
-/// Lifts keyboard events out of the runtime's event stream.
+/// Set when the app asks its event loop to end.
+static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ends the event loop, noting that the app asked for it. `iced_winit` returns
+/// `Ok` whether the loop ended on request or because the compositor
+/// connection failed, and only this tells the two apart ([`exit_requested`]).
+fn exit() -> Task<Message> {
+    EXIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    iced::exit()
+}
+
+/// Whether the app asked its event loop to end, rather than the loop ending
+/// under it.
+pub(crate) fn exit_requested() -> bool {
+    EXIT_REQUESTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Lifts keyboard and window events out of the runtime's event stream.
 ///
 /// A free function rather than a closure because [`iced::event::listen_with`]
 /// takes a plain `fn` pointer. See [`LauncherApp::subscription`] for why the
@@ -114,12 +131,22 @@ fn focus_search() -> Task<Message> {
 fn keyboard_events(
     event: iced::Event,
     _status: iced::event::Status,
-    _window: window::Id,
+    window: window::Id,
 ) -> Option<Message> {
     match event {
         iced::Event::Keyboard(event) => Some(Message::Keyboard(event)),
         iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocusChanged(true)),
         iced::Event::Window(window::Event::Unfocused) => Some(Message::WindowFocusChanged(false)),
+        iced::Event::Window(window::Event::Opened { size, .. }) => Some(Message::WindowSized {
+            id: window,
+            size,
+            opened: true,
+        }),
+        iced::Event::Window(window::Event::Resized(size)) => Some(Message::WindowSized {
+            id: window,
+            size,
+            opened: false,
+        }),
         _ => None,
     }
 }
@@ -1122,6 +1149,25 @@ pub struct LauncherApp {
     app_runtime: Option<(String, crate::backend::AppRuntimeInfo)>,
     /// The HUD shown after an action hides the launcher (`crate::hud`).
     hud: crate::hud::HudState,
+    /// The room the launcher window last had on its output, logical pixels,
+    /// once the compositor or the toolkit has said; its size is fitted to it
+    /// (`crate::surface::fit`).
+    room: Option<iced::Size>,
+    /// A layer surface opened at the output's full size to learn the room,
+    /// not yet given its own size. Nothing is drawn in it meanwhile.
+    measuring: Option<window::Id>,
+    /// The launcher window's size, as last laid out.
+    window_size: Option<iced::Size>,
+    /// The toplevel whose monitor was asked for, so it is asked once.
+    monitor_asked: Option<window::Id>,
+    /// Whether the open window has reported gaining the focus at least once
+    /// (see `behind_another_window`).
+    focus_seen: bool,
+    /// The transparent layer surface under the launcher that takes a click
+    /// outside it, with `close_on_focus_loss` on (`crate::surface::open_backdrop`).
+    backdrop: Option<window::Id>,
+    /// The backdrop's size, which is the room the launcher is centred in.
+    backdrop_size: Option<iced::Size>,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -1426,6 +1472,13 @@ impl LauncherApp {
             hud: crate::hud::HudState::new(
                 crate::surface::presentation() == crate::surface::Presentation::LayerShell,
             ),
+            room: None,
+            measuring: None,
+            window_size: None,
+            monitor_asked: None,
+            focus_seen: false,
+            backdrop: None,
+            backdrop_size: None,
         }
     }
 
@@ -1514,7 +1567,7 @@ impl LauncherApp {
         self.reopen_after_close = false;
         self.window_focused = false;
         if self.on_dismiss() == Dismissal::Exit {
-            return iced::exit();
+            return exit();
         }
         if self.pending_window.is_some() {
             self.pending_hide = true;
@@ -1525,7 +1578,7 @@ impl LauncherApp {
             // link. Written as a return rather than an unwrap so a future
             // change to `on_dismiss` degrades into exiting rather than
             // panicking in the middle of a keystroke.
-            return iced::exit();
+            return exit();
         }
         match self.window {
             // The answer waits for `Message::Closed`, which arrives when the
@@ -1543,13 +1596,13 @@ impl LauncherApp {
             // because it is blocked reading this one's reply.
             Some(id) => {
                 self.closing = true;
-                window::close(id)
+                Task::batch([window::close(id), self.close_backdrop()])
             }
             // Nothing to close, so nothing to wait for. Still answers, because
             // the engine is blocked until it hears something.
             None => {
                 self.answer(UiOutcome::Hidden);
-                Task::none()
+                self.close_backdrop()
             }
         }
     }
@@ -2027,15 +2080,27 @@ impl LauncherApp {
                 return Task::none();
             }
             UiCommand::Toggle => {
-                !((self.is_visible() && !self.closing)
+                let open = (self.is_visible() && !self.closing)
                     || (self.pending_window.is_some() && !self.pending_hide)
-                    || self.reopen_after_close)
+                    || self.reopen_after_close;
+                !open || self.behind_another_window()
             }
         };
 
         if !show {
             self.summoned_at = None;
             return self.conceal();
+        }
+
+        // A toplevel left behind another window comes back as a new one.
+        // Asking the compositor to raise and focus the old one is refused
+        // without an activation token (Sway kept the keys with the other
+        // window), while a new window is focused like every summon.
+        if let (true, Some(id)) = (self.behind_another_window(), self.window) {
+            self.summoned_at.get_or_insert_with(std::time::Instant::now);
+            self.closing = true;
+            self.reopen_after_close = true;
+            return window::close(id);
         }
 
         if self.window.is_none() || self.closing {
@@ -2066,10 +2131,136 @@ impl LauncherApp {
     }
 
     fn open_window(&mut self) -> Task<Message> {
-        let (id, opened) = crate::surface::open(self.window_config.clone());
+        let mut settings = self.window_config.clone();
+        settings.size = self.wanted_window_size();
+        let backdrop = self.open_backdrop();
+        let (id, opened) = crate::surface::open(settings);
         self.pending_window = Some(id);
         self.pending_hide = false;
-        opened
+        self.window_size = None;
+        self.monitor_asked = None;
+        self.focus_seen = false;
+        self.measuring = crate::surface::opens_to_measure().then_some(id);
+        // Which of two surfaces on one layer is on top is the compositor's
+        // call (Sway 1.9 put the one asked for first on top), so the
+        // launcher is asked for first, and the
+        // backdrop's input region leaves the launcher's rectangle out
+        // (`cut_backdrop`) so a click there reaches the launcher either way.
+        opened.chain(backdrop)
+    }
+
+    /// Leaves the launcher's rectangle out of the backdrop's input region,
+    /// once both have their sizes and the launcher is not still measuring.
+    fn cut_backdrop(&self) -> Task<Message> {
+        match (self.backdrop, self.backdrop_size, self.window_size) {
+            (Some(backdrop), Some(room), Some(launcher)) if self.measuring.is_none() => {
+                crate::surface::cut_backdrop(backdrop, room, launcher)
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// Puts the backdrop under a layer-shell launcher that hides on focus
+    /// loss. A layer surface holding the keyboard exclusively never loses
+    /// the focus, and a click on another window went through to it and left
+    /// the launcher up (TIL-03); the backdrop takes that click instead. A
+    /// toplevel loses the focus like any window and needs none.
+    fn open_backdrop(&mut self) -> Task<Message> {
+        if !self.close_on_focus_loss || self.backdrop.is_some() {
+            return Task::none();
+        }
+        let id = window::Id::unique();
+        let task = crate::surface::open_backdrop(id);
+        if task.units() > 0 {
+            self.backdrop = Some(id);
+        }
+        task
+    }
+
+    /// Takes the backdrop down with the launcher.
+    fn close_backdrop(&mut self) -> Task<Message> {
+        self.backdrop_size = None;
+        self.backdrop.take().map_or_else(Task::none, window::close)
+    }
+
+    /// Whether the launcher is open but another window has the focus: a
+    /// toplevel left behind one with `close_on_focus_loss` off. `Toggle`
+    /// brings it forward rather than hiding what the user cannot see.
+    ///
+    /// Only once this window has reported its focus at all: a seat with no
+    /// keyboard reports none, and the launcher must still toggle closed
+    /// there. A layer surface on top with the keyboard is never behind.
+    fn behind_another_window(&self) -> bool {
+        crate::surface::presentation() == crate::surface::Presentation::Toplevel
+            && self.is_visible()
+            && !self.closing
+            && self.focus_seen
+            && !self.window_focused
+    }
+
+    /// The window size the current view asks for (the launcher's own, or a
+    /// dmenu list's), fitted to the room last seen on the output.
+    fn wanted_window_size(&self) -> iced::Size {
+        let pad = 2 * u32::from(design::SHADOW_PADDING);
+        let (width, height) = self.dmenu_card_size().unwrap_or((
+            u32::from(GEOMETRY.card_width),
+            u32::from(GEOMETRY.card_max_height),
+        ));
+        crate::surface::fit(
+            iced::Size::new((width + pad) as f32, (height + pad) as f32),
+            self.room,
+        )
+    }
+
+    /// The launcher window was opened or resized. A layer surface opened to
+    /// measure the output is given its fitted size; one being fitted is
+    /// drawn, and focused, once it has it.
+    fn window_sized(&mut self, id: window::Id, size: iced::Size, opened: bool) -> Task<Message> {
+        if self.backdrop == Some(id) {
+            self.backdrop_size = Some(size);
+            return self.cut_backdrop();
+        }
+        // Under `iced::application` (`crate::run`) the one window is not
+        // tracked by id, and its size is still the launcher's.
+        let launcher = match (self.window, self.pending_window) {
+            (None, None) => !self.hud.owns(id),
+            (window, pending) => window == Some(id) || pending == Some(id),
+        };
+        if !launcher {
+            return Task::none();
+        }
+        self.window_size = Some(size);
+        if self.measuring != Some(id) {
+            return self.cut_backdrop();
+        }
+        if opened {
+            self.room = Some(size);
+            let fitted = self.wanted_window_size();
+            self.resized_to = self.dmenu_card_size();
+            if fitted != size {
+                return crate::surface::fit_opened(id, fitted);
+            }
+        }
+        self.measuring = None;
+        // The field was not in the tree while the window measured.
+        Task::batch([focus_search(), self.cut_backdrop()])
+    }
+
+    /// The monitor a toplevel is on: its size is the room, and a window
+    /// larger than that is shrunk to fit.
+    fn monitor_sized(&mut self, id: window::Id, monitor: Option<iced::Size>) -> Task<Message> {
+        let Some(monitor) = monitor else {
+            return Task::none();
+        };
+        if self.window != Some(id) {
+            return Task::none();
+        }
+        self.room = Some(monitor);
+        let fitted = self.wanted_window_size();
+        if self.window_size == Some(fitted) {
+            return Task::none();
+        }
+        crate::surface::resize(id, fitted)
     }
 
     /// Update the application state.
@@ -2414,10 +2605,10 @@ impl LauncherApp {
             Message::ShortcutActivated(_) => Task::none(),
             Message::FocusChanged(_) => Task::none(),
             Message::WindowClosed => self.conceal(),
-            Message::Quit => iced::exit(),
+            Message::Quit => exit(),
             Message::EngineDisconnected => {
                 if self.exit_on_engine_disconnect {
-                    iced::exit()
+                    exit()
                 } else {
                     Task::none()
                 }
@@ -2426,8 +2617,23 @@ impl LauncherApp {
             Message::Layer(_) => Task::none(),
             Message::Opened(id) if self.hud.owns(id) => Task::none(),
             Message::Closed(id) if self.hud.closed(id) => Task::none(),
+            Message::Opened(id) if self.backdrop == Some(id) => Task::none(),
+            Message::Closed(id) if self.backdrop == Some(id) => {
+                self.backdrop = None;
+                self.backdrop_size = None;
+                Task::none()
+            }
+            Message::BackdropPressed => {
+                if self.is_visible() && !self.closing && !self.choosing_files {
+                    self.conceal()
+                } else {
+                    Task::none()
+                }
+            }
             Message::HudTick(now) => self.hud_tick(now),
             Message::CardMeasured(card) => self.card_measured(card),
+            Message::WindowSized { id, size, opened } => self.window_sized(id, size, opened),
+            Message::MonitorSized(id, size) => self.monitor_sized(id, size),
             Message::FallbacksQueryChanged(_) | Message::FallbackSelected(_) => {
                 self.fallbacks_message(message)
             }
@@ -2500,6 +2706,8 @@ impl LauncherApp {
                     // The next window is a new surface, with no blur yet.
                     self.material_asked = None;
                     self.closing = false;
+                    self.measuring = None;
+                    self.window_size = None;
                     if std::mem::take(&mut self.reopen_after_close) {
                         return self.open_window();
                     }
@@ -2507,6 +2715,9 @@ impl LauncherApp {
                     // Answers only a command that asked -- a window the user
                     // closed answers nothing. See `awaiting`.
                     self.answer(UiOutcome::Hidden);
+                    // The compositor may have closed it (its output went
+                    // away), and the backdrop must not stay to catch clicks.
+                    return self.close_backdrop();
                 }
                 Task::none()
             }
@@ -3343,9 +3554,11 @@ impl LauncherApp {
                 if let Some(power) = self.power_confirm {
                     return match key.as_ref() {
                         Key::Named(Named::Enter) => self.run_power_command(power),
+                        // Back to the search, as the generic confirmation
+                        // above: the field lost the focus to the question.
                         Key::Named(Named::Escape) => {
                             self.power_confirm = None;
-                            Task::none()
+                            focus_search()
                         }
                         _ => Task::none(),
                     };
@@ -5107,24 +5320,26 @@ impl LauncherApp {
             palette.muted
         };
 
-        let mut labels = column![
-            text(title)
-                .font(self.font())
-                .size(f32::from(geometry.title_size))
-                .color(title_color.to_iced())
-        ];
+        // One line each, elided: the row is a fixed height, and a wrapped
+        // subtitle ran into the row below it (P-07).
+        let mut labels = column![crate::elided::elided(
+            title,
+            f32::from(geometry.title_size),
+            Some(self.font()),
+            title_color.to_iced(),
+        )];
         if let Some(subtitle) = subtitle {
-            labels = labels.push(
-                text(subtitle)
-                    .font(self.font())
-                    .size(f32::from(geometry.subtitle_size))
-                    .color(subtitle_color.to_iced()),
-            );
+            labels = labels.push(crate::elided::elided(
+                subtitle,
+                f32::from(geometry.subtitle_size),
+                Some(self.font()),
+                subtitle_color.to_iced(),
+            ));
         }
 
         let line = match accessory {
             Some(accessory) => row![icon, labels.width(Length::Fill), accessory],
-            None => row![icon, labels],
+            None => row![icon, labels.width(Length::Fill)],
         }
         .spacing(12)
         .align_y(Alignment::Center)
@@ -10860,8 +11075,12 @@ mod tests {
             let mut ui = iced_test::simulator(app.view());
             assert!(ui.find("Enter: Reboot System    Esc: cancel").is_ok());
         }
-        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        let cancelled = app.update(pressed(iced::keyboard::key::Named::Escape));
         assert!(app.power_confirm.is_none());
+        assert!(
+            cancelled.units() > 0,
+            "Escape gives the search field its focus back (P-03)"
+        );
         assert!(
             backend.powered.lock().unwrap().is_empty(),
             "Escape runs nothing"
@@ -11433,6 +11652,84 @@ mod tests {
             "the file chooser the launcher opened took it"
         );
         assert!(app.is_visible());
+    }
+
+    #[test]
+    fn toggling_a_launcher_left_behind_another_window_brings_it_back_instead_of_hiding_it() {
+        // TIL-03: with `close_on_focus_loss` off, a click on another window
+        // leaves the launcher open behind it, and the next toggle hid what the
+        // user could not see. It comes back as a new window, which the
+        // compositor focuses as it does every summon.
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        let _ = app.update(Message::WindowFocusChanged(true));
+        let _ = app.update(Message::WindowFocusChanged(false));
+        assert!(app.is_visible(), "close_on_focus_loss is off");
+
+        assert!(
+            closes(app.obey(UiCommand::Toggle), id),
+            "the old window goes"
+        );
+        assert!(app.reopen_after_close, "and a new one is on its way");
+        let _ = app.update(Message::Closed(id));
+        let reopened = app.pending_window.expect("a new window is opening");
+        assert_ne!(reopened, id);
+    }
+
+    #[test]
+    fn toggling_a_focused_launcher_hides_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        let _ = app.update(Message::WindowFocusChanged(true));
+        assert!(closes(app.obey(UiCommand::Toggle), id));
+        assert!(!app.reopen_after_close);
+    }
+
+    #[test]
+    fn toggling_a_launcher_that_never_reported_the_focus_hides_it() {
+        // A seat with no keyboard reports no focus at all; the launcher must
+        // still toggle closed there.
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        assert!(closes(app.obey(UiCommand::Toggle), id));
+        assert!(!app.reopen_after_close);
+    }
+
+    #[test]
+    fn a_click_on_the_backdrop_hides_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        assert!(closes(app.update(Message::BackdropPressed), id));
+    }
+
+    #[test]
+    fn a_toplevel_larger_than_its_monitor_is_shrunk_to_fit_and_opens_fitted_next_time() {
+        // TIL-04 on the toplevel path: 1280×800 at 200 % is 640×400.
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        let wanted = app.window_config.size;
+        let _ = app.update(Message::WindowSized {
+            id,
+            size: wanted,
+            opened: true,
+        });
+        let resize = app.update(Message::MonitorSized(
+            id,
+            Some(iced::Size::new(640.0, 400.0)),
+        ));
+        assert!(resize.units() > 0, "the window is resized to fit");
+        assert_eq!(app.wanted_window_size(), iced::Size::new(624.0, 384.0));
+        // A monitor with room changes nothing.
+        let _ = app.update(Message::WindowSized {
+            id,
+            size: iced::Size::new(624.0, 384.0),
+            opened: false,
+        });
+        let _ = app.update(Message::MonitorSized(
+            id,
+            Some(iced::Size::new(1920.0, 1080.0)),
+        ));
+        assert_eq!(app.wanted_window_size(), wanted);
     }
 
     #[test]

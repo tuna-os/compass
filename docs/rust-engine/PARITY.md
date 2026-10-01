@@ -1236,6 +1236,26 @@ item's shortcut by its title, or "another command").
 hides when it loses a focus it had, and not when the focus goes to the file chooser it opened
 (`m_pendingLauncherFileChoice`); the settings view's switch applies at once.
 
+Differences on the layer-shell presentation and after (2026-10-01, the robustness pass):
+
+- **A click outside a layer-shell launcher hides it.** A layer surface that holds the keyboard
+  exclusively never loses the focus, so the C++ falls back to a pointer that leaves the window
+  ("only works on some compositors", `LauncherWindow::eventFilter`), and on Sway a click on
+  another window went through and left the launcher up (TIL-03). With the option on, Compass puts
+  a transparent layer surface under the launcher (`surface::open_backdrop`), whose input region
+  leaves the launcher out, and a click on it hides the launcher. It is the "layer behind ours"
+  the C++ comment suggests.
+- **`toggle` brings back a toplevel left behind another window** rather than hiding it, as a new
+  window, which the compositor focuses as it does every summon; raising the old one is refused
+  without an activation token. The C++ hides it. A launcher that has never reported the focus (a
+  seat with no keyboard) still toggles closed.
+- **The window fits small and scaled outputs** (TIL-04): the layer surface first opens at the
+  output's full size to learn the room, then takes the launcher's size fitted to it; a toplevel
+  is fitted to its monitor once mapped, and opens fitted after that. The C++ sizes its window
+  from the config and lets an oversized one be cut off.
+- **`compass start` runs the window as a child and starts it again when it fails**, keeping the
+  engine; five failures in a minute end it. The C++ runs one process.
+
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/services/global-shortcuts` | `parity test ✓` 🟡 → ✅ (`Rust ✓` stays 🟡: X11, `inhibitApps`, `probeBind`) | `compass_core::global_shortcuts` (`desired`, `Reconciler`, `validate`, `find_conflict`, `launcher_keybind`, `keysym`, `modifier_mask`, `portal_trigger`), `compass_wayland::hotkey::HotkeyClient`, `compass_wayland_protocols::vicinae_hotkey_v1`, `compass_portals::ShortcutBinder`, `compass::global_shortcuts` (`Service`, `WaylandBackend`, `PortalBackend`, `activate`, `serve`, `Control`), `compass_ui::app::global_shortcuts`, `compass_ui::shortcut_recorder` | `the_launcher_and_every_enabled_items_shortcut_are_desired`, `the_launcher_hotkey_defaults_to_super_space_and_an_empty_one_binds_nothing`, `reconciling_binds_what_is_new_rebinds_what_changed_and_keeps_the_rest`, `a_refused_bind_does_nothing_when_pressed_and_is_not_asked_for_again`, `a_bound_shortcut_runs_its_action`, `the_recorder_refuses_the_launchers_own_keys`, `the_recorder_refuses_the_launcher_hotkey_except_for_itself`, `the_recorder_refuses_another_items_shortcut_by_its_title`, `keys_become_the_keysyms_the_cpp_asks_for`, `modifiers_become_the_protocols_mask`, `the_portal_is_asked_in_the_specifications_spelling`; `vicinae_hotkey_binds_presses_refuses_and_releases`, `xx_hotkey_is_preferred_and_speaks_its_own_requests`, `a_compositor_with_neither_protocol_is_unsupported` (a fake compositor over `wayland-server`); `the_binder_binds_a_changed_set_on_a_new_session_and_closes_the_old_one`, `the_binder_delivers_the_current_sessions_activations`, `an_empty_set_closes_the_session_and_binds_nothing`, `a_denied_set_is_reported_as_denied` (a private `dbus-daemon` and a fake GlobalShortcuts portal); `the_launcher_hotkey_and_a_commands_shortcut_are_bound_and_rebound_when_changed`, `a_refused_shortcut_does_nothing_when_pressed`, `capturing_releases_everything_and_binds_it_again_after`, `pressing_the_launcher_hotkey_reaches_the_window`, `pressing_a_commands_shortcut_launches_it_as_cmd_launch_does`, `a_reload_binds_what_the_configuration_now_says`, `the_recorders_capture_reaches_the_service_over_ipc`, `the_portal_is_asked_for_the_configured_trigger`, `a_release_is_not_a_press`; `losing_the_focus_hides_the_launcher_when_close_on_focus_loss_is_on`, `losing_the_focus_keeps_the_launcher_when_close_on_focus_loss_is_off`, `only_losing_a_focus_the_launcher_had_hides_it`, `the_recorder_suspends_the_global_shortcuts_while_it_captures`, `the_launchers_own_keys_and_its_hotkey_are_taken`, `recording_the_launcher_hotkey_does_not_conflict_with_itself` |

@@ -664,3 +664,289 @@ fn on_sway_the_input_server_presses_the_paste_when_it_runs() {
     );
     assert_eq!(clipboard_text(&sway), "through the helper");
 }
+
+/// `compass start` on the compositor: an engine, and the launcher as its
+/// child, both on a private socket, with everything they print kept.
+struct Started {
+    child: Child,
+    socket: PathBuf,
+    dirs: tempfile::TempDir,
+}
+
+impl Started {
+    fn start(sway: &Sway) -> Self {
+        let dirs = tempfile::tempdir().unwrap();
+        let socket = dirs.path().join("ipc.sock");
+        let log = std::fs::File::create(dirs.path().join("start.log")).unwrap();
+        let child = Command::new(binary())
+            .arg("--socket")
+            .arg(&socket)
+            .args(["start", "--hidden"])
+            .env("RUST_LOG", "info")
+            .env("COMPASS_NO_ONBOARDING", "1")
+            .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+            .env("COMPASS_DISABLE_AUTO_RATE_REFRESH", "1")
+            .env("XDG_DATA_DIRS", dirs.path().join("empty"))
+            .env("XDG_DATA_HOME", dirs.path().join("data"))
+            .env("XDG_CONFIG_HOME", dirs.path().join("config"))
+            .env("XDG_CACHE_HOME", dirs.path().join("cache"))
+            .env("HOME", dirs.path())
+            .env_remove("XDG_STATE_HOME")
+            .env("XDG_RUNTIME_DIR", sway.runtime_dir())
+            .env("WAYLAND_DISPLAY", sway.display())
+            .env("XDG_CURRENT_DESKTOP", "sway")
+            .env_remove("COMPASS_LAYER_SHELL")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("NIRI_SOCKET")
+            .env(
+                "COMPASS_UPDATE_FEED_URL",
+                "http://127.0.0.1:9/releases/latest",
+            )
+            .stdout(Stdio::null())
+            .stderr(log)
+            .spawn()
+            .expect("spawn compass start");
+        let started = Self {
+            child,
+            socket,
+            dirs,
+        };
+        // A hidden launcher acknowledges `Hide` once it has attached.
+        assert!(
+            eventually(WAIT, || started.launcher().is_some()
+                && started.acks(Request::Hide)),
+            "compass start never brought up an engine and a launcher:\n{}",
+            started.log()
+        );
+        started
+    }
+
+    /// What `start` and its children printed.
+    fn log(&self) -> String {
+        std::fs::read_to_string(self.dirs.path().join("start.log")).unwrap_or_default()
+    }
+
+    /// The launcher process `start` is running, by pid.
+    fn launcher(&self) -> Option<u32> {
+        let pid = self.child.id();
+        let children = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).ok()?;
+        children
+            .split_whitespace()
+            .filter_map(|child| child.parse::<u32>().ok())
+            .find(|child| {
+                std::fs::read(format!("/proc/{child}/cmdline")).is_ok_and(|cmdline| {
+                    cmdline
+                        .split(|byte| *byte == 0)
+                        .any(|arg| arg == b"launcher-child")
+                })
+            })
+    }
+
+    /// The engine's answer to `request`, or `None` when there is none within
+    /// `within`: a launcher that never answers must fail the test, not hang it.
+    fn answers(&self, request: Request, within: Duration) -> Option<Response> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(within, async {
+                    let mut client = compass_ipc::Client::connect(&self.socket).await.ok()?;
+                    client.request(request).await.ok()
+                })
+                .await
+                .ok()
+                .flatten()
+            })
+    }
+
+    /// Whether `request` was acknowledged within ten seconds.
+    fn acks(&self, request: Request) -> bool {
+        self.answers(request, Duration::from_secs(10)) == Some(Response::Ack)
+    }
+}
+
+impl Drop for Started {
+    fn drop(&mut self) {
+        // `start` stops its engine only on a clean exit; take it and the
+        // launcher down here.
+        if let Some(launcher) = self.launcher() {
+            let _ = Command::new("kill")
+                .args(["-9", &launcher.to_string()])
+                .status();
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = Command::new("pkill")
+            .args(["-9", "-f"])
+            .arg(self.socket.as_os_str())
+            .status();
+    }
+}
+
+/// Child role: take the clipboard `COMPASS_WLR_COPIES` times through
+/// data-control, as another client copying would.
+#[test]
+fn child_copies_again_and_again() {
+    if support::child_role().is_none() {
+        return;
+    }
+    let copies: usize = std::env::var("COMPASS_WLR_COPIES")
+        .unwrap()
+        .parse()
+        .unwrap();
+    for n in 0..copies {
+        let mut options = wl_clipboard_rs::copy::Options::new();
+        options.clipboard(wl_clipboard_rs::copy::ClipboardType::Regular);
+        options
+            .copy(
+                wl_clipboard_rs::copy::Source::Bytes(format!("copy {n}").into_bytes().into()),
+                wl_clipboard_rs::copy::MimeType::Text,
+            )
+            .expect("copying");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    println!("CHILD-OK");
+}
+
+#[test]
+fn on_sway_the_launcher_survives_copies_while_keyboards_come_and_go() {
+    // TIL-01. The toolkit's clipboard released its `wl_data_device` whenever
+    // the seat lost its keyboard or the launcher hid. A `data_offer` the
+    // compositor had already sent then landed on the dead device, libwayland
+    // dropped the object id it carried, and the next offer was a fatal "not a
+    // valid new object id" on the launcher's connection. A seat whose
+    // keyboards come and go (each virtual keyboard here, `wtype`, a KVM
+    // switch) while another client copies hits it within a few dozen tries.
+    let Some(sway) = Sway::start("the_launcher_survives_copies") else {
+        return;
+    };
+    let started = Started::start(&sway);
+    let launcher = started.launcher().expect("a launcher");
+    assert!(started.acks(Request::Show), "{}", started.log());
+
+    let copier = sway.run_child(
+        "child_copies_again_and_again",
+        "copy",
+        &[("COMPASS_WLR_COPIES", "150")],
+    );
+    for n in 0..60 {
+        drop(support::seat_keyboard(&sway));
+        if n % 15 == 14 {
+            assert!(started.acks(Request::Toggle), "{}", started.log());
+        }
+    }
+    let copied = copier.wait_with_output().expect("the copier ran");
+    assert!(
+        String::from_utf8_lossy(&copied.stdout).contains("CHILD-OK"),
+        "{}",
+        String::from_utf8_lossy(&copied.stderr)
+    );
+
+    assert!(started.acks(Request::Toggle), "{}", started.log());
+    let log = started.log();
+    assert!(!log.contains("not a valid new object id"), "{log}");
+    assert!(!log.contains("the launcher stopped"), "{log}");
+    assert_eq!(
+        started.launcher(),
+        Some(launcher),
+        "the launcher was restarted:\n{log}"
+    );
+}
+
+#[test]
+fn on_sway_a_failed_launcher_is_started_again_and_the_engine_kept() {
+    // The other half of TIL-01: whatever ends the launcher's process, `start`
+    // keeps the engine and brings the launcher back for the next summon.
+    let Some(sway) = Sway::start("a_failed_launcher_is_started_again") else {
+        return;
+    };
+    let started = Started::start(&sway);
+    let engine = match started.answers(Request::Ping, WAIT) {
+        Some(Response::Pong { pid, .. }) => pid,
+        other => panic!("Ping answered {other:?}"),
+    };
+    let first = started.launcher().expect("a launcher");
+    assert!(
+        Command::new("kill")
+            .args(["-9", &first.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    assert!(
+        eventually(WAIT, || started.launcher().is_some_and(|now| now != first)),
+        "no new launcher:\n{}",
+        started.log()
+    );
+    assert!(
+        eventually(WAIT, || started.acks(Request::Show)),
+        "the new launcher never showed:\n{}",
+        started.log()
+    );
+    assert!(
+        matches!(
+            started.answers(Request::Ping, WAIT),
+            Some(Response::Pong { pid, .. }) if pid == engine
+        ),
+        "the engine did not survive the launcher"
+    );
+    assert!(
+        started.log().contains("starting it again"),
+        "{}",
+        started.log()
+    );
+}
+
+fn swaymsg(sway: &Sway, args: &[&str]) {
+    let ipc = std::fs::read_dir(sway.runtime_dir())
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("sway-ipc.") && name.ends_with(".sock"))
+        })
+        .expect("sway's IPC socket");
+    let status = Command::new("swaymsg")
+        .arg("-s")
+        .arg(ipc)
+        .args(args)
+        .stdout(Stdio::null())
+        .status()
+        .expect("swaymsg");
+    assert!(status.success(), "swaymsg {args:?}");
+}
+
+#[test]
+fn on_sway_a_launcher_whose_output_is_unplugged_comes_back_on_the_next_show() {
+    // TIL-02. The compositor closes a layer surface whose output goes away.
+    // The event loop under `iced_layershell` dropped that close, so the
+    // launcher waited for its window to go forever, and every `toggle`,
+    // `show` and `hide` after it hung.
+    let Some(sway) = Sway::start("a_launcher_whose_output_is_unplugged") else {
+        return;
+    };
+    let started = Started::start(&sway);
+    let launcher = started.launcher().expect("a launcher");
+    let _seat = support::seat_keyboard(&sway);
+    swaymsg(&sway, &["create_output"]);
+    swaymsg(&sway, &["output", "HEADLESS-2", "position", "1280", "0"]);
+    swaymsg(&sway, &["focus", "output", "HEADLESS-2"]);
+    assert!(started.acks(Request::Show), "{}", started.log());
+
+    swaymsg(&sway, &["output", "HEADLESS-2", "unplug"]);
+
+    // The surface went with its output, so the launcher is hidden, and the
+    // next toggle shows it again on the output that is left.
+    assert!(
+        started.acks(Request::Toggle),
+        "toggle hung:\n{}",
+        started.log()
+    );
+    assert!(started.acks(Request::Hide), "hide hung:\n{}", started.log());
+    assert!(started.acks(Request::Show), "show hung:\n{}", started.log());
+    assert_eq!(started.launcher(), Some(launcher), "{}", started.log());
+}

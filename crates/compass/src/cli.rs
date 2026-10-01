@@ -107,6 +107,16 @@ pub enum Command {
         hidden: bool,
     },
 
+    /// The launcher window under `start`, which runs it as a child so that a
+    /// launcher that fails can be started again without losing the engine.
+    /// Internal: `start` holds the instance lease and owns the engine.
+    #[command(name = "launcher-child", hide = true)]
+    LauncherChild {
+        /// Wait for activation without opening a window.
+        #[arg(long)]
+        hidden: bool,
+    },
+
     /// Toggle the launcher window between shown and hidden.
     Toggle,
 

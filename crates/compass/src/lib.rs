@@ -55,6 +55,7 @@ pub mod snippet_expansion;
 pub mod snippets;
 pub mod spike;
 pub mod stores;
+pub mod supervise;
 pub mod tray_host;
 pub mod tray_icon;
 pub mod typography;
@@ -130,7 +131,10 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
     // started on, and on Wayland that has to be the process's main thread —
     // so the launcher cannot be dispatched from inside `block_on` like every
     // other command. ADR-0011 records what this costs and what it defers.
-    if matches!(cli.command, Command::Ui | Command::Start { .. }) {
+    if matches!(
+        cli.command,
+        Command::Ui | Command::Start { .. } | Command::LauncherChild { .. }
+    ) {
         require_servable_engine(cli.engine)?;
         // Checked here rather than left to Iced. With no display, `iced::run`
         // does not return an error — winit panics inside it, and the user gets
@@ -146,9 +150,19 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                  nothing to open a window on. Run `compass doctor` for the full picture"
             );
         }
-        let _ui_lease = match ui_instance::acquire(cli.socket_path().as_path())
-            .context("claiming the resident launcher instance")?
-        {
+        // A child of `start` runs under its parent's lease and engine.
+        let child = matches!(cli.command, Command::LauncherChild { .. });
+        if child {
+            supervise::watch_parent();
+        }
+        let acquired = if child {
+            Some(None)
+        } else {
+            ui_instance::acquire(cli.socket_path().as_path())
+                .context("claiming the resident launcher instance")?
+                .map(Some)
+        };
+        let _ui_lease = match acquired {
             Some(lease) => lease,
             None => {
                 if matches!(cli.command, Command::Start { hidden: true }) {
@@ -170,7 +184,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             }
         };
 
-        let _engine_session = if matches!(cli.command, Command::Start { .. }) {
+        let engine_session = if matches!(cli.command, Command::Start { .. }) {
             let mut command = std::process::Command::new(std::env::current_exe()?);
             command
                 .arg("--engine=rust")
@@ -190,13 +204,20 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             None
         };
 
+        // `start` runs the launcher as a child and starts it again when it
+        // fails, so a launcher that loses its compositor connection does not
+        // take the engine, and every other window, down with it.
+        if let (Command::Start { hidden }, Some(engine)) = (&cli.command, engine_session) {
+            return supervise::run(&cli, *hidden, engine);
+        }
+
         // Attached before Iced starts, on a thread that still belongs to us.
         // `None` means no engine is listening, which leaves the launcher
         // running undriven rather than refusing to start -- `compass ui` by
         // hand is a supported way to use it.
         let link = window::attach(cli.socket_path().as_path())
             .context("attaching the launcher window to the engine")?;
-        if link.is_none() && matches!(cli.command, Command::Start { .. }) {
+        if link.is_none() && matches!(cli.command, Command::LauncherChild { .. }) {
             bail!("the Compass engine stopped before the launcher could attach");
         }
         if link.is_none() {
@@ -343,8 +364,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             windows,
             root_config,
             link,
-            exit_on_engine_disconnect: matches!(cli.command, Command::Start { .. }),
-            start_hidden: matches!(cli.command, Command::Start { hidden: true }),
+            exit_on_engine_disconnect: matches!(cli.command, Command::LauncherChild { .. }),
+            start_hidden: matches!(cli.command, Command::LauncherChild { hidden: true }),
             keybinding,
             wrap_navigation,
             quick_launch,
@@ -383,11 +404,11 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             compass_wayland::SurfaceKind::LayerShell => {
                 tracing::info!("presenting the launcher as a wlr-layer-shell surface");
                 compass_ui::run_resident_layer_shell(flags, layer_shell_connection())
-                    .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+                    .map_err(anyhow::Error::from)?;
             }
             compass_wayland::SurfaceKind::XdgToplevel => {
                 compass_ui::run_resident(flags, Some(window_material::for_launcher()))
-                    .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+                    .map_err(anyhow::Error::from)?;
             }
         }
         return Ok(ExitCode::from(EXIT_OK));
@@ -681,7 +702,7 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         Command::Config(config_cmd) => config_cmd::run(config_cmd),
 
         // Handled in `run`, before the runtime exists.
-        Command::Ui | Command::Start { .. } => {
+        Command::Ui | Command::Start { .. } | Command::LauncherChild { .. } => {
             unreachable!("the launcher is dispatched before the runtime")
         }
 
@@ -841,8 +862,28 @@ async fn window_command(
     request: Request,
 ) -> Result<ExitCode> {
     require_servable_engine(engine)?;
-    ipc::send_ack(socket, request).await?;
+    send_window_command(socket, request, WINDOW_COMMAND_TIMEOUT).await?;
     Ok(ExitCode::from(EXIT_OK))
+}
+
+/// How long `toggle`, `show` and `hide` wait for the launcher. Summoning a
+/// cold launcher takes well under a second; a launcher that has not answered
+/// in this long is stuck, and a command bound to a key must not hang with it.
+const WINDOW_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+async fn send_window_command(
+    socket: &compass_ipc::SocketPath,
+    request: Request,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    match tokio::time::timeout(timeout, ipc::send_ack(socket, request)).await {
+        Ok(answer) => answer,
+        Err(_) => bail!(
+            "the launcher did not answer within {} seconds. It may be stuck; if it stays \
+             that way, quit Compass and start it again",
+            timeout.as_secs()
+        ),
+    }
 }
 
 /// Renders query hits for a terminal.
@@ -1037,5 +1078,31 @@ mod tests {
         assert!(text.contains("cannot dispatch"));
         assert!(text.contains("--engine rust"));
         assert!(text.contains("doctor"));
+    }
+
+    #[tokio::test]
+    async fn a_window_command_to_a_stuck_launcher_times_out_and_says_so() {
+        // An engine that takes the request and never answers, as one did
+        // while its launcher waited on a surface the compositor had closed.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ipc.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let held = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            drop(stream);
+        });
+        let socket = compass_ipc::SocketPath::exact(path);
+        let started = std::time::Instant::now();
+        let err = send_window_command(
+            &socket,
+            Request::Toggle,
+            std::time::Duration::from_millis(200),
+        )
+        .await
+        .expect_err("a launcher that never answers is an error");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(err.to_string().contains("did not answer"), "{err}");
+        held.abort();
     }
 }

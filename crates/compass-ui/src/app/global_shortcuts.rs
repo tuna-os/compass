@@ -16,7 +16,8 @@ impl LauncherApp {
     pub(super) fn window_focus_changed(&mut self, focused: bool) -> Task<Message> {
         if focused {
             self.window_focused = true;
-            return Task::none();
+            self.focus_seen = true;
+            return self.ask_monitor_size();
         }
         let had = std::mem::take(&mut self.window_focused);
         if !had
@@ -28,6 +29,22 @@ impl LauncherApp {
             return Task::none();
         }
         self.conceal()
+    }
+
+    /// Asks once per toplevel for the monitor it is on, so the window can be
+    /// fitted to it (`monitor_sized`). Asked on the focus rather than on
+    /// opening because the toolkit learns the monitor from the compositor's
+    /// `enter`, which comes once the window is mapped. A layer surface
+    /// measures its output itself.
+    fn ask_monitor_size(&mut self) -> Task<Message> {
+        let Some(id) = self.window else {
+            return Task::none();
+        };
+        if crate::surface::opens_to_measure() || self.monitor_asked == Some(id) {
+            return Task::none();
+        }
+        self.monitor_asked = Some(id);
+        iced::window::monitor_size(id).map(move |size| Message::MonitorSized(id, size))
     }
 
     /// Whether the window is hiding on focus loss, for tests.
