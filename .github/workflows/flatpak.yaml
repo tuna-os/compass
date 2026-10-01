@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Regenerate and compare
         run: |
@@ -72,7 +72,7 @@ jobs:
     # is a full release compile of the workspace. Generous, but bounded.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install flatpak and flatpak-builder
         run: |
@@ -94,7 +94,7 @@ jobs:
       # See --reinstall and the commit assertion below, which are what make the
       # cache safe to keep.
       - name: Cache the runtime
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.local/share/flatpak
           key: flatpak-runtime-${{ runner.os }}-${{ hashFiles('packaging/flatpak/org.tunaos.compass.yaml') }}
@@ -227,7 +227,7 @@ jobs:
 
       - name: Upload the Spike B report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: spike-b-flatpak
           path: /tmp/spike-b.*
@@ -246,7 +246,7 @@ jobs:
 
       - name: Upload the bundle
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: flatpak-bundle
           path: /tmp/org.tunaos.compass.flatpak
@@ -255,7 +255,7 @@ jobs:
 
       - name: Upload the repo
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: flatpak-repo
           path: /tmp/repo

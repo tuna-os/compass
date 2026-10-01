@@ -1,0 +1,20 @@
+# Keeps the SHA-pinned actions current. Every third-party `uses:` is pinned to a
+# commit with its version in a trailing comment; Dependabot moves both together.
+#
+# Cargo is deliberately not here: every Cargo.lock change has to regenerate
+# packaging/flatpak/cargo-sources.json (flatpak.yaml checks it), which
+# Dependabot cannot do. tuna-os/.github stays on @main by design, and
+# Dependabot leaves branch refs alone.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
