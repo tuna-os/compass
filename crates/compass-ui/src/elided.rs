@@ -66,6 +66,27 @@ where
         size: Pixels(size),
         font,
         color,
+        width: Length::Fill,
+    })
+}
+
+/// As [`elided`], but only as wide as the line it draws: a short line keeps
+/// its own width, and a long one is cut at the width it is given.
+pub fn elided_shrink<'a, Message, Theme, Renderer>(
+    content: impl Into<String>,
+    size: f32,
+    font: Option<Renderer::Font>,
+    color: Color,
+) -> Element<'a, Message, Theme, Renderer>
+where
+    Renderer: text::Renderer + 'a,
+{
+    Element::new(Elided::<Renderer> {
+        content: content.into(),
+        size: Pixels(size),
+        font,
+        color,
+        width: Length::Shrink,
     })
 }
 
@@ -74,6 +95,7 @@ struct Elided<Renderer: text::Renderer> {
     size: Pixels,
     font: Option<Renderer::Font>,
     color: Color,
+    width: Length,
 }
 
 /// What the last layout decided, kept so an unchanged line at an unchanged
@@ -128,7 +150,7 @@ where
     }
 
     fn size(&self) -> Size<Length> {
-        Size::new(Length::Fill, Length::Shrink)
+        Size::new(self.width, Length::Shrink)
     }
 
     fn layout(
@@ -138,7 +160,7 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
-        layout::sized(limits, Length::Fill, Length::Shrink, |limits| {
+        layout::sized(limits, self.width, Length::Shrink, |limits| {
             let bounds = limits.max();
             if state.content != self.content || state.width != bounds.width {
                 let unbounded = Size::new(f32::INFINITY, f32::INFINITY);

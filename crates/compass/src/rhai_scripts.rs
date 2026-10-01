@@ -487,7 +487,11 @@ impl RhaiScripts {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
-            session.set_query(text);
+            // The launcher sends its keystroke count after the text.
+            let sequence = args.get(1).and_then(serde_json::Value::as_u64);
+            if !session.set_query(text, sequence) {
+                return Ok(Vec::new());
+            }
             let search = Arc::clone(&session);
             tokio::spawn(async move { search.render().await });
             return Ok(Vec::new());
@@ -671,6 +675,10 @@ struct SessionInner {
     instance: Option<Result<ScriptInstance, String>>,
     awaiting_consent: bool,
     query: String,
+    /// The launcher's count for the text in `query`. Each keystroke is its
+    /// own request, so they can arrive out of order; an older text that
+    /// lands after a newer one is dropped rather than searched.
+    query_sequence: Option<u64>,
     /// Bumped per search; only the latest publishes.
     generation: u64,
     index: ActionIndex,
@@ -704,6 +712,7 @@ impl Session {
                 awaiting_consent: instance.is_none(),
                 instance,
                 query: String::new(),
+                query_sequence: None,
                 generation: 0,
                 index: ActionIndex::default(),
                 pending: Pending::new(),
@@ -729,8 +738,18 @@ impl Session {
         self.lock().instance = Some(instance);
     }
 
-    fn set_query(&self, query: String) {
-        self.lock().query = query;
+    /// Takes `query` as the search text unless the launcher's `sequence`
+    /// says a newer one is already in. Returns whether it was taken.
+    fn set_query(&self, query: String, sequence: Option<u64>) -> bool {
+        let mut inner = self.lock();
+        if let (Some(new), Some(current)) = (sequence, inner.query_sequence)
+            && new < current
+        {
+            return false;
+        }
+        inner.query = query;
+        inner.query_sequence = sequence.or(inner.query_sequence);
+        true
     }
 
     fn ask(&self, alert: compass_ipc::ExtensionAlert) {

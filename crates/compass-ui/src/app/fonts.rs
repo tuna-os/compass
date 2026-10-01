@@ -277,7 +277,10 @@ impl LauncherApp {
             Some(selected_option),
             Message::FontsCategoryChanged,
         )
-        .text_size(12);
+        .text_size(12)
+        .font(self.font())
+        .style(move |_, status| crate::design::dropdown(palette, status))
+        .menu_style(move |_| crate::design::dropdown_menu(palette));
         let heading = text(title.to_owned())
             .font(self.font())
             .size(12)

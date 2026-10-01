@@ -89,6 +89,9 @@ pub struct ExtensionPage {
     /// How many times the search text changed, for the extension's echo
     /// counter (ADR-0009).
     pub query_events: u64,
+    /// The search text when the shown view arrived: a view for a different
+    /// text is a new search, which starts at its first row.
+    rendered_query: String,
     /// Rows the search leaves, as `(section, item)` in the view.
     pub shown: Vec<(usize, usize)>,
     /// Position in `shown`.
@@ -154,6 +157,7 @@ impl ExtensionPage {
             status: Status::Loading,
             query: String::new(),
             query_events: 0,
+            rendered_query: String::new(),
             shown: Vec::new(),
             selected: 0,
             notice: None,
@@ -286,14 +290,20 @@ impl ExtensionPage {
             self.view = Some(*view);
             self.status = Status::Ready;
             self.refilter();
-            // Keep the selection on the same row across a re-render, which is
-            // every keystroke for a list that filters itself.
-            if let Some(key) = key
-                && let Some(position) = self.shown.iter().position(|&(s, i)| {
-                    self.item(s, i).and_then(|it| it.key.as_deref()) == Some(&key)
-                })
-            {
-                self.selected = position;
+            // Keep the selection on the same row across a re-render of the
+            // same search (a timer, a toast). A new search starts at its first
+            // row, as Raycast's list does.
+            if self.rendered_query == self.query {
+                if let Some(key) = key
+                    && let Some(position) = self.shown.iter().position(|&(s, i)| {
+                        self.item(s, i).and_then(|it| it.key.as_deref()) == Some(&key)
+                    })
+                {
+                    self.selected = position;
+                }
+            } else {
+                self.selected = 0;
+                self.rendered_query.clone_from(&self.query);
             }
         }
         if let Some(problem) = state.problem {
@@ -1062,6 +1072,37 @@ mod tests {
             ),
         ));
         assert_eq!(page.selected_item().map(|i| i.title.as_str()), Some("b"));
+    }
+
+    #[test]
+    fn a_render_for_a_new_search_starts_at_its_first_row() {
+        // "3 lb" lists grams first; "3 lb in kg" puts kilograms first and
+        // grams second. The answer to the new search is its first row.
+        let mut page = ExtensionPage::new(1, "Unit Converter");
+        page.query = "3 lb".into();
+        page.apply(state(
+            1,
+            list(
+                vec![item("1360 g", "g", "x"), item("1.36 kg", "kg", "y")],
+                false,
+            ),
+        ));
+        assert_eq!(
+            page.selected_item().map(|i| i.title.as_str()),
+            Some("1360 g")
+        );
+        page.query = "3 lb in kg".into();
+        page.apply(state(
+            2,
+            list(
+                vec![item("1.36 kg", "kg", "y"), item("1360 g", "g", "x")],
+                false,
+            ),
+        ));
+        assert_eq!(
+            page.selected_item().map(|i| i.title.as_str()),
+            Some("1.36 kg")
+        );
     }
 
     #[test]

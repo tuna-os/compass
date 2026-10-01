@@ -323,6 +323,35 @@ async fn a_packaged_script_is_in_root_search_and_its_view_searches_and_copies() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_keystroke_that_arrives_late_does_not_replace_the_newer_search() {
+    // Each keystroke is its own request, so "3 lb" can land after
+    // "3 lb in kg"; the launcher's count says which is newer.
+    let fx = fixture(|_, packaged| copy_example("unit-converter", packaged)).await;
+    let session = fx.open("script.unit-converter").await;
+    fx.wait(session, |s| s.view.is_some()).await;
+
+    for (text, count) in [("3 lb in kg", 9), ("3 lb", 4), ("3 lb in", 7)] {
+        assert_eq!(
+            fx.event(session, SEARCH_HANDLER, serde_json::json!([text, count]))
+                .await,
+            Response::Ack
+        );
+    }
+    fx.wait(session, |s| {
+        s.rows().first().is_some_and(|r| r.title.ends_with(" kg"))
+    })
+    .await;
+    // Long enough for a dropped search to have rendered, had it run.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let later = fx.wait(session, |_| true).await;
+    assert!(
+        later.rows()[0].title.ends_with(" kg"),
+        "an older text replaced the newest: {:?}",
+        later.rows()[0]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_user_script_asks_before_it_gets_a_capability_and_the_answer_is_kept() {
     let mut fx = fixture(|user, _| {
         script(

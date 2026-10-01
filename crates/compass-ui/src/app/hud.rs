@@ -146,16 +146,16 @@ impl LauncherApp {
                 line = line.push(drawn);
             }
         }
+        // Elided rather than clipped, as `Layout.maximumWidth` with
+        // `elide: Text.ElideRight`: a launch failure can be a long line.
         line = line.push(
-            container(
-                text(hud.text.clone())
-                    .font(self.font())
-                    .size(size)
-                    .color(foreground)
-                    .wrapping(iced::widget::text::Wrapping::None),
-            )
-            .max_width(TEXT_MAX_WIDTH)
-            .clip(true),
+            container(crate::elided::elided_shrink(
+                hud.text.clone(),
+                size,
+                Some(self.font()),
+                foreground,
+            ))
+            .max_width(TEXT_MAX_WIDTH),
         );
         let background = palette.surface.to_iced();
         let border = palette.border.to_iced();

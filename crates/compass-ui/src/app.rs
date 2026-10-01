@@ -4912,7 +4912,16 @@ impl LauncherApp {
                 Some(key),
                 Message::FilesCategoryChanged,
             )
-            .text_size(12),
+            .text_size(12)
+            .font(self.font())
+            .style({
+                let palette = self.palette();
+                move |_, status| crate::design::dropdown(palette, status)
+            })
+            .menu_style({
+                let palette = self.palette();
+                move |_| crate::design::dropdown_menu(palette)
+            }),
         )
         .width(Length::Fill)
         .align_x(Alignment::End)
@@ -6194,6 +6203,11 @@ impl LauncherApp {
                             .map(|(_, value)| value.clone());
                         Message::PreferenceEdited(index, FieldValue::Choice(value))
                     })
+                    .font(self.font())
+                    .menu_style({
+                        let palette = self.palette();
+                        move |_: &Theme| crate::design::dropdown_menu(palette)
+                    })
                     .style(move |theme: &Theme, status| {
                         let mut style = iced::widget::pick_list::default(theme, status);
                         if let Some(accent) = ring {
@@ -6334,6 +6348,11 @@ impl LauncherApp {
                             .map(|(_, value)| value.clone())
                             .unwrap_or_default();
                         Message::ExtensionFieldEdited(name.clone(), chosen.into())
+                    })
+                    .font(self.font())
+                    .menu_style({
+                        let palette = self.palette();
+                        move |_: &Theme| crate::design::dropdown_menu(palette)
                     })
                     .into()
                 }
@@ -6498,7 +6517,15 @@ impl LauncherApp {
         }
         let mut list = column![].spacing(f32::from(geometry.row_spacing));
         let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
+        let mut last_section = None;
         for (position, &(s, i)) in page.shown.iter().enumerate() {
+            // Each section under its title, as `List.Section` draws it.
+            if last_section != Some(s) {
+                last_section = Some(s);
+                if let Some(title) = sections[s].title.clone().filter(|t| !t.is_empty()) {
+                    list = list.push(self.section_heading(title));
+                }
+            }
             let item = &sections[s].items[i];
             let selected = position == page.selected;
             let accessories: Vec<&str> = item
@@ -10139,6 +10166,38 @@ mod tests {
             pending.extend(task_messages(app.update(message)));
         }
         (app, backend, dir)
+    }
+
+    #[test]
+    fn an_extension_list_draws_each_titled_section_under_its_title() {
+        use compass_extension_api::view::{ListItem, ListSection, ListView};
+        let mut result = ListSection::untitled([ListItem::new("1.3608 kg")]);
+        result.title = Some("Result".into());
+        let mut others = ListSection::untitled([ListItem::new("48 oz"), ListItem::new("1360 g")]);
+        others.title = Some("Other mass units".into());
+        let list = ListView {
+            sections: vec![
+                result,
+                others,
+                ListSection::untitled([ListItem::new("untitled")]),
+            ],
+            ..ListView::default()
+        };
+        let (app, _backend, _dir) = open_extension_view(compass_extension_api::View::List(list));
+        let mut ui = iced_test::simulator(app.view());
+        for shown in [
+            "Result",
+            "Other mass units",
+            "1.3608 kg",
+            "48 oz",
+            "untitled",
+        ] {
+            assert!(
+                ui.find(shown).is_ok(),
+                "{shown} is not drawn: {}",
+                app.state_line()
+            );
+        }
     }
 
     #[test]
@@ -16737,6 +16796,63 @@ mod tests {
                 .is_ok(),
             "the launcher shows it: {}",
             app.state_line()
+        );
+    }
+
+    #[test]
+    fn a_long_hud_message_is_elided_inside_the_surface_and_a_short_one_hugs_its_text() {
+        // The pill's width in a frame of the HUD surface: the columns whose
+        // middle row is not transparent.
+        fn pill_width(app: &LauncherApp) -> usize {
+            let id = app.hud.window_id().expect("the HUD surface");
+            let (width, height) = crate::hud::SURFACE_SIZE;
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(width as f32, height as f32),
+                app.view_for(id),
+            );
+            let snapshot = ui.snapshot(&app.theme()).expect("the HUD renders");
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                let name = format!("hud-{}", app.hud_content().map_or(0, |hud| hud.text.len()));
+                let _ = snapshot.matches_image(std::path::PathBuf::from(&directory).join(name));
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let _ = snapshot.matches_image(dir.path().join("hud"));
+            let png = std::fs::read_dir(dir.path())
+                .unwrap()
+                .find_map(|entry| {
+                    let path = entry.ok()?.path();
+                    path.extension().is_some_and(|x| x == "png").then_some(path)
+                })
+                .expect("a PNG");
+            let image = ::image::open(png).unwrap().to_rgba8();
+            // In surface pixels: the snapshot may be at a higher scale.
+            let scale = image.width() as usize / crate::hud::SURFACE_SIZE.0 as usize;
+            let row = image.height() / 2;
+            let backdrop = *image.get_pixel(0, row);
+            (0..image.width())
+                .filter(|&x| *image.get_pixel(x, row) != backdrop)
+                .count()
+                / scale.max(1)
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let _ = app.show_hud(crate::hud::Hud::new("Copied"));
+        let short = pill_width(&app);
+        let _ = app.show_hud(crate::hud::Hud::new(
+            "Could not start the extension: the worker exited before it answered, \
+             with status 1 and nothing on its standard error",
+        ));
+        let long = pill_width(&app);
+        let surface = crate::hud::SURFACE_SIZE.0 as usize;
+        assert!(
+            short < 120,
+            "a short message keeps a short pill: {short} px"
+        );
+        assert!(
+            long > short && long < surface,
+            "a long one is cut inside the {surface} px surface: {long} px"
         );
     }
 
