@@ -126,7 +126,7 @@ card_w=$(geometry_field card_width)
 card_h=$(geometry_field card_max_height)
 shadow_pad=$(sed -n 's/^pub const SHADOW_PADDING: u16 = \([0-9]\+\);.*/\1/p' "$design" | head -1)
 # The window is the card plus its drop-shadow padding on all sides (design.rs
-# SHADOW_PADDING=24, SHADOW_BLUR=32). The card's 720x560 plus 24px padding
+# SHADOW_PADDING=24, SHADOW_OFFSET_Y=6, SHADOW_BLUR=18). The card's 720x560 plus 24px padding
 # becomes a 768x608 transparent window, centred, with the shadow inside the
 # padding. The containment box must track the WINDOW, not just the card, or
 # the 48px of padding fails the gate exactly as run 35568015733 did:

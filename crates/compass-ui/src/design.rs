@@ -348,12 +348,40 @@ pub fn dropdown_menu(palette: Palette) -> iced::widget::overlay::menu::Style {
     }
 }
 
-/// The shadow around the card, in logical pixels.
-///
-/// Enough to lift the card off the wallpaper without dominating the palette.
+/// The room around the card for its shadow, in logical pixels, on every
+/// side. The window is the card plus this, so the shadow has to end inside it.
 pub const SHADOW_PADDING: u16 = 24;
+/// How far the card's drop shadow falls below it.
+pub const SHADOW_OFFSET_Y: f32 = 6.0;
 /// The blur radius for the card's drop shadow.
-pub const SHADOW_BLUR: f32 = 32.0;
+///
+/// Iced fades a shadow out over `blur_radius` past the shape it is cast by, so
+/// the shadow reaches `SHADOW_OFFSET_Y + SHADOW_BLUR` below the card and
+/// `SHADOW_BLUR` to each side. It used to be a 16 px offset and a 32 px blur:
+/// 48 px of shadow in 24 px of window, cut off by the surface's bottom edge in
+/// a hard band wherever the card grew to its full height (#251).
+pub const SHADOW_BLUR: f32 = 18.0;
+/// How dark the card's drop shadow is where it meets the card.
+pub const SHADOW_ALPHA: f32 = 0.35;
+
+const _: () = assert!(
+    SHADOW_OFFSET_Y + SHADOW_BLUR <= SHADOW_PADDING as f32,
+    "the card's shadow must fade out inside the window"
+);
+
+/// The card's drop shadow: soft, falling a little below it, and wholly inside
+/// [`SHADOW_PADDING`].
+#[must_use]
+pub fn card_shadow() -> iced::Shadow {
+    iced::Shadow {
+        color: iced::Color {
+            a: SHADOW_ALPHA,
+            ..iced::Color::BLACK
+        },
+        offset: iced::Vector::new(0.0, SHADOW_OFFSET_Y),
+        blur_radius: SHADOW_BLUR,
+    }
+}
 
 /// How opaque the card is when `tint` is on (#86).
 ///

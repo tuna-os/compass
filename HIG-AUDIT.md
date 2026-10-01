@@ -18,7 +18,7 @@
 - No `AdwHeaderBar` buttons — Iced overlay has no header bar by design (centred palette). No header-bar button violations. No icon-only buttons without tooltip: all rows are labelled `text(item.name)` + icon container with title fallback.
 
 ### 3. Layout/margins — 0 critical
-- `design.rs` `SHADOW_PADDING 24` + `spacing 12/6` scale (`row spacing 12`, `padding left 12 right 12`, `geometry inset 6`) on `6/12/18/24` — compliant. Window `width-request` `720` card (`768` window) > `360` minimum. `card_radius 16` + `SHADOW_BLUR 32` Adwaita-mirrored.
+- `design.rs` `SHADOW_PADDING 24` + `spacing 12/6` scale (`row spacing 12`, `padding left 12 right 12`, `geometry inset 6`) on `6/12/18/24` — compliant. Window `width-request` `720` card (`768` window) > `360` minimum. `card_radius 16` + `SHADOW_BLUR 18` (offset 6, inside the 24 px padding, #251) Adwaita-mirrored.
 - `app.rs:1532` `search` `Padding left 14 right 14` off `6` scale? **minor** `14` vs `12` — retained for visual alignment with `14px` icon inset; not a HIG break for a palette input.
 
 ### 4. Icons — 0 critical, 1 minor

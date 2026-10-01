@@ -109,8 +109,13 @@ impl Frame {
 
 /// A launcher showing four results, the first selected.
 fn launcher(appearance: Appearance) -> (tempfile::TempDir, LauncherApp) {
+    launcher_with(appearance, 4)
+}
+
+/// A launcher showing `results` results, the first selected.
+fn launcher_with(appearance: Appearance, results: usize) -> (tempfile::TempDir, LauncherApp) {
     let dir = tempfile::tempdir().expect("tempdir");
-    for i in 0..4 {
+    for i in 0..results {
         std::fs::write(
             dir.path().join(format!("app-{i:02}.desktop")),
             format!("[Desktop Entry]\nType=Application\nName=Application {i:02}\nExec=/bin/true\n"),
@@ -393,10 +398,11 @@ fn the_surface_around_the_card_is_transparent() {
             .rev()
             .find(|&y| row_max(&rgba, y) == 255)
             .expect("the card is painted opaque");
-        // Past the shadow's 16 px offset and twice its blur, nothing of the
-        // card reaches.
-        let shadow_end =
-            card_bottom + ((16.0 + 2.0 * compass_ui::design::SHADOW_BLUR) * SCALE) as u32;
+        // Past the shadow's offset and twice its blur, nothing of the card
+        // reaches.
+        let shadow_end = card_bottom
+            + ((compass_ui::design::SHADOW_OFFSET_Y + 2.0 * compass_ui::design::SHADOW_BLUR)
+                * SCALE) as u32;
         assert!(
             shadow_end + (40.0 * SCALE) as u32 <= height,
             "{appearance:?}: the card fills the window; no band left to check"
@@ -420,5 +426,65 @@ fn the_surface_around_the_card_is_transparent() {
             255,
             "{appearance:?}: the control (the theme's background) must be opaque there"
         );
+    }
+}
+
+/// THE CARD'S SHADOW FADES OUT BEFORE EVERY EDGE OF THE WINDOW (#251).
+///
+/// The window is the card plus `SHADOW_PADDING` on each side, and a long list
+/// grows the card to its full height, so the padding is all the room the
+/// shadow has below it. A 16 px offset and a 32 px blur needed 48 px there and
+/// got 24: the surface's last rows still carried alpha 29 of the shadow, and
+/// on the desktop the shadow ended in a hard band along the bottom edge
+/// instead of fading out. So, for a short card and a full-height one, in both
+/// appearances: the outermost row and column on every side are clear, and
+/// below the card, the shadow only ever gets lighter.
+#[test]
+fn the_card_shadow_fades_out_before_every_edge() {
+    let size = compass_ui::AppFlags::default().window_config.size;
+    let padding = (f32::from(compass_ui::design::SHADOW_PADDING) * SCALE) as u32;
+    for appearance in [Appearance::Light, Appearance::Dark] {
+        for results in [4, 30] {
+            let (_dir, app) = launcher_with(appearance, results);
+            let (width, rgba) = paint_surface(&app, size, iced::Color::TRANSPARENT);
+            let height = rgba.len() as u32 / 4 / width;
+            let alpha = |x: u32, y: u32| rgba[((y * width + x) * 4 + 3) as usize];
+            let centre = width / 2;
+            let card_bottom = (0..height)
+                .rev()
+                .find(|&y| alpha(centre, y) == 255)
+                .expect("the card is painted opaque");
+            if results > 4 {
+                assert!(
+                    card_bottom + padding + 2 >= height,
+                    "{appearance:?}: a long list must grow the card to the window's padding \
+                     (card ends at {card_bottom} of {height}), or this checks the easy case"
+                );
+            }
+
+            let edges = (0..width)
+                .flat_map(|x| [alpha(x, 0), alpha(x, height - 1)])
+                .chain((0..height).flat_map(|y| [alpha(0, y), alpha(width - 1, y)]))
+                .max()
+                .unwrap_or(0);
+            assert!(
+                edges <= 1,
+                "{appearance:?}, {results} results: the shadow reaches the window's edge \
+                 (alpha {edges}) and is cut off there"
+            );
+
+            let below: Vec<u8> = (card_bottom + 1..height)
+                .map(|y| alpha(centre, y))
+                .collect();
+            assert!(
+                below.first().is_some_and(|&first| first >= 20),
+                "{appearance:?}, {results} results: no shadow under the card: {below:?}"
+            );
+            assert!(
+                below.windows(2).all(|pair| pair[1] <= pair[0]),
+                "{appearance:?}, {results} results: the shadow under the card does not fade \
+                 out monotonically: {below:?}"
+            );
+        }
     }
 }

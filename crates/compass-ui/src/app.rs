@@ -4243,11 +4243,7 @@ impl LauncherApp {
                     width: 1.0,
                     radius: f32::from(geometry.card_radius).into(),
                 },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                    offset: iced::Vector::new(0.0, 16.0),
-                    blur_radius: design::SHADOW_BLUR,
-                },
+                shadow: design::card_shadow(),
                 ..container::Style::default()
             });
         // Reports the card's size when it is shown, when it resizes, and
