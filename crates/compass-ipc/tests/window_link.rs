@@ -286,6 +286,70 @@ async fn a_push_to_a_dead_window_fails_rather_than_reporting_success() {
     );
 }
 
+/// The engine gives up on a slow window by dropping the push. The window
+/// still answers that command, late and before the next one, and the next
+/// push must not take that late answer for its own.
+#[tokio::test]
+async fn a_push_given_up_on_does_not_steal_the_next_ones_answer() {
+    let dir = TempDir::new();
+    let socket = dir.socket();
+    let mut links = engine_accepting_one_window(&socket).await;
+
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    let window = tokio::spawn({
+        let socket = socket.clone();
+        async move {
+            let mut window = WindowClient::attach(socket.as_path())
+                .await
+                .expect("attach");
+            let first = window
+                .next_command()
+                .await
+                .expect("first")
+                .expect("a command");
+            assert_eq!(first, WindowCommand::Show);
+            let _ = release_rx.await;
+            window
+                .reply(WindowOutcome::Shown)
+                .await
+                .expect("late reply");
+            let second = window
+                .next_command()
+                .await
+                .expect("second")
+                .expect("a command");
+            assert_eq!(second, WindowCommand::Hide);
+            window.reply(WindowOutcome::Hidden).await.expect("reply");
+            let _ = window.next_command().await;
+        }
+    });
+
+    let mut link = tokio::time::timeout(GUARD, links.recv())
+        .await
+        .expect("link handed over in time")
+        .expect("a link");
+
+    let given_up =
+        tokio::time::timeout(Duration::from_millis(100), link.push(WindowCommand::Show)).await;
+    assert!(
+        given_up.is_err(),
+        "the window was holding its answer, got {given_up:?}"
+    );
+
+    let _ = release_tx.send(());
+    let outcome = tokio::time::timeout(GUARD, link.push(WindowCommand::Hide))
+        .await
+        .expect("push answered in time")
+        .expect("push");
+    assert_eq!(outcome, WindowOutcome::Hidden);
+
+    drop(link);
+    tokio::time::timeout(GUARD, window)
+        .await
+        .expect("window ended in time")
+        .expect("window task");
+}
+
 #[tokio::test]
 async fn a_window_whose_engine_went_away_is_told_rather_than_left_waiting() {
     let dir = TempDir::new();

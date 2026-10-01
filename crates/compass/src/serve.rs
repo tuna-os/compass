@@ -2544,13 +2544,50 @@ fn no_window(what: &str) -> Response {
 /// removed. What it buys is releasing the file descriptor and not paying a
 /// doomed write on every subsequent request. See [`WindowSlot`].
 pub(crate) async fn forward(slot: &WindowSlot, command: WindowCommand, what: &str) -> Response {
+    forward_within(slot, command, what, WINDOW_ANSWER_TIMEOUT).await
+}
+
+/// How long the engine waits for the window to answer a command.
+///
+/// The slot is locked while it waits, so every request that needs the window
+/// waits too. Every command is answered as soon as the window has acted on it
+/// (a dmenu's choice comes later, outside the push), so a window that has not
+/// answered in this long is stuck. Shorter than the CLI's own 10 seconds, so
+/// `compass toggle` reports the engine's reason rather than its own timeout.
+const WINDOW_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// [`forward`] with the wait for the window's answer bounded by `timeout`.
+///
+/// A window that does not answer in time keeps its link. It may only be busy,
+/// and dropping it would leave the launcher undriven until it restarts; its
+/// late answer is skipped by the next push (see [`WindowLink::push`]).
+pub(crate) async fn forward_within(
+    slot: &WindowSlot,
+    command: WindowCommand,
+    what: &str,
+    timeout: std::time::Duration,
+) -> Response {
     let mut guard = slot.lock().await;
 
     let Some(link) = guard.as_mut() else {
         return no_window(what);
     };
 
-    match link.push(command).await {
+    let Ok(answer) = tokio::time::timeout(timeout, link.push(command)).await else {
+        tracing::warn!(
+            seconds = timeout.as_secs_f32(),
+            "the launcher window did not answer"
+        );
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!(
+                "the launcher window did not answer within {} seconds, so it could not {what}",
+                timeout.as_secs()
+            ),
+        ));
+    };
+
+    match answer {
         Ok(WindowOutcome::Shown | WindowOutcome::Hidden) => Response::Ack,
         Ok(WindowOutcome::Failed(reason)) => {
             // The window is alive and said no. Keeping the link is the point:

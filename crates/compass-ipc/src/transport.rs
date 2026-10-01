@@ -284,6 +284,13 @@ impl WindowLink {
     /// acknowledged by the write succeeding: a successful write only means the
     /// bytes reached a kernel buffer, and a window that died between the write
     /// and the read would look like a window that showed.
+    ///
+    /// # Cancellation
+    ///
+    /// The future may be dropped while it waits, as the engine does when a
+    /// window takes too long to answer. The window still answers that command
+    /// in order, before the next one, so the next push skips answers to
+    /// commands older than its own instead of taking one as its own.
     pub async fn push(&mut self, command: WindowCommand) -> Result<WindowOutcome> {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
@@ -292,9 +299,19 @@ impl WindowLink {
             .send(&ResponseEnvelope::new(id, Response::Window(command)))
             .await?;
 
-        let envelope = match self.framed.next().await {
-            Some(frame) => frame?,
-            None => return Err(Error::ConnectionClosed),
+        let envelope = loop {
+            let envelope = match self.framed.next().await {
+                Some(frame) => frame?,
+                None => return Err(Error::ConnectionClosed),
+            };
+            if envelope.id >= id {
+                break envelope;
+            }
+            tracing::debug!(
+                late = envelope.id,
+                waiting_for = id,
+                "skipping a late window answer"
+            );
         };
 
         if envelope.version != PROTOCOL_VERSION {

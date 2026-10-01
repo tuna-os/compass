@@ -300,6 +300,64 @@ mod tests {
         );
     }
 
+    /// A window that is slow to answer must not hold the engine's slot, and
+    /// every request queued behind it, for as long as it takes.
+    #[tokio::test]
+    async fn the_engine_stops_waiting_on_a_slow_window_and_keeps_it() {
+        let dir = TempDir::new();
+        let socket = dir.socket();
+        let mut links = engine(&socket).await;
+
+        let client = tokio::time::timeout(GUARD, WindowClient::attach(socket.as_path()))
+            .await
+            .expect("attached in time")
+            .expect("attach");
+        let (commands_tx, mut commands_rx) = mpsc::unbounded_channel::<UiCommand>();
+        let (outcomes_tx, outcomes_rx) = mpsc::unbounded_channel::<UiOutcome>();
+        tokio::spawn(bridge(client, commands_tx, outcomes_rx));
+
+        let link = tokio::time::timeout(GUARD, links.recv())
+            .await
+            .expect("link in time")
+            .expect("a link");
+        let slot = std::sync::Arc::new(tokio::sync::Mutex::new(Some(link)));
+
+        let slow = crate::serve::forward_within(
+            &slot,
+            WindowCommand::Show,
+            "show the launcher",
+            Duration::from_millis(100),
+        )
+        .await;
+        let Response::Error(err) = slow else {
+            panic!("a window that has not answered must not be acknowledged, got {slow:?}");
+        };
+        assert!(err.message.contains("did not answer"), "{}", err.message);
+        assert!(slot.lock().await.is_some(), "a slow window keeps its link");
+
+        // The window catches up: the late answer is skipped, the next is read.
+        assert_eq!(commands_rx.recv().await, Some(UiCommand::Show));
+        outcomes_tx.send(UiOutcome::Shown).expect("late answer");
+        tokio::spawn(async move {
+            while let Some(command) = commands_rx.recv().await {
+                let outcome = match command {
+                    UiCommand::Hide => UiOutcome::Hidden,
+                    _ => UiOutcome::Failed("unexpected".to_owned()),
+                };
+                if outcomes_tx.send(outcome).is_err() {
+                    return;
+                }
+            }
+        });
+        let next = tokio::time::timeout(
+            GUARD,
+            crate::serve::forward(&slot, WindowCommand::Hide, "hide the launcher"),
+        )
+        .await
+        .expect("answered in time");
+        assert!(matches!(next, Response::Ack), "got {next:?}");
+    }
+
     /// Only used to build a refusing engine in the test below.
     fn refusal() -> Response {
         Response::Error(ProtocolError::new(
