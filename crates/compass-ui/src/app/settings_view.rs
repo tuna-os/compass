@@ -35,6 +35,16 @@ const NO_FIELD: &str = "settings-no-field";
 /// the edge stays in view.
 const PAGE_SCROLL: f32 = BODY_HEIGHT - 50.0;
 
+/// Another page is on show: it opens at its top, not at the scroll offset
+/// the last one was left at, and the sidebar scrolls to its row.
+fn shown_page_changed() -> Task<Message> {
+    use iced::widget::operation::{RelativeOffset, snap_to};
+    Task::batch([
+        snap_to(crate::scroll::SETTINGS_BODY, RelativeOffset::START),
+        crate::scroll::reveal_settings_page(),
+    ])
+}
+
 fn settings(message: SettingsMessage) -> Message {
     Message::Settings(message)
 }
@@ -65,7 +75,7 @@ impl LauncherApp {
         self.panel = None;
         let _ = self.close_extension_view();
         self.page = Page::Settings(Box::new(page));
-        focus_search()
+        Task::batch([focus_search(), shown_page_changed()])
     }
 
     /// Moves the settings page aside while an extension command's
@@ -185,8 +195,12 @@ impl LauncherApp {
             _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
         };
         if let Some(direction) = direction {
+            let before = page.selected;
             page.step(direction == Direction::Down);
             page.notice = None;
+            if page.selected != before {
+                return shown_page_changed();
+            }
         }
         Task::none()
     }
@@ -324,7 +338,11 @@ impl LauncherApp {
         match message {
             SettingsMessage::QueryChanged(query) => {
                 if let Page::Settings(page) = &mut self.page {
+                    let before = page.selected;
                     page.set_query(query);
+                    if page.selected != before {
+                        return shown_page_changed();
+                    }
                 }
                 Task::none()
             }
@@ -333,7 +351,7 @@ impl LauncherApp {
                     page.select(row);
                     page.notice = None;
                 }
-                focus_search()
+                Task::batch([focus_search(), shown_page_changed()])
             }
             SettingsMessage::Changed(key, value) => self.change_setting(key, value),
             SettingsMessage::DraftEdited(key, draft) => {
