@@ -26,6 +26,14 @@ on:
   # The VM tier calls this workflow so that "how the Flatpak is built" has one
   # definition. The bundle it uploads is what gets layered into the test image.
   workflow_call:
+    inputs:
+      archs:
+        description: >-
+          JSON array of the architectures to build. The callers (VM tier,
+          Suite 1, tier 2) test on x86_64 runners only, so they need only that
+          bundle and do not wait for an aarch64 build.
+        type: string
+        default: '["x86_64"]'
 
 # The literal prefix matters. `github.workflow` in a *called* workflow is the
 # CALLER's name, so without it this group would be identical to the VM tier's
@@ -66,11 +74,28 @@ jobs:
           fi
           echo "cargo-sources.json matches Cargo.lock"
 
+  # One leg per architecture, each on a native runner (#246). No QEMU: the
+  # build is a full release compile, and every step after it -- doctor, Suite
+  # 5, Spike B -- runs the binary, so each architecture is tested on its own
+  # hardware with the same steps. Pushes, pull requests and manual runs build
+  # both, so publish-flatpak.yaml always finds both bundles; a caller through
+  # workflow_call gets the `archs` it asks for, x86_64 by default.
+  #
+  # x86_64 keeps the artifact names it always had (flatpak-bundle and so on),
+  # which the VM tier, Suite 1 and tier 2 download by name; other
+  # architectures add `-<arch>`.
   build:
-    runs-on: ubuntu-24.04
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     # The freedesktop SDK plus the Rust extension is a large download and the build
     # is a full release compile of the workspace. Generous, but bounded.
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(inputs.archs || '["x86_64", "aarch64"]') }}
+    env:
+      ARTIFACT_SUFFIX: ${{ matrix.arch != 'x86_64' && format('-{0}', matrix.arch) || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -97,8 +122,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.local/share/flatpak
-          key: flatpak-runtime-${{ runner.os }}-${{ hashFiles('packaging/flatpak/org.tunaos.compass.yaml') }}
-          restore-keys: flatpak-runtime-${{ runner.os }}-
+          key: flatpak-runtime-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('packaging/flatpak/org.tunaos.compass.yaml') }}
+          restore-keys: flatpak-runtime-${{ runner.os }}-${{ matrix.arch }}-
 
       - name: Install the runtime and SDK
         run: |
@@ -124,6 +149,13 @@ jobs:
           echo -n "SDK ships:                     "
           flatpak run --user --command=sh --devel org.freedesktop.Sdk//26.08 \
             -c 'PATH=/usr/lib/sdk/rust-stable/bin:$PATH rustc --version' || echo "could not query"
+
+      # The bundle is JavaScript, the same on every architecture, but npm runs
+      # on the runner, and the arm64 image need not carry the Node the x86_64
+      # one does. 22 is the major the manifest ships (node22).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
 
       # The manifest installs this from the source tree, because the offline
       # build cannot run npm. Same script as the Rust workflow's
@@ -229,7 +261,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: spike-b-flatpak
+          name: spike-b-flatpak${{ env.ARTIFACT_SUFFIX }}
           path: /tmp/spike-b.*
           retention-days: 14
           if-no-files-found: warn
@@ -248,7 +280,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: flatpak-bundle
+          name: flatpak-bundle${{ env.ARTIFACT_SUFFIX }}
           path: /tmp/org.tunaos.compass.flatpak
           retention-days: 14
           if-no-files-found: error
@@ -257,7 +289,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: flatpak-repo
+          name: flatpak-repo${{ env.ARTIFACT_SUFFIX }}
           path: /tmp/repo
           retention-days: 7
           if-no-files-found: warn

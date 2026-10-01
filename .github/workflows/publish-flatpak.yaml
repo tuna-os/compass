@@ -2,10 +2,11 @@
 #
 # It does not build anything. flatpak.yaml is the one definition of how the
 # Flatpak is built, and it already builds, installs and smoke-tests it on every
-# push to main that touches the engine. This takes the single-file bundle that
-# run uploaded, turns it into the OCI image the remote serves, pushes that to
-# ghcr.io/tuna-os/compass, and records its digest in the remote's index, which
-# lives in tuna-os/docs (static/flatpak/index/static).
+# push to main that touches the engine, once per architecture on a native
+# runner. This takes the single-file bundles that run uploaded (x86_64 and
+# aarch64), turns each into the OCI image the remote serves, pushes them to
+# ghcr.io/tuna-os/compass, and records their digests in the remote's index,
+# which lives in tuna-os/docs (static/flatpak/index/static).
 #
 # Rebuilding here instead would mean a second copy of the build — the
 # extension runtime step, the runtime cache, the SDK versions — that drifts
@@ -50,6 +51,7 @@ jobs:
     env:
       APP_ID: org.tunaos.compass
       IMAGE: ghcr.io/tuna-os/compass
+      ARCHS: x86_64 aarch64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -70,10 +72,24 @@ jobs:
           echo "id=$run" >> "$GITHUB_OUTPUT"
           echo "publishing the bundle from run $run"
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      # flatpak.yaml builds each architecture on its own native runner and
+      # uploads its bundle: flatpak-bundle for x86_64, flatpak-bundle-aarch64
+      # for aarch64. Both are required; a run from before aarch64 was built has
+      # no second bundle, and publishing half of a release would leave the
+      # remote's arches out of step.
+      - name: Download the x86_64 bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: flatpak-bundle
-          path: bundle
+          path: bundle/x86_64
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download the aarch64 bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: flatpak-bundle-aarch64
+          path: bundle/aarch64
           run-id: ${{ steps.run.outputs.id }}
           github-token: ${{ github.token }}
 
@@ -87,40 +103,64 @@ jobs:
       # --oci writes those into the image config as org.freedesktop.appstream.*
       # labels, which is where a software centre reads the app's name, icon and
       # licence from on an OCI remote.
-      - name: Export the OCI image
+      #
+      # Importing a bundle and exporting it again only moves ostree objects, so
+      # the aarch64 one is handled on this x86_64 runner like the other: nothing
+      # here executes the app.
+      - name: Export the OCI images
         run: |
           ostree --repo=repo init --mode=archive-z2
-          flatpak build-import-bundle repo "bundle/$APP_ID.flatpak"
-          flatpak build-bundle --oci --arch=x86_64 repo compass.oci "$APP_ID"
-          python3 -c "
-          import json, pathlib
-          oci = pathlib.Path('compass.oci')
+          for arch in $ARCHS; do
+            flatpak build-import-bundle repo "bundle/$arch/$APP_ID.flatpak"
+            flatpak build-bundle --oci --arch="$arch" repo "oci-$arch" "$APP_ID"
+            python3 - "oci-$arch" "$arch" <<'PY'
+          import json, pathlib, sys
+          oci, arch = pathlib.Path(sys.argv[1]), sys.argv[2]
           blobs = oci / 'blobs' / 'sha256'
           digest = json.loads((oci / 'index.json').read_text())['manifests'][0]['digest']
           manifest = json.loads((blobs / digest.split(':')[1]).read_text())
           config = json.loads((blobs / manifest['config']['digest'].split(':')[1]).read_text())
           labels = sorted(config['config']['Labels'])
-          print(digest)
+          print(arch, digest, config.get('architecture'))
           print('\n'.join('  ' + label for label in labels))
+          oci_arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}[arch]
+          if config.get('architecture') != oci_arch:
+              raise SystemExit(f'{arch} image says architecture={config.get("architecture")!r}, expected {oci_arch}')
           missing = [l for l in ('org.freedesktop.appstream.appdata', 'org.freedesktop.appstream.icon-128') if l not in labels]
           if missing:
-              raise SystemExit(f'no AppStream labels on the image: {missing}; software centres would show a bare app id')
-          "
+              raise SystemExit(f'no AppStream labels on the {arch} image: {missing}; software centres would show a bare app id')
+          PY
+          done
 
+      # The org's tag convention (tuna-os/.github's reusable publish-flatpak):
+      # latest-<arch> for each architecture, and plain latest tracking x86_64
+      # for anything that pulls by tag without knowing about the suffix.
       - name: Push to GHCR
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           echo "$GITHUB_TOKEN" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
-          skopeo copy oci:compass.oci "docker://$IMAGE:latest"
+          for arch in $ARCHS; do
+            skopeo copy "oci:oci-$arch" "docker://$IMAGE:latest-$arch"
+          done
+          skopeo copy oci:oci-x86_64 "docker://$IMAGE:latest"
 
       # The org's shared step: clones tuna-os/docs, updates this app's entry in
       # static/flatpak/index/static and pushes, retrying when another app's
-      # publish lands first.
-      - name: Update the remote's index (tuna-os/docs)
+      # publish lands first. Once per architecture, as the reusable workflow
+      # does: the index keeps one image per architecture under a repo name.
+      - name: Update the remote's index (tuna-os/docs), x86_64
         uses: tuna-os/.github/.github/actions/publish-flatpak-index@main
         with:
-          oci-dir: compass.oci
+          oci-dir: oci-x86_64
+          repo-name: tuna-os/compass
+          tags: latest
+          token: ${{ secrets.FLATPAK_INDEX_TOKEN }}
+
+      - name: Update the remote's index (tuna-os/docs), aarch64
+        uses: tuna-os/.github/.github/actions/publish-flatpak-index@main
+        with:
+          oci-dir: oci-aarch64
           repo-name: tuna-os/compass
           tags: latest
           token: ${{ secrets.FLATPAK_INDEX_TOKEN }}
