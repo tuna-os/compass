@@ -255,7 +255,7 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         kind: CommandKind::RaycastStore,
         entrypoint: "raycast-store",
         title: "Raycast Store",
-        subtitle: "Install compatible extensions from the Raycast store",
+        subtitle: "Install compatible extensions from the Raycast Store",
         keywords: &["store", "extensions", "install", "raycast", "plugins"],
         icon: "raycast",
     },

@@ -295,7 +295,7 @@ To build your own extension, see the [Vicinae SDK documentation](https://docs.vi
 /// compatibility sheet, which this store shows).
 pub const RAYCAST_STORE_INTRO: &str = "# Welcome to the Raycast Extension Store
 
-Compass provides direct integration with the official [Raycast store](https://www.raycast.com/store), allowing you to search and install Raycast extensions directly from Compass.
+Compass provides direct integration with the official [Raycast Store](https://www.raycast.com/store), so you can search for Raycast extensions and install them from Compass.
 
 Raycast extensions are written for macOS, so not all of them work on Linux. Each extension has a colored indicator showing how well it works here.
 
