@@ -3757,6 +3757,15 @@ impl LauncherApp {
                         return self.update(Message::MoveSelection(Direction::Up));
                     }
                     Key::Named(Named::Escape) => return self.update(Message::Dismiss),
+                    // A message (a script's line, an error) stands in place
+                    // of the results: Enter puts them back rather than
+                    // launching a row nobody can see.
+                    Key::Named(Named::Enter)
+                        if self.error.is_some() && matches!(self.page, Page::Root) =>
+                    {
+                        self.error = None;
+                        return focus_search();
+                    }
                     Key::Named(Named::Enter) => return self.update(Message::LaunchSelected),
                     _ => {}
                 }
@@ -14108,6 +14117,94 @@ mod tests {
         let task = app.update(pressed(iced::keyboard::key::Named::Escape));
         settle(&mut app, task);
         assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+    }
+
+    #[test]
+    fn full_output_scrolls_from_the_keyboard_copies_and_shows_a_failure() {
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _backend) = scripts_app(dir.path());
+        app.page = Page::ScriptOutput(crate::script_page::ScriptOutputPage::new(
+            "report.sh".into(),
+            Vec::new(),
+            "Disk Report".into(),
+            7,
+        ));
+        let Page::ScriptOutput(page) = &mut app.page else {
+            unreachable!()
+        };
+        page.apply(
+            7,
+            crate::backend::ScriptOutputState {
+                output: "\u{1b}[31mdisk full\u{1b}[0m\nline 2\n".into(),
+                finished: true,
+                exit_code: Some(3),
+                elapsed_ms: 100,
+            },
+        );
+        assert!(page.failed());
+        assert_eq!(page.heading(), "Failed after 0.1s (exit code 3)");
+
+        for key in [
+            Named::ArrowDown,
+            Named::ArrowUp,
+            Named::PageDown,
+            Named::PageUp,
+            Named::Home,
+            Named::End,
+        ] {
+            assert_eq!(
+                task_actions(app.update(pressed(key))),
+                1,
+                "{key:?} scrolls the output"
+            );
+        }
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let copy = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Copy output"))
+            .unwrap_or_else(|| panic!("no Copy output: {}", app.state_line()));
+        let task = app.update(Message::PanelClicked(copy));
+        assert_eq!(settle(&mut app, task), ["disk full\nline 2\n"]);
+    }
+
+    #[test]
+    fn after_a_compact_script_enter_does_not_run_it_again_and_typing_searches() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "count things".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert!(app.error.is_some(), "{}", app.state_line());
+        let runs = backend.script_runs.lock().unwrap().len();
+        let started = app.update(Message::ScriptStarted {
+            id: "count.sh".into(),
+            arguments: Vec::new(),
+            result: Ok(Some(7)),
+        });
+        assert!(
+            task_actions(started) > 0,
+            "the search field gets the keyboard back"
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.script_runs.lock().unwrap().len(),
+            runs,
+            "not run again"
+        );
+        assert!(app.error.is_none(), "the results are back");
+
+        app.error = Some("count.sh".into());
+        let task = app.update(Message::QueryChanged("touch".into()));
+        settle(&mut app, task);
+        assert!(app.error.is_none(), "typing replaces the line with results");
+        assert_eq!(app.query, "touch");
     }
 
     #[test]
