@@ -321,3 +321,55 @@ fn a_listing_with_nulls_still_reads() {
     assert_eq!(extension.themed_icon(true), Some("l"));
     assert_eq!(extension.screenshots().len(), 2);
 }
+
+/// `GET /extensions/raycast/github`, recorded from the live API and trimmed
+/// to the fields this crate reads (the signed download URL replaced).
+const GITHUB: &str = include_str!("fixtures/raycast-extension-github.json");
+
+/// `GET /store_listings/search?q=github`, recorded and trimmed the same way.
+const GITHUB_SEARCH: &str = include_str!("fixtures/raycast-search-github.json");
+
+#[test]
+fn an_organisations_extension_is_addressed_by_its_owner_not_its_author() {
+    let extension: Extension = serde_json::from_str(GITHUB).expect("the recorded listing reads");
+    assert_eq!(extension.author.handle, "thomaslombart");
+    assert_eq!(extension.owner.handle, "raycast");
+    assert_eq!(extension.owner_handle(), "raycast");
+    assert_eq!(
+        extension_path(extension.owner_handle(), &extension.name),
+        "/extensions/raycast/github",
+        "the API answers this one; /extensions/thomaslombart/github is a 404"
+    );
+
+    let listing = compass_core::store_listing::Listing::from_raycast(&extension, None);
+    assert_eq!(listing.owner, "raycast");
+    assert_eq!(listing.author, "thomaslombart", "the author is still shown");
+    assert_eq!(listing.author_name, "Thomas Lombart");
+    assert_eq!(
+        compass_core::store_listing::Store::Raycast.extension_id(&listing.name),
+        "store.raycast.github",
+        "the installed id has no handle in it, so existing installs keep theirs"
+    );
+}
+
+#[test]
+fn a_search_result_carries_the_owner_too() {
+    let page: ListApiResponse =
+        serde_json::from_str(GITHUB_SEARCH).expect("the recorded search reads");
+    let first = page.data.first().expect("a result");
+    assert_eq!(first.name, "github");
+    assert_eq!(first.owner_handle(), "raycast");
+}
+
+#[test]
+fn a_listing_without_an_owner_falls_back_to_its_author() {
+    let extension: Extension =
+        serde_json::from_str(r#"{"name": "hn", "author": {"name": "Ray", "handle": "ray"}}"#)
+            .unwrap();
+    assert_eq!(extension.owner_handle(), "ray");
+    let extension: Extension = serde_json::from_str(
+        r#"{"name": "hn", "author": {"name": "Ray", "handle": "ray"}, "owner": null}"#,
+    )
+    .unwrap();
+    assert_eq!(extension.owner_handle(), "ray");
+}

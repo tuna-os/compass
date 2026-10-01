@@ -244,8 +244,8 @@ pub const GITHUB_URL: &str = crate::tray::PROJECT_URL;
 pub struct Recommendation {
     /// The store it comes from.
     pub store: Store,
-    /// Its author's handle in that store.
-    pub author: &'static str,
+    /// The handle that store files it under (its owner's).
+    pub owner: &'static str,
     /// Its name in that store.
     pub name: &'static str,
     /// Its title, as the store lists it.
@@ -270,35 +270,35 @@ impl Recommendation {
 pub const RECOMMENDED_EXTENSIONS: &[Recommendation] = &[
     Recommendation {
         store: Store::Vicinae,
-        author: "gelei",
+        owner: "gelei",
         name: "bluetooth",
         title: "Bluetooth",
         description: "Connect and manage Bluetooth devices.",
     },
     Recommendation {
         store: Store::Vicinae,
-        author: "dagimg-dot",
+        owner: "dagimg-dot",
         name: "wifi-commander",
         title: "Wifi Commander",
         description: "Connect to Wi-Fi networks and manage saved ones.",
     },
     Recommendation {
         store: Store::Vicinae,
-        author: "leonkohli",
+        owner: "leonkohli",
         name: "process-manager",
         title: "Process Manager",
         description: "Find running processes and stop them.",
     },
     Recommendation {
         store: Store::Vicinae,
-        author: "fbosch",
+        owner: "fbosch",
         name: "flathub-search",
         title: "Flathub",
         description: "Search Flathub for applications.",
     },
     Recommendation {
         store: Store::Raycast,
-        author: "gebeto",
+        owner: "gebeto",
         name: "translate",
         title: "Google Translate",
         description: "Translate text between languages.",
@@ -530,7 +530,7 @@ mod tests {
                 "{id} is not an id Compass installs"
             );
             assert!(ids.insert(id.clone()), "{id} is recommended twice");
-            assert!(!recommendation.author.is_empty() && !recommendation.title.is_empty());
+            assert!(!recommendation.owner.is_empty() && !recommendation.title.is_empty());
             assert!(
                 recommendation.description.ends_with('.'),
                 "{id}: a whole sentence"

@@ -48,6 +48,8 @@ pub struct ExtensionCommand {
     pub extension_name: String,
     /// The manifest's `author`.
     pub author: String,
+    /// The manifest's `owner`, when it names one.
+    pub owner: Option<String>,
     /// Whether it came from the Raycast store (`isRaycast`).
     pub is_raycast: bool,
     /// The extension's preferences, then the command's own.
@@ -61,6 +63,22 @@ pub struct ExtensionCommand {
 }
 
 impl ExtensionCommand {
+    /// Raycast's `ownerOrAuthorName`: the owner when the manifest names one,
+    /// else the author. What a Raycast deeplink and `launchCommand` name an
+    /// extension by.
+    #[must_use]
+    pub fn owner_or_author(&self) -> &str {
+        self.owner.as_deref().unwrap_or(&self.author)
+    }
+
+    /// Whether `owner_or_author` names this command's extension: by its
+    /// owner, or by its author, which is how links made before the owner was
+    /// read name it.
+    #[must_use]
+    pub fn is_by(&self, owner_or_author: &str) -> bool {
+        self.author == owner_or_author || self.owner.as_deref() == Some(owner_or_author)
+    }
+
     /// Every command of every manifest, in the registry's precedence order.
     #[must_use]
     pub fn from_manifests(manifests: &[ExtensionManifest]) -> Vec<Self> {
@@ -82,6 +100,7 @@ impl ExtensionCommand {
                     default_disabled: command.default_disabled,
                     extension_name: manifest.name.clone(),
                     author: manifest.author.clone(),
+                    owner: manifest.owner.clone(),
                     is_raycast: command.provenance == Provenance::Raycast,
                     preferences: manifest
                         .preferences

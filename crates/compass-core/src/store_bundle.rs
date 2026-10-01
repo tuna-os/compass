@@ -64,7 +64,10 @@ pub const MARKER_NAME: &str = ".compass-store.json";
 pub struct Marker {
     /// `vicinae` or `raycast`.
     pub store: String,
-    /// The author's handle.
+    /// The handle the store files it under: its owner's, which for a Raycast
+    /// extension an organisation owns is not its author's. The key keeps its
+    /// old name so markers already written still read; until v23 nothing
+    /// org-owned could be installed, so every one of those holds an owner.
     pub author: String,
     /// The extension's name in the store.
     pub name: String,

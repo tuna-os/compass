@@ -59,9 +59,11 @@ impl<'a> iced::widget::markdown::Viewer<'a, Message> for StoreMarkdown<'a> {
 }
 
 impl LauncherApp {
-    /// Opens the detail page a deeplink names (`compass://extensions/<author>/<name>`,
+    /// Opens the detail page a deeplink names (`compass://extensions/<owner>/<name>`,
     /// or the Raycast store's for `raycast://`), as the C++ pushes a detail
-    /// host over the root.
+    /// host over the root. A link with a command
+    /// (`raycast://extensions/<owner>/<name>/<command>`) runs that command
+    /// when it is installed, and opens its store page when it is not.
     pub(super) fn open_deeplink(&mut self, url: &str) -> Task<Message> {
         if let Some(link) = compass_core::root_items::parse_launch_link(url) {
             return self.open_launch_link(link);
@@ -73,6 +75,17 @@ impl LauncherApp {
             tracing::warn!(%url, "a deeplink the launcher does not handle");
             return Task::none();
         };
+        if let Some(command) = &link.command
+            && let Some(installed) =
+                self.app_index
+                    .extension_by_link(&link.owner, &link.name, command)
+        {
+            return self.open_launch_link(compass_core::root_items::LaunchLink {
+                path: format!("{}/{}", installed.provider_id, installed.name),
+                fallback_text: None,
+                toggle: false,
+            });
+        }
         let store = if link.raycast {
             Store::Raycast
         } else {
@@ -89,7 +102,7 @@ impl LauncherApp {
         };
         self.page = Page::Store(page);
         Task::perform(
-            async move { backend.store_extension(store, link.author, link.name).await },
+            async move { backend.store_extension(store, link.owner, link.name).await },
             Message::StoreDetailLoaded,
         )
     }
@@ -303,12 +316,12 @@ impl LauncherApp {
             page.notice = Some(NEEDS_ENGINE.to_owned());
             return Task::none();
         };
-        let (store, author, name) = (page.store, row.author.clone(), row.name.clone());
+        let (store, owner, name) = (page.store, row.owner.clone(), row.name.clone());
         page.loading = true;
         page.notice = None;
         self.panel = None;
         Task::perform(
-            async move { backend.store_extension(store, author, name).await },
+            async move { backend.store_extension(store, owner, name).await },
             Message::StoreDetailLoaded,
         )
     }
@@ -326,11 +339,11 @@ impl LauncherApp {
             return Task::none();
         };
         let row = &page.detail.row;
-        let (store, author, name) = (page.store, row.author.clone(), row.name.clone());
+        let (store, owner, name) = (page.store, row.owner.clone(), row.name.clone());
         page.busy = Some(store_page::DOWNLOADING.to_owned());
         page.notice = None;
         Task::perform(
-            async move { backend.store_install(store, author, name).await },
+            async move { backend.store_install(store, owner, name).await },
             Message::StoreInstalled,
         )
     }
@@ -675,8 +688,9 @@ impl LauncherApp {
         true
     }
 
-    /// A banner under a page: work in progress, or what the last action
-    /// said.
+    /// A banner over a page: work in progress, or what the last action
+    /// said. Over, not under: the rows shrink to fit, so a full list pushed
+    /// a banner below them out of sight, and with it an install's failure.
     fn store_banner(
         &self,
         busy: Option<&str>,
@@ -753,7 +767,7 @@ impl LauncherApp {
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
         let content: Element<'a, Message> = match self.store_banner(None, page.notice.as_deref()) {
-            Some(banner) => column![rows, banner].into(),
+            Some(banner) => column![banner, rows].into(),
             None => rows.into(),
         };
         match &page.confirm {

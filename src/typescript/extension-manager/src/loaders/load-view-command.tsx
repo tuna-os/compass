@@ -16,8 +16,11 @@ class ErrorBoundary extends React.Component<
 		this.state = { error: "" };
 	}
 
-	componentDidCatch(error: Error) {
-		this.setState({ error: `${error.name}: ${error.message}` });
+	componentDidCatch(error: unknown) {
+		this.setState({
+			error:
+				error instanceof Error ? error.message || error.name : String(error),
+		});
 	}
 
 	render() {

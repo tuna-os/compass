@@ -189,13 +189,13 @@ impl Stores {
 
     async fn raycast_extension(
         &self,
-        author: &str,
+        owner: &str,
         name: &str,
     ) -> Result<raycast_store::Extension, String> {
         let mut extension: raycast_store::Extension = get_json(format!(
             "{}{}",
             self.raycast_base,
-            raycast_store::extension_path(author, name)
+            raycast_store::extension_path(owner, name)
         ))
         .await?;
         raycast_store::post_process_extension(&mut extension);
@@ -281,11 +281,12 @@ impl Stores {
         }
     }
 
-    /// One extension as the store describes it now.
+    /// One extension as the store describes it now, by the handle the store
+    /// files it under ([`Listing::owner`]) and its name.
     async fn listing(
         &self,
         kind: StoreKind,
-        author: &str,
+        owner: &str,
         name: &str,
     ) -> Result<(Listing, Option<u8>, Option<raycast_store_view::Alert>), String> {
         match kind {
@@ -293,16 +294,16 @@ impl Stores {
                 let all = self.vicinae_all().await.map_err(|err| {
                     format!("Could not fetch extension data from the store: {err}")
                 })?;
-                let extension = extension_store::find(&all, author, name).ok_or_else(|| {
-                    format!("The extension \"{author}/{name}\" could not be found in the store.")
+                let extension = extension_store::find(&all, owner, name).ok_or_else(|| {
+                    format!("The extension \"{owner}/{name}\" could not be found in the store.")
                 })?;
                 Ok((Listing::from_vicinae(extension), None, None))
             }
             StoreKind::Raycast => {
                 let (extension, compat) =
-                    tokio::join!(self.raycast_extension(author, name), self.raycast_compat());
+                    tokio::join!(self.raycast_extension(owner, name), self.raycast_compat());
                 let extension = extension.map_err(|err| {
-                    let (_, message) = raycast_store_view::extension_load_failure(author, name);
+                    let (_, message) = raycast_store_view::extension_load_failure(owner, name);
                     format!("{message} ({err})")
                 })?;
                 let updated = (extension.updated_at > 0)
@@ -331,10 +332,10 @@ impl Stores {
     pub async fn detail(
         &self,
         kind: StoreKind,
-        author: &str,
+        owner: &str,
         name: &str,
     ) -> Result<StoreDetail, String> {
-        let (listing, tier, alert) = self.listing(kind, author, name).await?;
+        let (listing, tier, alert) = self.listing(kind, owner, name).await?;
         let readme = match &listing.readme_url {
             Some(url) => {
                 let url = compass_core::store_listing::readme_source_url(url);
@@ -375,10 +376,10 @@ impl Stores {
     pub async fn install(
         &self,
         kind: StoreKind,
-        author: &str,
+        owner: &str,
         name: &str,
     ) -> Result<(String, String), String> {
-        let (listing, _, _) = self.listing(kind, author, name).await?;
+        let (listing, _, _) = self.listing(kind, owner, name).await?;
         let id = store(kind).extension_id(&listing.name);
         if !store_bundle::is_safe_id(&id) {
             return Err(format!(
@@ -396,7 +397,7 @@ impl Stores {
             .ok_or("Installing an extension needs a data directory, and $XDG_DATA_HOME and $HOME are unset")?;
         let marker = Marker {
             store: store(kind).key().to_owned(),
-            author: listing.author.clone(),
+            author: listing.owner.clone(),
             name: listing.name.clone(),
             version: listing.version.clone(),
         };
@@ -463,6 +464,7 @@ fn entry(
         ),
         compat,
         author_avatar: listing.author_avatar.clone(),
+        owner: listing.owner.clone(),
     }
 }
 

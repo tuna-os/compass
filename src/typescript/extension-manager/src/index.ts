@@ -16,6 +16,22 @@ import { setTimeout } from "node:timers";
 const WORKER_GRACE_PERIOD_MS = 5000;
 const WORKER_MAX_HEAP_SIZE_MB = 1000; // really high limit just to make sure an extension command can't exhaust RAM by itself
 
+/**
+ * What a worker's uncaught error says, as the launcher shows it: the reason,
+ * not the stack, which goes to the log. An extension may throw anything, and
+ * a thrown string or object has no `stack`: reading one gave "undefined" in
+ * place of the reason.
+ */
+const describeError = (error: unknown): string => {
+	if (error instanceof Error) return error.message || error.name;
+	if (typeof error === "string") return error;
+	try {
+		return JSON.stringify(error) ?? String(error);
+	} catch {
+		return String(error);
+	}
+};
+
 type WorkerStatus = "unloading" | "running" | "awaiting_handshake";
 
 type WorkerInfo = {
@@ -131,8 +147,9 @@ class ExtensionManager extends manager.ManagerService {
 			this.emit_extensionCrash(sessionId, text);
 		};
 
-		worker.on("error", (error) => {
-			sendCrash(`${error.stack}`);
+		worker.on("error", (error: unknown) => {
+			if (error instanceof Error && error.stack) logger.error(error.stack);
+			sendCrash(describeError(error));
 			logger.error(`worker error: ${error}`);
 		});
 

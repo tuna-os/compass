@@ -28,6 +28,7 @@ fn to_ui(command: WindowCommand) -> UiCommand {
         WindowCommand::Deeplink(url) => UiCommand::Deeplink(url),
         WindowCommand::Describe => UiCommand::Describe,
         WindowCommand::Hud { text, icon } => UiCommand::Hud { text, icon },
+        WindowCommand::Failure { title, message } => UiCommand::Failure { title, message },
     }
 }
 
@@ -235,6 +236,7 @@ mod tests {
                     }
                     UiCommand::Describe => UiOutcome::Hidden,
                     UiCommand::Hud { .. } => UiOutcome::Failed("no HUD".to_owned()),
+                    UiCommand::Failure { .. } => UiOutcome::Hidden,
                 };
                 if outcomes_tx.send(outcome).is_err() {
                     return;
@@ -364,6 +366,10 @@ mod tests {
                 text: "Quit Files".into(),
                 icon: Some("copy-clipboard".into()),
             },
+            WindowCommand::Failure {
+                title: "Could not complete New Window".into(),
+                message: "AppleScript is only supported on macOS".into(),
+            },
         ] {
             let ui = to_ui(command.clone());
             let back = match ui {
@@ -375,6 +381,7 @@ mod tests {
                 UiCommand::Deeplink(url) => WindowCommand::Deeplink(url),
                 UiCommand::Describe => WindowCommand::Describe,
                 UiCommand::Hud { text, icon } => WindowCommand::Hud { text, icon },
+                UiCommand::Failure { title, message } => WindowCommand::Failure { title, message },
             };
             assert_eq!(back, command, "{command:?} did not survive the round trip");
         }

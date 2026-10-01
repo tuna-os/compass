@@ -1721,7 +1721,8 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
         ext.join("machine.js"),
         "const React = require('react');
          const { Detail, getSelectedText, WindowManagement } = require('@vicinae/api');
-         const said = (p) => p.then((v) => JSON.stringify(v), (e) => 'error: ' + String(e));
+         const said = (p) => p.then((v) => JSON.stringify(v),
+               (e) => e instanceof Error ? 'error: ' + e.message : 'not an Error: ' + String(e));
          module.exports.default = () => {
            const [text, setText] = React.useState('');
            React.useEffect(() => {
@@ -2450,6 +2451,127 @@ fn a_grid_command_renders_typed_cells() {
         GridContent::Color(Color::Literal("#ff0000".into()))
     );
     daemon.request(Request::CloseExtension { session });
+}
+
+/// The launcher's own client against a form left alone for longer than the
+/// two seconds it used to allow a view read. The engine holds a view read
+/// until something changes, so an idle form is answered only when the hold
+/// runs out; with a client deadline shorter than the hold, the launcher took
+/// that silence for a failure, stopped polling, and every later keystroke
+/// and action went nowhere.
+///
+/// The other view tests here never saw it: they ask over a bare
+/// `compass_ipc::Client`, with no deadline at all, as Suite 1 and the
+/// conformance runner do with theirs. This one goes through
+/// `compass::ui_backend::DaemonBackend`, the client the window uses. The
+/// engine's hold is shortened to three seconds so the test does not wait
+/// twenty, and still outlasts the old deadline.
+#[test]
+fn a_form_left_idle_past_the_old_deadline_still_takes_typing_and_submit() {
+    use compass_extension_api::View;
+    use compass_extension_api::view::{FieldValue, FormItem};
+    use compass_ui::backend::{ApplicationBackend, ExtensionStart};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    const HOLD: Duration = Duration::from_secs(3);
+    let mut submitted = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        submitted = dir.join("data-home/compass/support/hello/submitted.json");
+        vec![
+            ("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string()),
+            (
+                compass::serve::VIEW_HOLD_ENV,
+                HOLD.as_millis().to_string().into(),
+            ),
+        ]
+    });
+    let backend =
+        compass::ui_backend::DaemonBackend::new(compass_ipc::SocketPath::exact(&daemon.socket));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let ExtensionStart::View(session) = backend
+            .run_extension_command("@someone/hello:issue".into(), None)
+            .await
+            .expect("the form command starts")
+        else {
+            panic!("the form command did not start a view");
+        };
+        let mut state = backend.extension_view(session, 0).await.expect("a first read");
+        while !matches!(state.view.as_deref(), Some(View::Form(form)) if !form.items.is_empty()) {
+            state = backend
+                .extension_view(session, state.version)
+                .await
+                .expect("the form renders");
+        }
+        let Some(View::Form(form)) = state.view.as_deref() else {
+            unreachable!()
+        };
+        let FormItem::Field(title) = &form.items[0] else {
+            panic!("no title field");
+        };
+        let on_change = title.on_change.clone().expect("a controlled field");
+        let submit = form.actions.as_ref().expect("actions").actions()[0]
+            .handler
+            .clone();
+
+        // Nothing happens for longer than the old deadline.
+        let asked = Instant::now();
+        let idle = backend
+            .extension_view(session, state.version)
+            .await
+            .expect("an idle form is not a failure");
+        assert!(
+            asked.elapsed() >= Duration::from_millis(2500),
+            "the engine held the read for its hold, {:?}",
+            asked.elapsed()
+        );
+        assert_eq!(idle.version, state.version, "nothing changed");
+        assert!(!idle.ended && idle.problem.is_none());
+
+        // The person types, and the form takes it.
+        backend
+            .extension_event(session, on_change.0, vec!["Crash on paste".into(), 1.into()])
+            .await
+            .expect("typing reaches the extension");
+        let mut after = idle.version;
+        loop {
+            let next = backend
+                .extension_view(session, after)
+                .await
+                .expect("the edit is read back");
+            if let Some(View::Form(form)) = next.view.as_deref()
+                && matches!(&form.items[0],
+                    FormItem::Field(f) if f.value == Some(FieldValue::Text("Crash on paste".into())))
+            {
+                break;
+            }
+            after = next.version;
+        }
+
+        backend
+            .extension_event(
+                session,
+                submit.0,
+                vec![serde_json::json!({"title": "Crash on paste", "urgent": false})],
+            )
+            .await
+            .expect("submit reaches the extension");
+        backend.close_extension(session).await.expect("closes");
+    });
+    wait_for_content(&submitted);
+    let got: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&submitted).expect("submitted")).unwrap();
+    assert_eq!(got["title"], "Crash on paste");
 }
 
 #[test]
@@ -4666,6 +4788,10 @@ fn bundle(entries: &[(&str, &str)]) -> Vec<u8> {
     out.finish().expect("zip").into_inner()
 }
 
+/// `GET /extensions/raycast/github`, recorded from the live Raycast API.
+const RAYCAST_GITHUB: &str =
+    include_str!("../../compass-core/tests/fixtures/raycast-extension-github.json");
+
 impl FakeStore {
     fn start() -> FakeStore {
         let server =
@@ -4690,6 +4816,16 @@ impl FakeStore {
                     "commands": [{"name": "front", "title": "Front Page Stories", "mode": "view"}]}"#,
             ),
             ("hn/front.js", "module.exports = {};"),
+        ]);
+        let github = bundle(&[
+            (
+                "github/package.json",
+                r#"{"name": "github", "title": "GitHub", "author": "thomaslombart",
+                    "owner": "raycast", "dependencies": {"@raycast/api": "1.0.0"},
+                    "commands": [{"name": "my-pull-requests", "title": "My Pull Requests",
+                                  "mode": "view"}]}"#,
+            ),
+            ("github/my-pull-requests.js", "module.exports = {};"),
         ]);
         let evil = bundle(&[
             ("evil/package.json", r#"{"name": "evil", "commands": []}"#),
@@ -4746,6 +4882,14 @@ impl FakeStore {
                                       "mode": "view"}]
                     })
                 };
+                // An organisation's extension, as the live API serves it: filed
+                // under its owner, `raycast`, not its author.
+                let github_json = || {
+                    let mut listing: serde_json::Value =
+                        serde_json::from_str(RAYCAST_GITHUB).expect("the recorded listing");
+                    listing["download_url"] = format!("{base_for_thread}/dl/github.zip").into();
+                    listing
+                };
                 let (status, body): (u16, Vec<u8>) = match url.as_str() {
                     "/v1/store/list?page=1&limit=500" => (200, vicinae_listing.clone().into_bytes()),
                     "/v1/raycast/get-compat" => (
@@ -4757,6 +4901,16 @@ impl FakeStore {
                     "/dl/clock.zip" => (200, clock.clone()),
                     "/dl/hn.zip" => (200, hn.clone()),
                     "/dl/evil.zip" => (200, evil.clone()),
+                    "/dl/github.zip" => (200, github.clone()),
+                    "/raycast/store_listings/search?q=github" => (
+                        200,
+                        serde_json::json!({"data": [github_json()]})
+                            .to_string()
+                            .into_bytes(),
+                    ),
+                    "/raycast/extensions/raycast/github" => {
+                        (200, github_json().to_string().into_bytes())
+                    }
                     "/raycast/store_listings?page=1&per_page=50"
                     | "/raycast/store_listings/search?q=hacker%20news" => (
                         200,
@@ -4830,7 +4984,7 @@ fn the_vicinae_store_lists_installs_into_root_search_and_uninstalls() {
 
     let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
         store: StoreKind::Vicinae,
-        author: "zoe".into(),
+        owner: "zoe".into(),
         name: "clock".into(),
     }) else {
         panic!("no detail");
@@ -4859,7 +5013,7 @@ fn the_vicinae_store_lists_installs_into_root_search_and_uninstalls() {
     );
     let Response::StoreInstalled { id, title } = daemon.request(Request::StoreInstall {
         store: StoreKind::Vicinae,
-        author: "zoe".into(),
+        owner: "zoe".into(),
         name: "clock".into(),
     }) else {
         panic!("not installed");
@@ -4895,7 +5049,7 @@ fn the_vicinae_store_lists_installs_into_root_search_and_uninstalls() {
     // A bundle whose entry climbs out is refused whole.
     let Response::Error(err) = daemon.request(Request::StoreInstall {
         store: StoreKind::Vicinae,
-        author: "mallory".into(),
+        owner: "mallory".into(),
         name: "evil".into(),
     }) else {
         panic!("a zip-slip bundle was installed");
@@ -4937,6 +5091,69 @@ fn the_vicinae_store_lists_installs_into_root_search_and_uninstalls() {
     assert_eq!(err.kind, ErrorKind::BadRequest);
 }
 
+/// GitHub is written by `thomaslombart` and owned by `raycast`, and the API
+/// files it under the owner: asking for it by its author is a 404. The rows
+/// carry both, the detail and the install go by the owner, and the author is
+/// what is shown.
+#[test]
+fn an_organisations_raycast_extension_opens_and_installs_by_its_owner() {
+    use compass_ipc::{Request, Response, StoreKind};
+    let store = FakeStore::start();
+    let daemon = store.start_engine();
+
+    let Response::StoreListing { entries, .. } = daemon.request(Request::StoreBrowse {
+        store: StoreKind::Raycast,
+        query: "github".into(),
+    }) else {
+        panic!("no search");
+    };
+    let row = entries.first().expect("GitHub is found");
+    assert_eq!(row.id, "store.raycast.github");
+    assert_eq!(row.owner, "raycast");
+    assert_eq!(row.author, "thomaslombart");
+    assert_eq!(row.author_name, "Thomas Lombart");
+
+    let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
+        store: StoreKind::Raycast,
+        owner: row.owner.clone(),
+        name: row.name.clone(),
+    }) else {
+        panic!("the detail page did not open by the owner");
+    };
+    assert_eq!(detail.entry.owner, "raycast");
+    assert!(
+        detail.markdown.contains("Thomas Lombart"),
+        "the author is shown"
+    );
+
+    let Response::StoreInstalled { id, title } = daemon.request(Request::StoreInstall {
+        store: StoreKind::Raycast,
+        owner: row.owner.clone(),
+        name: row.name.clone(),
+    }) else {
+        panic!("not installed by the owner");
+    };
+    assert_eq!(
+        (id.as_str(), title.as_str()),
+        ("store.raycast.github", "GitHub")
+    );
+    assert!(
+        root_ids(&daemon, "my pull requests")
+            .iter()
+            .any(|id| id == "@thomaslombart/store.raycast.github:my-pull-requests"),
+        "the installed id is the one an install by author would have made"
+    );
+
+    let Response::Error(err) = daemon.request(Request::StoreExtension {
+        store: StoreKind::Raycast,
+        owner: "thomaslombart".into(),
+        name: "github".into(),
+    }) else {
+        panic!("the fake store must refuse the author, as the API does");
+    };
+    assert!(err.message.contains("github"), "{}", err.message);
+}
+
 #[test]
 fn the_raycast_store_badges_compatibility_and_notices_an_update() {
     use compass_ipc::{ErrorKind, Request, Response, StoreKind};
@@ -4958,7 +5175,7 @@ fn the_raycast_store_badges_compatibility_and_notices_an_update() {
 
     let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
         store: StoreKind::Raycast,
-        author: "ray".into(),
+        owner: "ray".into(),
         name: "hn".into(),
     }) else {
         panic!("no detail");
@@ -4978,7 +5195,7 @@ fn the_raycast_store_badges_compatibility_and_notices_an_update() {
 
     let Response::StoreInstalled { id, .. } = daemon.request(Request::StoreInstall {
         store: StoreKind::Raycast,
-        author: "ray".into(),
+        owner: "ray".into(),
         name: "hn".into(),
     }) else {
         panic!("not installed");
@@ -5007,7 +5224,7 @@ fn the_raycast_store_badges_compatibility_and_notices_an_update() {
 
     let Response::StoreInstalled { .. } = daemon.request(Request::StoreInstall {
         store: StoreKind::Raycast,
-        author: "ray".into(),
+        owner: "ray".into(),
         name: "hn".into(),
     }) else {
         panic!("not updated");
@@ -5019,7 +5236,7 @@ fn the_raycast_store_badges_compatibility_and_notices_an_update() {
 
     let Response::Error(err) = daemon.request(Request::StoreExtension {
         store: StoreKind::Raycast,
-        author: "ray".into(),
+        owner: "ray".into(),
         name: "missing".into(),
     }) else {
         panic!("a missing extension had a page");
@@ -5061,7 +5278,7 @@ fn real_stores_smoke() {
     let first = entries[0].clone();
     let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
         store: StoreKind::Vicinae,
-        author: first.author.clone(),
+        owner: first.owner.clone(),
         name: first.name.clone(),
     }) else {
         panic!("no Vicinae detail");
@@ -5070,7 +5287,7 @@ fn real_stores_smoke() {
 
     let Response::StoreInstalled { id, .. } = daemon.request(Request::StoreInstall {
         store: StoreKind::Vicinae,
-        author: first.author.clone(),
+        owner: first.owner.clone(),
         name: first.name.clone(),
     }) else {
         panic!("not installed");
@@ -5104,7 +5321,7 @@ fn real_stores_smoke() {
     let hit = entries.first().expect("a Raycast result").clone();
     let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
         store: StoreKind::Raycast,
-        author: hit.author,
+        owner: hit.owner,
         name: hit.name,
     }) else {
         panic!("no Raycast detail");

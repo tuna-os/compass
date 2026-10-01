@@ -360,6 +360,7 @@ mod tests {
             description: description.into(),
             icon: String::new(),
             author: "someone".into(),
+            owner: None,
             categories: Vec::new(),
             preferences: Vec::new(),
             commands: Vec::new(),

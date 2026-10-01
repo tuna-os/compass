@@ -2054,6 +2054,7 @@ async fn run_extension_command(
             launches,
             deliver,
         )),
+        launcher: Some(launcher_window(state)),
     };
     let started = tokio::task::spawn_blocking(move || {
         crate::extension_runner::start(&runtime, &command, &data_dir, host)
@@ -2082,6 +2083,22 @@ async fn run_extension_command(
             format!("the extension task failed: {err}"),
         )),
     }
+}
+
+/// The launcher window, for a command's serving thread: it blocks that
+/// thread, never the engine's, until the window answers.
+fn launcher_window(state: &Arc<RwLock<EngineState>>) -> crate::extension_runner::Launcher {
+    let (state, handle) = (Arc::clone(state), tokio::runtime::Handle::current());
+    crate::extension_runner::Launcher(Arc::new(move |command| {
+        let state = Arc::clone(&state);
+        handle.block_on(async move {
+            let slot = state.read().await.window_slot();
+            matches!(
+                forward(&slot, command, "tell the launcher").await,
+                Response::Ack
+            )
+        })
+    }))
 }
 
 /// Hands the launch under `token` to the launcher window. Without a window,
@@ -2349,8 +2366,25 @@ async fn set_extension_preferences(
     }
 }
 
+/// Shortens how long an `ExtensionView` is held, in milliseconds, so a test
+/// can hold a view idle past a client's deadline without waiting the whole
+/// [`compass_ipc::EXTENSION_VIEW_HOLD`]. Never lengthens it: a client allows
+/// [`compass_ipc::long_poll_deadline`] of the constant, not of this.
+pub const VIEW_HOLD_ENV: &str = "COMPASS_EXTENSION_VIEW_HOLD_MS";
+
 /// How long an `ExtensionView` is held open waiting for a change.
-const VIEW_POLL: std::time::Duration = std::time::Duration::from_secs(20);
+fn view_hold() -> std::time::Duration {
+    static HOLD: std::sync::LazyLock<std::time::Duration> = std::sync::LazyLock::new(|| {
+        std::env::var(VIEW_HOLD_ENV)
+            .ok()
+            .and_then(|ms| ms.trim().parse().ok())
+            .map(std::time::Duration::from_millis)
+            .map_or(compass_ipc::EXTENSION_VIEW_HOLD, |hold| {
+                hold.min(compass_ipc::EXTENSION_VIEW_HOLD)
+            })
+    });
+    *HOLD
+}
 
 async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u64) -> Response {
     let watched = {
@@ -2367,7 +2401,7 @@ async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u
         ));
     };
     // A timeout is an answer too: the same version, so the launcher asks again.
-    let _ = tokio::time::timeout(VIEW_POLL, watch.wait_for(|view| view.version > after)).await;
+    let _ = tokio::time::timeout(view_hold(), watch.wait_for(|view| view.version > after)).await;
     let view = watch.borrow().clone();
     Response::ExtensionView {
         version: view.version,
@@ -3065,26 +3099,18 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 Err(message) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
             }
         }
-        Request::StoreExtension {
-            store,
-            author,
-            name,
-        } => {
+        Request::StoreExtension { store, owner, name } => {
             let stores = Arc::clone(&state.read().await.stores);
-            match stores.detail(store, &author, &name).await {
+            match stores.detail(store, &owner, &name).await {
                 Ok(detail) => Response::StoreExtension { detail },
                 Err(message) => Response::Error(ProtocolError::new(ErrorKind::BadRequest, message)),
             }
         }
-        Request::StoreInstall {
-            store,
-            author,
-            name,
-        } => {
+        Request::StoreInstall { store, owner, name } => {
             let stores = Arc::clone(&state.read().await.stores);
             // A Raycast extension the overrides manifest replaces on Linux
             // installs its replacement instead.
-            let (store, author, name) = match (
+            let (store, owner, name) = match (
                 store,
                 compass_core::raycast_overrides::Manifest::shipped().raycast_redirect(&name),
             ) {
@@ -3101,9 +3127,9 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                         redirect.name.clone(),
                     )
                 }
-                _ => (store, author, name),
+                _ => (store, owner, name),
             };
-            match stores.install(store, &author, &name).await {
+            match stores.install(store, &owner, &name).await {
                 Ok((id, title)) => {
                     state.write().await.index.rescan_extensions();
                     Response::StoreInstalled { id, title }

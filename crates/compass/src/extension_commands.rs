@@ -143,6 +143,8 @@ pub struct Known {
     pub extension_name: String,
     /// The manifest's `author`.
     pub author: String,
+    /// The manifest's `owner`, when it names one.
+    pub owner: Option<String>,
     /// The command's name.
     pub name: String,
     /// Its root id.
@@ -159,6 +161,7 @@ impl Known {
             .map(|command| Self {
                 extension_name: command.extension_name.clone(),
                 author: command.author.clone(),
+                owner: command.owner.clone(),
                 name: command.name.clone(),
                 id: command.id.clone(),
             })
@@ -217,7 +220,8 @@ impl Commands for EngineCommands {
             .iter()
             .find(|known| {
                 known.extension_name == extension_name
-                    && known.author == owner_or_author
+                    && (known.author == owner_or_author
+                        || known.owner.as_deref() == Some(owner_or_author))
                     && known.name == command_id
             })
             .map(|known| known.id.clone())
@@ -292,6 +296,7 @@ mod tests {
             vec![Known {
                 extension_name: "notes".into(),
                 author: "ada".into(),
+                owner: None,
                 name: "create".into(),
                 id: "@ada/notes:create".into(),
             }],

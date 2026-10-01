@@ -475,13 +475,16 @@ mod tests {
 
     #[test]
     fn an_error_reply_carries_a_bare_string_as_both_engines_do() {
-        // The C++ engine sent `error` as a `std::optional<std::string>`, and
-        // the generated client rejects the call's promise with that field
-        // as-is, so what the extension catches is whatever `error` holds.
+        // The C++ engine sent `error` as a `std::optional<std::string>`. The
+        // generated client rejects the call's promise with an `Error` whose
+        // message is that string, as Raycast's API rejects: rejecting with
+        // the bare string left `error.message` undefined, and a crash that
+        // read it said "undefined" in place of the reason.
         let client = read(CLIENT);
         assert!(
-            client.contains("if (msg.error) handler.reject(msg.error);"),
-            "{CLIENT} no longer rejects with the bare `error` field"
+            client.contains("new Error(")
+                && client.contains("typeof msg.error === 'string' ? msg.error"),
+            "{CLIENT} no longer rejects with an Error carrying the `error` field"
         );
 
         let value: serde_json::Value =

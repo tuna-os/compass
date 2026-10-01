@@ -222,6 +222,10 @@ pub struct ExtensionManifest {
     pub icon: String,
     /// The `author` field.
     pub author: String,
+    /// The `owner` field: the organisation a Raycast extension belongs to
+    /// (`raycast` for GitHub, whose author is a person). `None` when absent
+    /// or empty.
+    pub owner: Option<String>,
     /// The `categories` field.
     pub categories: Vec<String>,
     /// Extension-wide preferences.
@@ -478,6 +482,7 @@ impl ExtensionManifest {
             description: string(json, "description"),
             icon: string(json, "icon"),
             author: string(json, "author"),
+            owner: Some(string(json, "owner")).filter(|owner| !owner.is_empty()),
             categories: string_array(json, "categories"),
             preferences: json
                 .get("preferences")

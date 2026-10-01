@@ -157,6 +157,11 @@ pub struct Extension {
     /// Who wrote it.
     #[serde(default, deserialize_with = "nullable")]
     pub author: User,
+    /// Who it belongs to: an organisation (`raycast`, `linear`) or, for most
+    /// extensions, its author again. The API files an extension under its
+    /// owner, so [`Extension::owner_handle`] is what its URL is built from.
+    #[serde(default, deserialize_with = "nullable")]
+    pub owner: User,
     /// Who else worked on it.
     #[serde(default, deserialize_with = "nullable")]
     pub contributors: Vec<User>,
@@ -209,6 +214,20 @@ impl Extension {
         (1..=self.metadata_count)
             .map(|n| format!("{}metadata/{}-{n}.png", self.readme_assets_path, self.name))
             .collect()
+    }
+
+    /// The handle the API files it under (`/extensions/<owner>/<name>`):
+    /// its owner's, else, for a listing that names none, its author's.
+    ///
+    /// Not the author's: `raycast/github` is written by `thomaslombart`, and
+    /// `/extensions/thomaslombart/github` is a 404.
+    #[must_use]
+    pub fn owner_handle(&self) -> &str {
+        if self.owner.handle.is_empty() {
+            &self.author.handle
+        } else {
+            &self.owner.handle
+        }
     }
 
     /// What identifies the build the store serves now: its commit.
@@ -360,12 +379,13 @@ pub fn search_path(query: &str) -> String {
     format!("/store_listings/search?q={}", encode_path_value(query))
 }
 
-/// The path for one extension by author and name.
+/// The path for one extension by its owner's handle
+/// ([`Extension::owner_handle`]) and name.
 #[must_use]
-pub fn extension_path(author: &str, name: &str) -> String {
+pub fn extension_path(owner: &str, name: &str) -> String {
     format!(
         "/extensions/{}/{}",
-        encode_path_value(author),
+        encode_path_value(owner),
         encode_path_value(name)
     )
 }
