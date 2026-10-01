@@ -3532,6 +3532,7 @@ visits. What differs:
 | 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text; its fallback panel adds Manage Fallback Actions. | Ranked like every other root item. A `shortcuts:<id>` entry in `fallbacks` whose link takes one argument is a fallback row, in the configured order, opening with the query; its panel is Open and Manage Fallback Actions, which opens Configure Fallback Commands. | `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `configure_fallback_commands_moves_items_between_its_sections` |
 | 9 | The migration from the pre-JSON SQLite `shortcut` table. | Not run: the one-shot import is from Vicinae's JSON file, which already holds a migrated list. | — |
 | 10 | A removal toast ("Removed link") and success toasts after saving. | The list updates in place; failures show in the view. | `manage_shortcuts_filters_edits_and_removes` |
+| 11 | Arguments, `{clipboard}` and `{selection}` go into the link as typed, so `?q={query}` with `a & b` ends the query at the `&`. | In a URL template (a scheme and `://` before any placeholder, not `file:`) each value is percent-encoded, all but RFC 3986's unreserved characters and `/`; a link that is all placeholder, a path or a command line is filled in as typed. | `values_in_a_url_template_are_percent_encoded_and_elsewhere_left_alone` |
 
 ### Snippets — what the port does not have yet
 
