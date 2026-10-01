@@ -320,6 +320,7 @@ fn fixture() -> World {
 struct Snapshot {
     page_kind: String,
     page: String,
+    query: String,
     error: Option<String>,
     confirm: bool,
     hud: Option<String>,
@@ -374,6 +375,7 @@ impl World {
         Snapshot {
             page_kind,
             page,
+            query: app.query.clone(),
             error: app.error.clone(),
             confirm: app.confirm.is_some() || app.power_confirm.is_some(),
             hud: app.hud_content().map(|hud| hud.text.clone()),
@@ -396,6 +398,12 @@ impl World {
             effects.push(format!("opens {}", after.page_kind));
         } else if after.page != before.page {
             effects.push(format!("changes {}", after.page_kind));
+        }
+        // Text put into the search bar, as Put answer in search bar does.
+        // Clearing it is how hiding and opening a view tidy up, so only new
+        // text counts.
+        if !after.query.is_empty() && after.query != before.query {
+            effects.push(format!("types {:?}", after.query));
         }
         if after.error.is_some() && after.error != before.error {
             effects.push(format!("says {:?}", self.clean(after.error.as_deref())));
@@ -785,14 +793,13 @@ fn every_action_in_a_root_rows_panel_does_something() {
             "no {kind} row for {query:?}: {}",
             world.app.state_line()
         );
+        // Every kind of row offers a panel: Ctrl+B over one that opens
+        // nothing is as dead as an action that does nothing.
         let actions = world.panel();
-        if actions.is_empty() {
-            rows.push(Row {
-                item: format!("{kind} › (Ctrl+B)"),
-                effect: "no action panel".to_owned(),
-                test: TEST,
-            });
-        }
+        assert!(
+            !actions.is_empty(),
+            "Ctrl+B over a {kind} row opens nothing"
+        );
         for (row, title) in actions {
             let mut world = fixture();
             world.select(query, wanted);

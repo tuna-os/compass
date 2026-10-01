@@ -1,4 +1,5 @@
-//! Adwaita-style controls for the Settings page (#252).
+//! Adwaita-style controls for the Settings page (#252) and the first-run
+//! flow.
 //!
 //! Iced's built-in styles are its own: square, bordered buttons filled with
 //! the primary colour, a switch with a dark knob, inputs with a hairline frame.
@@ -12,7 +13,7 @@
 //! theme still apply: `selection` is Adwaita's `accent_bg_color` (fills) and
 //! `selection_text` its `accent_fg_color`, while `accent` is `accent_color`,
 //! the one for focus rings. The launcher's own rows keep their styles in
-//! [`crate::design`]; nothing here is used outside Settings.
+//! [`crate::design`]; nothing here is used outside Settings and onboarding.
 
 use iced::widget::button as btn;
 use iced::widget::{container, pick_list, rule, text_input, toggler};
@@ -75,6 +76,37 @@ pub fn button(palette: Palette, status: btn::Status) -> btn::Style {
         },
         shadow: Shadow::default(),
         snap: true,
+    }
+}
+
+/// A `.flat` button: no fill until it is hovered or pressed. Disabled, it is
+/// only its faded label, which is how a done state (Installed) reads.
+#[must_use]
+pub fn flat_button(palette: Palette, status: btn::Status) -> btn::Style {
+    let (fill, text) = match status {
+        btn::Status::Active => (0.0, 1.0),
+        btn::Status::Hovered => (0.07, 1.0),
+        btn::Status::Pressed => (0.16, 1.0),
+        btn::Status::Disabled => (0.0, 0.5),
+    };
+    btn::Style {
+        background: (fill > 0.0).then(|| Background::Color(ink(palette, fill))),
+        text_color: ink(palette, text),
+        ..button(palette, btn::Status::Active)
+    }
+}
+
+/// A small pill label beside a title (a store's name, say): the neutral
+/// fill with fully rounded ends.
+#[must_use]
+pub fn badge(palette: Palette) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(ink(palette, 0.08))),
+        border: Border {
+            radius: 9.0.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
     }
 }
 
@@ -271,6 +303,14 @@ mod tests {
         let off = switch(LIGHT, toggler::Status::Active { is_toggled: false });
         assert_eq!(Some(on.background), accent);
         assert_ne!(Some(off.background), accent);
+    }
+
+    #[test]
+    fn a_flat_button_is_bare_until_hovered() {
+        assert_eq!(flat_button(DARK, btn::Status::Active).background, None);
+        assert_eq!(flat_button(DARK, btn::Status::Disabled).background, None);
+        assert!(flat_button(DARK, btn::Status::Hovered).background.is_some());
+        assert!(button(DARK, btn::Status::Active).background.is_some());
     }
 
     #[test]

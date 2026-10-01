@@ -151,9 +151,35 @@ fn the_live_result_copies_the_answer_first() {
 
 #[test]
 fn an_unformatted_answer_adds_a_third_action() {
-    assert_eq!(live_action_panel(false)[0].len(), 2);
-    assert_eq!(live_action_panel(true)[0].len(), 3);
+    assert_eq!(live_action_panel(false)[0].len(), 4);
+    assert_eq!(live_action_panel(true)[0].len(), 5);
     assert_eq!(live_action_panel(true)[0][2].id, "copy-unformatted-answer");
+}
+
+/// Upstream v0.29.0's `RootCalculatorSection::actionPanel`, title for title
+/// and in its order, with one primary action.
+#[test]
+fn the_live_result_offers_upstreams_actions_in_its_order() {
+    let titles: Vec<_> = live_action_panel(true)[0]
+        .iter()
+        .map(|a| a.title.unwrap_or_default())
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "Copy Result",
+            "Copy Question And Answer",
+            "Copy unformatted answer",
+            "Put answer in search bar",
+            "Open Calculator History",
+        ]
+    );
+    let primary: Vec<_> = live_action_panel(false)[0]
+        .iter()
+        .filter(|a| a.primary)
+        .map(|a| a.id)
+        .collect();
+    assert_eq!(primary, ["copy-answer"]);
 }
 
 #[test]

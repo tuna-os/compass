@@ -26,6 +26,15 @@ impl Store {
         }
     }
 
+    /// The store's name as a person reads it: a brand, so not translated.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Vicinae => "Vicinae",
+            Self::Raycast => "Raycast",
+        }
+    }
+
     /// The id an extension `name` from this store is installed under.
     #[must_use]
     pub fn extension_id(self, name: &str) -> String {

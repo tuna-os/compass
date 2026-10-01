@@ -576,6 +576,18 @@ fn every_onboarding_step_paints_its_heading_and_buttons() {
                     continue_button.y + continue_button.height <= 600.0,
                     "{appearance:?}: the notice pushed Continue off the card"
                 );
+                // The whole notice, under every recommendation, ends above
+                // the footer rather than running off the step's area.
+                let notice = app
+                    .onboarding_install_notice()
+                    .expect("the failure is said")
+                    .to_owned();
+                let notice = ui.find(notice.as_str()).expect("the notice").bounds();
+                assert!(
+                    notice.y + notice.height <= continue_button.y - 16.0,
+                    "{appearance:?}: the notice ({notice:?}) runs into the footer \
+                     ({continue_button:?})"
+                );
                 if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
                     let name = format!(
                         "onboarding-{}-{}-Extensions-failed",
@@ -589,6 +601,118 @@ fn every_onboarding_step_paints_its_heading_and_buttons() {
             if step != Step::Complete {
                 let _ = app.update(Message::OnboardingContinue);
             }
+        }
+    }
+}
+
+/// The pixels of `snapshot`, read back through the PNG it writes.
+fn frame_of(snapshot: &iced_test::simulator::Snapshot) -> Frame {
+    let out = tempfile::tempdir().expect("tempdir");
+    snapshot
+        .matches_image(out.path().join("frame"))
+        .expect("the frame is written");
+    let file = std::fs::read_dir(out.path())
+        .expect("the snapshot directory")
+        .find_map(|entry| {
+            let path = entry.ok()?.path();
+            path.extension().is_some_and(|x| x == "png").then_some(path)
+        })
+        .expect("the snapshot wrote a PNG");
+    let image = image::open(&file).expect("the PNG decodes").to_rgba8();
+    let (width, height) = image.dimensions();
+    Frame {
+        width,
+        height,
+        rgba: image.into_raw(),
+        renderer: String::new(),
+    }
+}
+
+/// THE THEME PICKED DURING ONBOARDING IS THE ONE THE PAGE PAINTS.
+///
+/// No engine here to keep it: the choice still shows at once, behind the
+/// heading, in place of the theme the flow opened with.
+#[test]
+fn the_onboarding_theme_picker_repaints_the_page() {
+    use compass_ui::onboarding_page::ThemeOption;
+    for appearance in [Appearance::Light, Appearance::Dark] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        let _ = app.update(Message::AppearanceChanged(appearance));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        let _ = app.update(Message::OnboardingJump(1));
+        let _ = app.update(Message::OnboardingTheme(ThemeOption(Theme::Nord)));
+        let mut ui = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(800.0, 600.0),
+            app.view(),
+        );
+        let heading = ui.find("Make it your own").expect("the heading").bounds();
+        let snapshot = ui.snapshot(&app.theme()).expect("the frame renders");
+        if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+            let name = format!("onboarding-2-{}-Personalize-nord", appearance.name());
+            let _ = snapshot.matches_image(std::path::PathBuf::from(&directory).join(name));
+        }
+        drop(ui);
+        let frame = frame_of(&snapshot);
+        let nord = Theme::Nord.palette(appearance).surface;
+        let system = Theme::System.palette(appearance).surface;
+        let (now, before) = (frame.share(heading, nord), frame.share(heading, system));
+        assert!(
+            now > 0.3 && before < 0.05,
+            "{appearance:?}: the page is {now:.3} Nord and {before:.3} the theme it opened with"
+        );
+    }
+}
+
+/// THE CALCULATOR ANSWER'S ACTION PANEL PAINTS ITS ACTIONS.
+///
+/// Ctrl+B over the answer at the root opens upstream's panel
+/// (`RootCalculatorSection::actionPanel`), and each action's title paints
+/// glyphs, in both appearances. With `COMPASS_UI_SCREENSHOT_DIR` set, each
+/// frame is also written there.
+#[test]
+fn the_calculator_answers_panel_paints_its_actions() {
+    const TITLES: [&str; 4] = [
+        "Copy Result",
+        "Copy Question And Answer",
+        "Put answer in search bar",
+        "Open Calculator History",
+    ];
+    for appearance in [Appearance::Light, Appearance::Dark] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        let _ = app.update(Message::AppearanceChanged(appearance));
+        let _ = app.update(Message::QueryChanged("12*7".to_owned()));
+        let _ = app.update(Message::TogglePanel);
+        let mut ui = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(800.0, 600.0),
+            app.view(),
+        );
+        let snapshot = ui.snapshot(&app.theme()).expect("the frame renders");
+        if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+            let name = format!("calculator-panel-{}", appearance.name());
+            let _ = snapshot.matches_image(std::path::PathBuf::from(&directory).join(name));
+        }
+        let bounds: Vec<iced::Rectangle> = TITLES
+            .iter()
+            .map(|title| {
+                ui.find(*title)
+                    .unwrap_or_else(|_| panic!("{appearance:?}: no {title:?} in the panel"))
+                    .bounds()
+            })
+            .collect();
+        drop(ui);
+        let frame = frame_of(&snapshot);
+        let palette = Theme::System.palette(appearance);
+        // The first is the selected row, on the selection fill.
+        for (title, bounds) in TITLES.iter().zip(bounds).skip(1) {
+            let glyph = 1.0 - frame.share(bounds, palette.surface);
+            assert!(
+                (0.05..0.7).contains(&glyph),
+                "{appearance:?}: {glyph:.3} of {title:?} is not surface"
+            );
         }
     }
 }

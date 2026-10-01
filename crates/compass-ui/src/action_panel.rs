@@ -89,6 +89,26 @@ impl Row {
     }
 }
 
+/// How tall the drawn panel is over `rows`, in logical pixels, from the
+/// shared metrics in [`crate::design::PANEL_METRICS`]: its padding and
+/// border, the filter, and each row, header and divider with the gaps
+/// between them.
+#[must_use]
+pub fn natural_height(rows: &[Row]) -> f32 {
+    use crate::design::panel_metric;
+    let gap = panel_metric("gap");
+    let list: f32 = rows
+        .iter()
+        .map(|row| match row.kind {
+            RowKind::Item => panel_metric("row-height"),
+            RowKind::Header => panel_metric("header-height"),
+            RowKind::Divider => 1.0 + 2.0 * panel_metric("divider-gap"),
+        })
+        .sum::<f32>()
+        + gap * rows.len().saturating_sub(1) as f32;
+    2.0 * (panel_metric("padding") + 1.0) + panel_metric("filter-height") + gap + list
+}
+
 /// Flatten the panel's sections into rows, keeping only what the filter matches.
 ///
 /// Three rules, and each one is a thing that looks wrong on screen if it is

@@ -24,6 +24,10 @@ const COPY_EXPRESSION: &str = "calc.copy-expression";
 const REMOVE: &str = "calc.remove";
 const REMOVE_ALL: &str = "calc.remove-all";
 
+/// The prefix of the root answer's panel actions, before
+/// `compass_core::calculator_history::live_action_panel`'s ids.
+const ROOT: &str = "calc-root.";
+
 const NEEDS_ENGINE: &str =
     "Calculator History needs the Compass engine, and this window is running without one";
 
@@ -154,6 +158,73 @@ impl LauncherApp {
             ),
             focus_search(),
         ])
+    }
+
+    /// Copies the root answer, remembering it, and says so (the C++
+    /// `CopyCalculatorAnswerAction`, the row's primary action).
+    pub(super) fn copy_root_answer(&mut self) -> Task<Message> {
+        let Some(answer) = &self.calculator else {
+            return Task::none();
+        };
+        let (question, answer) = (answer.question.clone(), answer.answer.clone());
+        let copy = self.copy_calculation(question, answer.clone(), answer);
+        Task::batch([copy, self.show_hud(answer_copied())])
+    }
+
+    /// The panel over the root search's answer
+    /// (`RootCalculatorSection::actionPanel`).
+    pub(super) fn open_root_calculator_panel(&mut self) -> Option<Task<Message>> {
+        if !matches!(self.page, Page::Root)
+            || self.selected_row() != Some(super::RootRow::Calculator)
+        {
+            return None;
+        }
+        self.calculator.as_ref()?;
+        // fend prints its answers unformatted, so there is no second form.
+        let sections = compass_core::calculator_history::live_action_panel(false)
+            .into_iter()
+            .map(|actions| PanelSection {
+                name: String::new(),
+                actions: actions
+                    .into_iter()
+                    .map(|action| {
+                        let item = Action::new(action.title.unwrap_or(action.id))
+                            .with_id(format!("{ROOT}{}", action.id));
+                        if action.primary {
+                            item.with_shortcut("enter")
+                        } else {
+                            item
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
+        self.panel = Some(PanelState::new(sections));
+        Some(iced::widget::operation::focus(super::PANEL_INPUT))
+    }
+
+    /// Runs an action of the root answer's panel, if `id` is one.
+    pub(super) fn root_calculator_panel_action(&mut self, id: &str) -> Option<Task<Message>> {
+        let action = id.strip_prefix(ROOT)?;
+        let answer = self.calculator.clone()?;
+        self.panel = None;
+        Some(match action {
+            "copy-answer" => self.copy_root_answer(),
+            "copy-question-and-answer" => {
+                let expression = compass_core::calculator_history::live_result_title(
+                    &answer.question,
+                    &answer.answer,
+                );
+                let copy = self.copy_calculation(answer.question, answer.answer, expression);
+                Task::batch([copy, self.show_hud(answer_copied())])
+            }
+            "put-answer-in-search-bar" => {
+                let typed = self.update(Message::QueryChanged(answer.answer));
+                Task::batch([typed, focus_search()])
+            }
+            "open-history" => self.open_calculator_history(),
+            _ => Task::none(),
+        })
     }
 
     /// Runs the selected row's primary action: copy the answer.

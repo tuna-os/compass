@@ -132,7 +132,14 @@ pub fn history_action_panel(is_pinned: bool) -> Vec<Vec<Action>> {
     ]
 }
 
-/// The action panel for the live result.
+/// The action panel for the live result: the calculator's answer row in
+/// root search.
+///
+/// Upstream v0.29.0's `RootCalculatorSection::actionPanel`
+/// (`src/server/src/builtins/root/root-search-sources.cpp`), in its order and
+/// with the C++ actions' own titles: copy the result (primary), copy the
+/// question and answer, copy the unformatted answer when the backend produced
+/// one, put the answer in the search bar, and open the calculator history.
 ///
 /// The unformatted answer only appears when the backend produced one — a sum
 /// whose answer is already unformatted does not get a second, identical copy
@@ -142,12 +149,12 @@ pub fn live_action_panel(has_unformatted: bool) -> Vec<Vec<Action>> {
     let mut main = vec![
         Action {
             id: "copy-answer",
-            title: None,
+            title: Some("Copy Result"),
             primary: true,
         },
         Action {
             id: "copy-question-and-answer",
-            title: None,
+            title: Some("Copy Question And Answer"),
             primary: false,
         },
     ];
@@ -158,6 +165,16 @@ pub fn live_action_panel(has_unformatted: bool) -> Vec<Vec<Action>> {
             primary: false,
         });
     }
+    main.push(Action {
+        id: "put-answer-in-search-bar",
+        title: Some("Put answer in search bar"),
+        primary: false,
+    });
+    main.push(Action {
+        id: "open-history",
+        title: Some("Open Calculator History"),
+        primary: false,
+    });
     vec![main]
 }
 
@@ -225,11 +242,11 @@ mod tests {
     #[test]
     fn live_action_panel_includes_unformatted_when_present() {
         let without = live_action_panel(false);
-        assert_eq!(without[0].len(), 2);
+        assert_eq!(without[0].len(), 4);
         assert!(!without[0].iter().any(|a| a.id == "copy-unformatted-answer"));
         let with = live_action_panel(true);
-        assert_eq!(with[0].len(), 3);
-        assert!(with[0].iter().any(|a| a.id == "copy-unformatted-answer"));
+        assert_eq!(with[0].len(), 5);
+        assert_eq!(with[0][2].id, "copy-unformatted-answer");
     }
 
     #[test]

@@ -539,7 +539,7 @@ impl LauncherApp {
 
     /// Records an install or an uninstall everywhere it shows: the page on
     /// screen, the list parked under a detail page, and root search.
-    fn store_changed(&mut self, id: &str, installed: bool) {
+    pub(super) fn store_changed(&mut self, id: &str, installed: bool) {
         if let Page::Store(page) = &mut self.page {
             page.mark(id, installed);
         }

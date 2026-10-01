@@ -27,6 +27,22 @@ fn panel() -> Vec<PanelSection> {
     ]
 }
 
+// --- height -------------------------------------------------------------
+
+/// The card makes room for the panel by this, so it must count every row
+/// kind: padding and border, the filter, then items, headers and dividers
+/// with a gap between each.
+#[test]
+fn the_panel_height_counts_its_padding_filter_and_every_row() {
+    use compass_ui::action_panel::natural_height;
+    let one = flatten(&[section("", &["A", "B", "C", "D"])], "");
+    assert!((natural_height(&one) - 194.0).abs() < f32::EPSILON);
+    let rows = flatten(&panel(), "");
+    let expected = 14.0 + 36.0 + 2.0 + 4.0 * 34.0 + 2.0 * 24.0 + 2.0 * 11.0 + 7.0 * 2.0;
+    assert_eq!(kinds(&rows).len(), 8);
+    assert!((natural_height(&rows) - expected).abs() < f32::EPSILON);
+}
+
 // --- flattening ---------------------------------------------------------
 
 #[test]

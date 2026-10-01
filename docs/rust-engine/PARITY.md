@@ -663,6 +663,10 @@ first under the C++'s `live_calc` gate and offers the C++ panel (pin or unpin, c
 or both, delete, delete all). Declared differences: a row's conversion flag comes from the question's
 `to`/`in`/`as`/`->` keyword, since fend reports no answer type; "Delete all entries" deletes, where
 the C++ action's `execute` is empty; pinning and removing say so in the view rather than a toast.
+The answer in root search offers v0.29.0's `RootCalculatorSection::actionPanel` (Copy Result, Copy
+Question And Answer, Put answer in search bar, Open Calculator History;
+`compass_core::calculator_history::live_action_panel`), without "Copy unformatted answer", which the
+C++ adds only when its backend returns a second, unformatted form: fend prints only one.
 Copying shows the C++'s HUD ("Answer copied to clipboard", "Copied to clipboard"; see "The gaps pass,
 HUD and onboarding").
 Currency conversion and Refresh Exchange Rates stay unported, blocked on a rate source.
@@ -1026,7 +1030,13 @@ Declared differences:
 - An "Add extensions" step before the last recommends `compass_core::onboarding::RECOMMENDED_EXTENSIONS`
   (store extensions Suite 1 shows rendering) with an Install button each, through the store's own
   `store_install`. The C++ flow never mentions extensions (#250). A failed install, offline
-  included, says why and leaves Continue working.
+  included, says why and leaves Continue working. Four come from the Raycast store (Google
+  Translate, Google Search, GIF Search, Tailwind CSS: no account, no API key, no AppleScript) and
+  three from Vicinae's, each labelled with its store.
+- The step's buttons are Adwaita's (`compass_ui::adwaita`): Continue and Finish the suggested
+  action, the rest flat and neutral, Installed and Installing… bare. A link button says on the card
+  that it opened ("Opened in browser") or why not, where the C++ calls `Qt.openUrlExternally` and
+  says nothing.
 - Open Docs goes to Compass's guide (`docs/getting-started.md`, "Set a keyboard shortcut", on
   tunaos.org) rather than Vicinae's FAQ, and the last step names Compass and links tuna-os/compass
   with no Sponsor button: Compass has no sponsor page, and asking a new user to fund another project
