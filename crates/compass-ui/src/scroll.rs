@@ -83,6 +83,31 @@ pub(crate) fn reveal_root_selection<T>() -> iced::Task<T> {
     reveal_selection(ROOT_RESULTS, ROOT_SELECTION)
 }
 
+/// How far an arrow key scrolls a page that is read rather than picked
+/// from: about two lines of body text.
+pub(crate) const LINE_STEP: f32 = 40.0;
+/// How far Page Up and Page Down scroll it: most of the card, so a line
+/// at the edge stays in view.
+pub(crate) const PAGE_STEP: f32 = 320.0;
+
+/// What a reading key does to a page of text (a store listing, a Markdown
+/// detail): Up and Down scroll by a line, Page Up and Page Down by a page,
+/// Home and End to either end. `None` for any other key.
+pub(crate) fn reading_key<T>(key: iced::keyboard::Key<&str>) -> Option<iced::Task<T>> {
+    use iced::keyboard::{Key, key::Named};
+    use iced::widget::operation::{AbsoluteOffset, RelativeOffset, scroll_by, snap_to};
+    let by = |y: f32| scroll_by(ROOT_RESULTS, AbsoluteOffset { x: 0.0, y });
+    Some(match key {
+        Key::Named(Named::ArrowDown) => by(LINE_STEP),
+        Key::Named(Named::ArrowUp) => by(-LINE_STEP),
+        Key::Named(Named::PageDown) => by(PAGE_STEP),
+        Key::Named(Named::PageUp) => by(-PAGE_STEP),
+        Key::Named(Named::Home) => snap_to(ROOT_RESULTS, RelativeOffset::START),
+        Key::Named(Named::End) => snap_to(ROOT_RESULTS, RelativeOffset::END),
+        _ => return None,
+    })
+}
+
 /// Scrolls the settings page so the control with the keyboard is in view.
 pub(crate) fn reveal_settings_focus<T>() -> iced::Task<T> {
     reveal(SETTINGS_BODY, SETTINGS_FOCUS, 12.0)
@@ -205,6 +230,23 @@ mod scrollbar_tests {
             (color.a - 0.25).abs() < f32::EPSILON,
             "the C++'s quarter opacity"
         );
+    }
+
+    #[test]
+    fn the_reading_keys_scroll_and_the_rest_do_not() {
+        use iced::keyboard::{Key, key::Named};
+        for named in [
+            Named::ArrowDown,
+            Named::ArrowUp,
+            Named::PageDown,
+            Named::PageUp,
+            Named::Home,
+            Named::End,
+        ] {
+            assert!(reading_key::<()>(Key::Named(named)).is_some(), "{named:?}");
+        }
+        assert!(reading_key::<()>(Key::Named(Named::Enter)).is_none());
+        assert!(reading_key::<()>(Key::Character("j")).is_none());
     }
 
     #[test]

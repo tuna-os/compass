@@ -3341,7 +3341,7 @@ impl LauncherApp {
                     return match key.as_ref() {
                         Key::Named(Named::Enter) => self.continue_to_store(),
                         Key::Named(Named::Escape) => self.update(Message::Back),
-                        _ => Task::none(),
+                        _ => crate::scroll::reading_key(key.as_ref()).unwrap_or_else(Task::none),
                     };
                 }
                 if let Page::Preferences(page) = &self.page {
@@ -3409,6 +3409,13 @@ impl LauncherApp {
                         } else {
                             iced::widget::operation::focus_next()
                         };
+                    }
+                    // A Markdown detail is read, not picked from: the
+                    // arrows and the page keys scroll it.
+                    if matches!(page.view, Some(compass_extension_api::View::Detail(_)))
+                        && let Some(scroll) = crate::scroll::reading_key(key.as_ref())
+                    {
+                        return scroll;
                     }
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),

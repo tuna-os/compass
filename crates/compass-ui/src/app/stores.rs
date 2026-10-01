@@ -522,6 +522,9 @@ impl LauncherApp {
                 _ => Task::none(),
             };
         }
+        if let Some(scroll) = crate::scroll::reading_key(key.as_ref()) {
+            return scroll;
+        }
         match key.as_ref() {
             Key::Named(Named::Escape) => {
                 let store = page.store;
