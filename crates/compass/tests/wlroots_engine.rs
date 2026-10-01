@@ -897,3 +897,55 @@ fn on_sway_a_failed_launcher_is_started_again_and_the_engine_kept() {
         started.log()
     );
 }
+
+fn swaymsg(sway: &Sway, args: &[&str]) {
+    let ipc = std::fs::read_dir(sway.runtime_dir())
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("sway-ipc.") && name.ends_with(".sock"))
+        })
+        .expect("sway's IPC socket");
+    let status = Command::new("swaymsg")
+        .arg("-s")
+        .arg(ipc)
+        .args(args)
+        .stdout(Stdio::null())
+        .status()
+        .expect("swaymsg");
+    assert!(status.success(), "swaymsg {args:?}");
+}
+
+#[test]
+fn on_sway_a_launcher_whose_output_is_unplugged_comes_back_on_the_next_show() {
+    // TIL-02. The compositor closes a layer surface whose output goes away.
+    // The event loop under `iced_layershell` dropped that close, so the
+    // launcher waited for its window to go forever, and every `toggle`,
+    // `show` and `hide` after it hung.
+    let Some(sway) = Sway::start("a_launcher_whose_output_is_unplugged") else {
+        return;
+    };
+    let started = Started::start(&sway);
+    let launcher = started.launcher().expect("a launcher");
+    let _seat = support::seat_keyboard(&sway);
+    swaymsg(&sway, &["create_output"]);
+    swaymsg(&sway, &["output", "HEADLESS-2", "position", "1280", "0"]);
+    swaymsg(&sway, &["focus", "output", "HEADLESS-2"]);
+    assert!(started.acks(Request::Show), "{}", started.log());
+
+    swaymsg(&sway, &["output", "HEADLESS-2", "unplug"]);
+
+    // The surface went with its output, so the launcher is hidden, and the
+    // next toggle shows it again on the output that is left.
+    assert!(
+        started.acks(Request::Toggle),
+        "toggle hung:\n{}",
+        started.log()
+    );
+    assert!(started.acks(Request::Hide), "hide hung:\n{}", started.log());
+    assert!(started.acks(Request::Show), "show hung:\n{}", started.log());
+    assert_eq!(started.launcher(), Some(launcher), "{}", started.log());
+}

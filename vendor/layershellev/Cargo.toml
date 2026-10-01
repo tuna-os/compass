@@ -1,0 +1,40 @@
+# layershellev 0.19.1, patched for Compass: a layer surface whose output is
+# removed is closed through the ordinary close path, so `iced_layershell` and
+# the app hear about it (search `Compass patch` in `src/lib.rs`). The rest is
+# upstream's, unmodified. Wired in by `[patch.crates-io]` in the workspace
+# manifest and excluded from the workspace; docs/rust-engine/CRATE-AUDIT.md
+# has the reasoning. Drop it once upstream closes such surfaces itself.
+[package]
+edition = "2024"
+name = "layershellev"
+version = "0.19.1"
+authors = [
+    "Decodertalkers <aakari@tutanota.com>",
+    "Aakash Sen Sharma <aakashsensharma@gmail.com>",
+]
+description = "extra shell binding for layershell with winit like eventloop"
+readme = "README.md"
+keywords = ["wayland", "wlroots"]
+license = "MIT"
+repository = "https://github.com/waycrate/exwlshelleventloop"
+publish = false
+
+[lib]
+name = "layershellev"
+path = "src/lib.rs"
+
+[dependencies]
+calloop = "0.14.1"
+calloop-wayland-source = "0.4.0"
+log = "0.4.22"
+rwh_06 = { package = "raw-window-handle", version = "0.6", features = ["std"] }
+sctk = { package = "smithay-client-toolkit", version = "0.20.0" }
+tempfile = "3.27.0"
+thiserror = "2.0.12"
+waycrate_xkbkeycode = "0.19.1"
+wayland-backend = { version = "0.3.7", features = ["client_system"] }
+wayland-client = "0.31.7"
+wayland-cursor = "0.31.7"
+wayland-protocols = { version = "0.32.5", default-features = false, features = ["unstable", "staging", "client"] }
+wayland-protocols-misc = { version = "0.3.5", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3.5", default-features = false, features = ["client"] }

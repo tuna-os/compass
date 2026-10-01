@@ -862,8 +862,28 @@ async fn window_command(
     request: Request,
 ) -> Result<ExitCode> {
     require_servable_engine(engine)?;
-    ipc::send_ack(socket, request).await?;
+    send_window_command(socket, request, WINDOW_COMMAND_TIMEOUT).await?;
     Ok(ExitCode::from(EXIT_OK))
+}
+
+/// How long `toggle`, `show` and `hide` wait for the launcher. Summoning a
+/// cold launcher takes well under a second; a launcher that has not answered
+/// in this long is stuck, and a command bound to a key must not hang with it.
+const WINDOW_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+async fn send_window_command(
+    socket: &compass_ipc::SocketPath,
+    request: Request,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    match tokio::time::timeout(timeout, ipc::send_ack(socket, request)).await {
+        Ok(answer) => answer,
+        Err(_) => bail!(
+            "the launcher did not answer within {} seconds. It may be stuck; if it stays \
+             that way, quit Compass and start it again",
+            timeout.as_secs()
+        ),
+    }
 }
 
 /// Renders query hits for a terminal.
@@ -1058,5 +1078,31 @@ mod tests {
         assert!(text.contains("cannot dispatch"));
         assert!(text.contains("--engine rust"));
         assert!(text.contains("doctor"));
+    }
+
+    #[tokio::test]
+    async fn a_window_command_to_a_stuck_launcher_times_out_and_says_so() {
+        // An engine that takes the request and never answers, as one did
+        // while its launcher waited on a surface the compositor had closed.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ipc.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let held = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            drop(stream);
+        });
+        let socket = compass_ipc::SocketPath::exact(path);
+        let started = std::time::Instant::now();
+        let err = send_window_command(
+            &socket,
+            Request::Toggle,
+            std::time::Duration::from_millis(200),
+        )
+        .await
+        .expect_err("a launcher that never answers is an error");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(err.to_string().contains("did not answer"), "{err}");
+        held.abort();
     }
 }
