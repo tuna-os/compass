@@ -204,7 +204,7 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         cpp: "closeOnEscape",
         page: CorePage::General,
         label: "Close on Escape",
-        reason: "Escape always goes back one view, then hides the launcher",
+        reason: "Escape always goes back one view, clears the search, then hides the launcher",
     },
     NotPorted {
         cpp: "popToRootOnClose",
@@ -356,7 +356,7 @@ pub const KEYBINDINGS: &[(&str, &str, &str)] = &[
     ),
     (
         "Go back",
-        "Leave the view, or hide the launcher at the root",
+        "Leave the view; at the root, clear the search, then hide the launcher",
         "Escape",
     ),
     (

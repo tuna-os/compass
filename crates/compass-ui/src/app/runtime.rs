@@ -34,18 +34,18 @@ pub fn running_sections(mut sections: Vec<PanelSection>) -> Vec<PanelSection> {
         let at = primary.actions.len().min(1);
         primary
             .actions
-            .insert(at, Action::new("Close Window").with_id(APP_CLOSE_WINDOW));
+            .insert(at, Action::new("Close window").with_id(APP_CLOSE_WINDOW));
         primary
             .actions
-            .insert(at, Action::new("Focus Window").with_id(APP_FOCUS_WINDOW));
+            .insert(at, Action::new("Focus window").with_id(APP_FOCUS_WINDOW));
     }
     sections.push(PanelSection {
         name: String::new(),
         actions: vec![
-            Action::new("Quit Application")
+            Action::new("Quit application")
                 .with_id(APP_QUIT)
                 .with_shortcut("ctrl+q"),
-            Action::new("Force Quit Application").with_id(APP_FORCE_QUIT),
+            Action::new("Force quit application").with_id(APP_FORCE_QUIT),
         ],
     });
     sections
@@ -58,10 +58,10 @@ pub fn window_sections(row: &crate::backend::WindowRow) -> Vec<PanelSection> {
     let mut sections = vec![PanelSection {
         name: "Window Actions".to_owned(),
         actions: vec![
-            Action::new("Focus Window")
+            Action::new("Focus window")
                 .with_id(WINDOW_FOCUS)
                 .with_shortcut("enter"),
-            Action::new("Close Window")
+            Action::new("Close window")
                 .with_id(WINDOW_CLOSE)
                 .with_shortcut("ctrl+q"),
         ],
@@ -70,8 +70,8 @@ pub fn window_sections(row: &crate::backend::WindowRow) -> Vec<PanelSection> {
         sections.push(PanelSection {
             name: String::new(),
             actions: vec![
-                Action::new("Quit Application").with_id(WINDOW_QUIT),
-                Action::new("Force Quit Application").with_id(WINDOW_FORCE_QUIT),
+                Action::new("Quit application").with_id(WINDOW_QUIT),
+                Action::new("Force quit application").with_id(WINDOW_FORCE_QUIT),
             ],
         });
     }

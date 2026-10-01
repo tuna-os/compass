@@ -84,6 +84,9 @@ impl LauncherApp {
         let Page::Created(page) = &self.page else {
             return Task::none();
         };
+        if let Some(scroll) = crate::scroll::reading_key(key.as_ref()) {
+            return scroll;
+        }
         match key.as_ref() {
             Key::Named(Named::Escape) => self.update(Message::Back),
             Key::Named(Named::Enter) => {

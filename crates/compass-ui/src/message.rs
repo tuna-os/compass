@@ -322,7 +322,7 @@ pub enum Message {
     ExtensionSubtitlesLoaded(Result<Vec<(String, String)>, String>),
     /// The engine's answer to whether a newer Compass release is out.
     UpdateStatusLoaded(Result<Option<crate::backend::UpdateOffer>, String>),
-    /// "Skip This Version" finished for the tag.
+    /// "Skip this version" finished for the tag.
     UpdateSkipped(String, Result<(), String>),
     /// A command's preferences form arrived, to edit without running it.
     PreferencesOpened {

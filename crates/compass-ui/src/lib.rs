@@ -31,6 +31,7 @@ pub mod extension_page;
 pub mod fallbacks_page;
 pub mod file_preview;
 pub mod files_page;
+pub mod focus;
 pub mod fonts_page;
 pub mod grants_page;
 pub mod hud;

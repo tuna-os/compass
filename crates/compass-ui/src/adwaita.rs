@@ -19,7 +19,7 @@ use iced::widget::button as btn;
 use iced::widget::{container, pick_list, rule, text_input, toggler};
 use iced::{Background, Border, Color, Shadow};
 
-use crate::design::{Palette, Rgb};
+use crate::design::Palette;
 
 /// A button's and an entry's corner radius.
 pub const CONTROL_RADIUS: f32 = 6.0;
@@ -31,13 +31,22 @@ pub const ENTRY_PADDING: [f32; 2] = [8.5, 9.0];
 pub const SWITCH_SIZE: f32 = 26.0;
 /// A boxed list's corner radius.
 pub const LIST_RADIUS: f32 = 12.0;
-/// The padding inside a boxed list's row.
-pub const ROW_PADDING: [f32; 2] = [8.0, 12.0];
-/// The tallest control in a row, which sets the row's least height: 34 px
-/// plus the row's padding is Adwaita's 50 px action row.
-pub const ROW_MIN_CONTENT: f32 = 34.0;
+/// The padding inside a boxed list's row: Adwaita's 8 px, less the room a
+/// control keeps for its focus ring.
+pub const ROW_PADDING: [f32; 2] = [8.0 - FOCUS_RING_ROOM, 12.0];
+/// The tallest control in a row with its focus ring's room, which sets the
+/// row's least height: a 34 px control, its ring and the row's padding make
+/// Adwaita's 50 px action row.
+pub const ROW_MIN_CONTENT: f32 = 34.0 + 2.0 * FOCUS_RING_ROOM;
 /// The gap between controls, and between a group's title and its list.
 pub const SPACING: f32 = 12.0;
+/// A focus ring's width.
+pub const FOCUS_RING_WIDTH: f32 = 2.0;
+/// The gap between a focus ring and its control, so a ring in the accent
+/// still shows around a control filled with it (a switch that is on).
+pub const FOCUS_RING_GAP: f32 = 2.0;
+/// What a ring takes on each side of its control.
+pub const FOCUS_RING_ROOM: f32 = FOCUS_RING_WIDTH + FOCUS_RING_GAP;
 
 /// `alpha(currentColor, a)`: the palette's text at opacity `a`.
 fn ink(palette: Palette, a: f32) -> Color {
@@ -65,11 +74,17 @@ pub fn button(palette: Palette, status: btn::Status) -> btn::Style {
         btn::Status::Active => (0.10, 1.0),
         btn::Status::Hovered => (0.15, 1.0),
         btn::Status::Pressed => (0.30, 1.0),
-        btn::Status::Disabled => (0.10, 0.5),
+        btn::Status::Disabled => (0.05, 0.0),
     };
     btn::Style {
         background: Some(Background::Color(ink(palette, fill))),
-        text_color: ink(palette, text),
+        // A disabled button says why in its label ("Installed"), so its
+        // label stays readable: the secondary text colour, not a faded one.
+        text_color: if text > 0.0 {
+            ink(palette, text)
+        } else {
+            palette.muted.to_iced()
+        },
         border: Border {
             radius: CONTROL_RADIUS.into(),
             ..Border::default()
@@ -149,8 +164,8 @@ pub fn switch(palette: Palette, status: toggler::Status) -> toggler::Style {
     let track = match (on, hovered) {
         (true, false) => accent,
         (true, true) => mix(accent, knob, 0.1),
-        (false, false) => ink(palette, 0.15),
-        (false, true) => ink(palette, 0.20),
+        (false, false) => palette.control().to_iced(),
+        (false, true) => mix(palette.control().to_iced(), palette.text.to_iced(), 0.15),
     };
     let fade = |colour: Color| {
         if disabled {
@@ -178,8 +193,9 @@ pub fn switch(palette: Palette, status: toggler::Status) -> toggler::Style {
     }
 }
 
-/// An entry: the neutral fill, no frame, and a 2 px accent ring while it has
-/// the focus.
+/// An entry: the neutral fill, a 1 px frame in the control colour so the
+/// field can be found without it (WCAG 1.4.11), and a 2 px accent ring while
+/// it has the focus.
 #[must_use]
 pub fn entry(palette: Palette, status: text_input::Status) -> text_input::Style {
     let (fill, focused) = match status {
@@ -191,12 +207,16 @@ pub fn entry(palette: Palette, status: text_input::Status) -> text_input::Style 
     text_input::Style {
         background: Background::Color(ink(palette, fill)),
         border: Border {
-            color: Color { a: 0.5, ..accent },
-            width: if focused { 2.0 } else { 0.0 },
+            color: if focused {
+                accent
+            } else {
+                palette.control().to_iced()
+            },
+            width: if focused { FOCUS_RING_WIDTH } else { 1.0 },
             radius: CONTROL_RADIUS.into(),
         },
         icon: palette.muted.to_iced(),
-        placeholder: ink(palette, 0.5),
+        placeholder: palette.muted.to_iced(),
         value: palette.text.to_iced(),
         selection: Color { a: 0.3, ..accent },
     }
@@ -212,7 +232,7 @@ pub fn dropdown(palette: Palette, status: pick_list::Status) -> pick_list::Style
     };
     pick_list::Style {
         text_color: palette.text.to_iced(),
-        placeholder_color: ink(palette, 0.5),
+        placeholder_color: palette.muted.to_iced(),
         handle_color: palette.text.to_iced(),
         background: Background::Color(ink(palette, fill)),
         border: Border {
@@ -222,20 +242,43 @@ pub fn dropdown(palette: Palette, status: pick_list::Status) -> pick_list::Style
     }
 }
 
-/// A boxed list's fill: Adwaita's `card_bg_color`.
-///
-/// White over the light window, and a lift of the text colour over the dark
-/// one. A palette's `field` is the first, but in a dark palette it is the
-/// sunken search field, darker than the card it sits on, which would read as
-/// a hole rather than a card.
+/// The focus ring (`outline: 2px solid accent`, offset outward): a 2 px
+/// line in the accent, which the palette holds at 4.5:1 against every
+/// background, around a control with the keyboard, and nothing around one
+/// without. `radius` is the control's own, which the ring follows.
+#[must_use]
+pub fn focus_ring(palette: Palette, focused: bool, radius: f32) -> container::Style {
+    container::Style {
+        border: Border {
+            color: if focused {
+                palette.accent.to_iced()
+            } else {
+                Color::TRANSPARENT
+            },
+            width: FOCUS_RING_WIDTH,
+            radius: (radius + FOCUS_RING_ROOM).into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// `control` with room for its focus ring, drawn when `focused`. The room
+/// is kept either way, so a control does not move when it takes the focus.
+pub fn ringed<'a, Message: 'a>(
+    control: impl Into<iced::Element<'a, Message>>,
+    palette: Palette,
+    focused: bool,
+    radius: f32,
+) -> iced::widget::Container<'a, Message> {
+    container(control)
+        .padding(FOCUS_RING_ROOM)
+        .style(move |_: &iced::Theme| focus_ring(palette, focused, radius))
+}
+
+/// A boxed list's fill: Adwaita's `card_bg_color` ([`Palette::card`]).
 #[must_use]
 pub fn card(palette: Palette) -> Color {
-    let lighter = |c: Rgb| u16::from(c.r) + u16::from(c.g) + u16::from(c.b);
-    if lighter(palette.field) >= lighter(palette.surface) {
-        palette.field.to_iced()
-    } else {
-        mix(palette.surface.to_iced(), palette.text.to_iced(), 0.08)
-    }
+    palette.card().to_iced()
 }
 
 /// A boxed list (`.boxed-list`, an `AdwPreferencesGroup`'s rows): the card
@@ -314,16 +357,33 @@ mod tests {
     }
 
     #[test]
-    fn only_a_focused_entry_has_a_ring() {
-        assert!(entry(DARK, text_input::Status::Active).border.width.abs() < f32::EPSILON);
+    fn a_focused_control_has_a_two_pixel_ring_that_reads_on_every_background() {
+        for palette in [LIGHT, DARK] {
+            let ring = focus_ring(palette, true, CONTROL_RADIUS);
+            assert!((ring.border.width - 2.0).abs() < f32::EPSILON);
+            assert_eq!(ring.border.color, palette.accent.to_iced());
+            for background in palette.backgrounds() {
+                let ratio = compass_core::contrast::contrast_ratio(
+                    palette.accent.into(),
+                    background.into(),
+                );
+                assert!(
+                    ratio >= 3.0,
+                    "{palette:?}: ring {ratio:.2} on {background:?}"
+                );
+            }
+            let idle = focus_ring(palette, false, CONTROL_RADIUS);
+            assert_eq!(idle.border.color, Color::TRANSPARENT);
+        }
+    }
+
+    #[test]
+    fn an_entry_is_framed_and_a_focused_one_has_an_accent_ring() {
+        let idle = entry(DARK, text_input::Status::Active);
+        assert!((idle.border.width - 1.0).abs() < f32::EPSILON);
+        assert_eq!(idle.border.color, DARK.control().to_iced());
         let focused = entry(DARK, text_input::Status::Focused { is_hovered: false });
-        assert!((focused.border.width - 2.0).abs() < f32::EPSILON);
-        assert_eq!(
-            Color {
-                a: 1.0,
-                ..focused.border.color
-            },
-            DARK.accent.to_iced()
-        );
+        assert!((focused.border.width - FOCUS_RING_WIDTH).abs() < f32::EPSILON);
+        assert_eq!(focused.border.color, DARK.accent.to_iced());
     }
 }

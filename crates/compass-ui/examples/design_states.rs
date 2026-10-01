@@ -90,21 +90,21 @@ fn panel_sections() -> Vec<PanelSection> {
             name: String::new(),
             actions: vec![
                 Action::new("Open").with_shortcut("Enter"),
-                Action::new("Open in New Window").with_shortcut("Shift+Enter"),
+                Action::new("Open in new window").with_shortcut("Shift+Enter"),
             ],
         },
         PanelSection {
             name: "Copy".to_owned(),
             actions: vec![
-                Action::new("Copy Name").with_shortcut("Ctrl+C"),
-                Action::new("Copy Path").with_shortcut("Ctrl+Shift+C"),
+                Action::new("Copy name").with_shortcut("Ctrl+C"),
+                Action::new("Copy path").with_shortcut("Ctrl+Shift+C"),
             ],
         },
         PanelSection {
             name: "Manage".to_owned(),
             actions: vec![
-                Action::new("Add to Favorites").with_shortcut("Ctrl+D"),
-                Action::new("Hide Application"),
+                Action::new("Add to favorites").with_shortcut("Ctrl+D"),
+                Action::new("Hide application"),
             ],
         },
     ]
@@ -176,7 +176,7 @@ fn list_state_with_corpus(
 ///
 /// The selection is asked of `action_panel::selection_after_filter` rather
 /// than passed in. It used to be a hard-coded `1`, which drew the highlight on
-/// "Open in New Window" -- a state the launcher never opens in, since the
+/// "Open in new window" -- a state the launcher never opens in, since the
 /// selection goes to the first selectable row. The VM tier's own frame shows
 /// the caret on "Open", so the surrogate was the thing that was wrong, and a
 /// surrogate that disagrees with the real launcher about which row is selected

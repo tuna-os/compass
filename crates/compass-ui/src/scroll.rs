@@ -10,10 +10,20 @@ pub(crate) const PANEL_RESULTS: &str = "panel-results";
 pub(crate) const PANEL_SELECTION: &str = "panel-selection";
 pub(crate) const ROOT_RESULTS: &str = "root-results";
 pub(crate) const ROOT_SELECTION: &str = "root-selection";
+/// The settings page's scrollable body.
+pub(crate) const SETTINGS_BODY: &str = "settings-body";
+/// The control on a settings or onboarding page that has the keyboard.
+pub(crate) const SETTINGS_FOCUS: &str = "settings-focus";
+/// The settings sidebar's scrollable list.
+pub(crate) const SETTINGS_SIDEBAR: &str = "settings-sidebar";
+/// The selected row of the settings sidebar.
+pub(crate) const SETTINGS_SIDEBAR_SELECTION: &str = "settings-sidebar-selection";
 
 struct RevealSelection {
     scroll_id: &'static str,
     selection_id: &'static str,
+    /// Room kept between the target and the viewport's edge.
+    margin: f32,
     viewport: Option<(Rectangle, f32)>,
     selected: Option<Rectangle>,
 }
@@ -46,9 +56,9 @@ impl Operation for RevealSelection {
         let (Some((viewport, offset)), Some(selected)) = (self.viewport, self.selected) else {
             return Outcome::None;
         };
-        let top = selected.y - viewport.y;
-        let bottom = top + selected.height;
-        let next = if top < offset || selected.height > viewport.height {
+        let top = selected.y - viewport.y - self.margin;
+        let bottom = selected.y - viewport.y + selected.height + self.margin;
+        let next = if top < offset || bottom - top > viewport.height {
             top
         } else if bottom > offset + viewport.height {
             bottom - viewport.height
@@ -73,10 +83,58 @@ pub(crate) fn reveal_root_selection<T>() -> iced::Task<T> {
     reveal_selection(ROOT_RESULTS, ROOT_SELECTION)
 }
 
+/// How far an arrow key scrolls a page that is read rather than picked
+/// from: about two lines of body text.
+pub(crate) const LINE_STEP: f32 = 40.0;
+/// How far Page Up and Page Down scroll it: most of the card, so a line
+/// at the edge stays in view.
+pub(crate) const PAGE_STEP: f32 = 320.0;
+
+/// What a reading key does to a page of text (a store listing, a Markdown
+/// detail): Up and Down scroll by a line, Page Up and Page Down by a page,
+/// Home and End to either end. `None` for any other key.
+pub(crate) fn reading_key<T>(key: iced::keyboard::Key<&str>) -> Option<iced::Task<T>> {
+    use iced::keyboard::{Key, key::Named};
+    use iced::widget::operation::{AbsoluteOffset, RelativeOffset, scroll_by, snap_to};
+    let by = |y: f32| scroll_by(ROOT_RESULTS, AbsoluteOffset { x: 0.0, y });
+    Some(match key {
+        Key::Named(Named::ArrowDown) => by(LINE_STEP),
+        Key::Named(Named::ArrowUp) => by(-LINE_STEP),
+        Key::Named(Named::PageDown) => by(PAGE_STEP),
+        Key::Named(Named::PageUp) => by(-PAGE_STEP),
+        Key::Named(Named::Home) => snap_to(ROOT_RESULTS, RelativeOffset::START),
+        Key::Named(Named::End) => snap_to(ROOT_RESULTS, RelativeOffset::END),
+        _ => return None,
+    })
+}
+
+/// Scrolls the settings page so the control with the keyboard is in view.
+pub(crate) fn reveal_settings_focus<T>() -> iced::Task<T> {
+    reveal(SETTINGS_BODY, SETTINGS_FOCUS, 12.0)
+}
+
+/// The onboarding's theme list, opened from the keyboard.
+pub(crate) const ONBOARDING_MENU: &str = "onboarding-menu";
+
+/// Scrolls the onboarding's theme list to its highlighted theme.
+pub(crate) fn reveal_onboarding_option<T>() -> iced::Task<T> {
+    reveal(ONBOARDING_MENU, SETTINGS_FOCUS, 4.0)
+}
+
+/// Scrolls the settings sidebar so its selected row is in view.
+pub(crate) fn reveal_settings_page<T>() -> iced::Task<T> {
+    reveal(SETTINGS_SIDEBAR, SETTINGS_SIDEBAR_SELECTION, 8.0)
+}
+
 fn reveal_selection<T>(scroll_id: &'static str, selection_id: &'static str) -> iced::Task<T> {
+    reveal(scroll_id, selection_id, 0.0)
+}
+
+fn reveal<T>(scroll_id: &'static str, selection_id: &'static str, margin: f32) -> iced::Task<T> {
     iced_winit::runtime::task::effect(iced_winit::runtime::Action::widget(RevealSelection {
         scroll_id,
         selection_id,
+        margin,
         viewport: None,
         selected: None,
     }))
@@ -180,6 +238,23 @@ mod scrollbar_tests {
             (color.a - 0.25).abs() < f32::EPSILON,
             "the C++'s quarter opacity"
         );
+    }
+
+    #[test]
+    fn the_reading_keys_scroll_and_the_rest_do_not() {
+        use iced::keyboard::{Key, key::Named};
+        for named in [
+            Named::ArrowDown,
+            Named::ArrowUp,
+            Named::PageDown,
+            Named::PageUp,
+            Named::Home,
+            Named::End,
+        ] {
+            assert!(reading_key::<()>(Key::Named(named)).is_some(), "{named:?}");
+        }
+        assert!(reading_key::<()>(Key::Named(Named::Enter)).is_none());
+        assert!(reading_key::<()>(Key::Character("j")).is_none());
     }
 
     #[test]

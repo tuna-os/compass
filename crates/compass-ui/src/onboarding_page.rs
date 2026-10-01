@@ -20,6 +20,23 @@ impl std::fmt::Display for ThemeOption {
     }
 }
 
+/// A control on a step that the keyboard can reach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Control {
+    /// The theme dropdown.
+    Theme,
+    /// "Open Docs" for the hotkey.
+    OpenDocs,
+    /// A recommended extension's Install, by its position.
+    Install(usize),
+    /// The last step's GitHub link.
+    GitHub,
+    /// Back.
+    Back,
+    /// Continue, or Finish on the last step.
+    Continue,
+}
+
 /// The page's state.
 #[derive(Debug, Clone)]
 pub struct OnboardingPage {
@@ -33,6 +50,10 @@ pub struct OnboardingPage {
     pub notice: Option<String>,
     /// The extensions step's recommendations and their installs.
     pub extensions: Extensions,
+    /// The control with the keyboard, if one has it.
+    pub focused: Option<Control>,
+    /// The theme highlighted in the open theme dropdown.
+    pub menu: Option<usize>,
 }
 
 impl OnboardingPage {
@@ -49,7 +70,47 @@ impl OnboardingPage {
             state_path,
             notice: None,
             extensions: Extensions::new(installed),
+            focused: None,
+            menu: None,
         }
+    }
+
+    /// The step's controls in the order they are drawn: its own, then Back
+    /// and Continue. An Install that cannot be pressed is not one.
+    #[must_use]
+    pub fn controls(&self) -> Vec<Control> {
+        use compass_core::onboarding::{Install, RECOMMENDED_EXTENSIONS, Step};
+        let mut controls = match self.flow.step() {
+            Step::Personalize => vec![Control::Theme, Control::OpenDocs],
+            Step::Extensions => (0..RECOMMENDED_EXTENSIONS.len())
+                .filter(|&index| {
+                    self.extensions
+                        .state(index)
+                        .unwrap_or(Install::Available)
+                        .can_install()
+                })
+                .map(Control::Install)
+                .collect(),
+            Step::Complete => vec![Control::GitHub],
+            Step::Welcome | Step::Permissions => Vec::new(),
+        };
+        if self.flow.can_go_back() {
+            controls.push(Control::Back);
+        }
+        controls.push(Control::Continue);
+        controls
+    }
+
+    /// Tab or Shift+Tab.
+    pub fn move_focus(&mut self, forward: bool) {
+        self.focused = crate::focus::step(&self.controls(), self.focused.as_ref(), forward);
+        self.menu = None;
+    }
+
+    /// Another step is on show: nothing on it has the keyboard yet.
+    pub fn step_changed(&mut self) {
+        self.focused = None;
+        self.menu = None;
     }
 }
 
@@ -63,5 +124,37 @@ mod tests {
         assert_eq!(page.themes.len(), Theme::ALL.len());
         assert_eq!(page.themes[0].to_string(), Theme::ALL[0].title());
         assert_eq!(page.flow.count(), 4, "no permissions step on Linux");
+    }
+
+    #[test]
+    fn tab_reaches_each_steps_controls_then_back_and_continue() {
+        let mut page = OnboardingPage::new(PathBuf::from("/nonexistent"), Vec::new(), |_| false);
+        assert_eq!(page.controls(), [Control::Continue], "the welcome step");
+        let _ = page.flow.advance();
+        assert_eq!(
+            page.controls(),
+            [
+                Control::Theme,
+                Control::OpenDocs,
+                Control::Back,
+                Control::Continue
+            ]
+        );
+        page.move_focus(true);
+        assert_eq!(page.focused, Some(Control::Theme));
+        page.move_focus(false);
+        page.move_focus(false);
+        assert_eq!(page.focused, Some(Control::Continue));
+        let _ = page.flow.advance();
+        page.step_changed();
+        let installs = page
+            .controls()
+            .into_iter()
+            .filter(|control| matches!(control, Control::Install(_)))
+            .count();
+        assert_eq!(
+            installs,
+            compass_core::onboarding::RECOMMENDED_EXTENSIONS.len()
+        );
     }
 }

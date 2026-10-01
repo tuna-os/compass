@@ -373,9 +373,13 @@ impl LauncherApp {
                     .to_iced()
                     .into(),
                 ),
+                // The field fill is one step from the card (1.04:1 in
+                // light), so a tile is outlined in the control colour to be
+                // seen as one at all.
                 border: iced::Border {
                     radius: 8.0.into(),
-                    ..iced::Border::default()
+                    width: if selected { 0.0 } else { 1.0 },
+                    color: palette.control().to_iced(),
                 },
                 ..container::Style::default()
             });

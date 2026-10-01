@@ -199,10 +199,10 @@ fails to compile until it says what it expects.
 | Clipboard History › Remove entry | changes Clipboard; calls clipboard.changes | `every_action_in_a_builtin_views_panel_does_something` |
 | Clipboard History › Remove all | asks to confirm; then changes Clipboard; calls clipboard.changes | `every_action_in_a_builtin_views_panel_does_something` |
 | Clipboard History › Pause clipboard | changes Clipboard; calls clipboard.monitoring | `every_action_in_a_builtin_views_panel_does_something` |
-| Switch Windows › Focus Window | opens Root; hides; calls windows.activated | `every_action_in_a_builtin_views_panel_does_something` |
-| Switch Windows › Close Window | calls windows.closed | `every_action_in_a_builtin_views_panel_does_something` |
-| Switch Windows › Quit Application | opens Root; HUD "Quit Editor"; hides; calls windows.window_quits | `every_action_in_a_builtin_views_panel_does_something` |
-| Switch Windows › Force Quit Application | opens Root; HUD "Force quit Editor"; hides; calls windows.window_quits | `every_action_in_a_builtin_views_panel_does_something` |
+| Switch Windows › Focus window | opens Root; hides; calls windows.activated | `every_action_in_a_builtin_views_panel_does_something` |
+| Switch Windows › Close window | calls windows.closed | `every_action_in_a_builtin_views_panel_does_something` |
+| Switch Windows › Quit application | opens Root; HUD "Quit Editor"; hides; calls windows.window_quits | `every_action_in_a_builtin_views_panel_does_something` |
+| Switch Windows › Force quit application | opens Root; HUD "Force quit Editor"; hides; calls windows.window_quits | `every_action_in_a_builtin_views_panel_does_something` |
 | Switch Workspaces › Switch to workspace | opens Root; hides; calls windows.focused_workspaces | `every_action_in_a_builtin_views_panel_does_something` |
 | Search Emojis & Symbols › Paste to active window | opens Root; hides; calls engine.pasted | `every_action_in_a_builtin_views_panel_does_something` |
 | Search Emojis & Symbols › Copy | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
@@ -253,29 +253,29 @@ fails to compile until it says what it expects.
 | Now Playing › Pause | changes NowPlaying; calls engine.controlled; calls engine.players | `every_action_in_a_builtin_views_panel_does_something` |
 | Now Playing › Next Track | calls engine.controlled | `every_action_in_a_builtin_views_panel_does_something` |
 | Now Playing › Previous Track | calls engine.controlled | `every_action_in_a_builtin_views_panel_does_something` |
-| Browse Apps › Open Application | opens Root; hides; calls launcher.launched | `every_action_in_a_builtin_views_panel_does_something` |
+| Browse Apps › Open application | opens Root; hides; calls launcher.launched | `every_action_in_a_builtin_views_panel_does_something` |
 | Browse Apps › Private Window | opens Root; hides; calls launcher.launched | `every_action_in_a_builtin_views_panel_does_something` |
-| Browse Apps › Open Location | opens Root; hides; calls engine.opened | `every_action_in_a_builtin_views_panel_does_something` |
-| Browse Apps › Copy App ID | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
-| Browse Apps › Copy App Location | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Browse Apps › Open location | opens Root; hides; calls engine.opened | `every_action_in_a_builtin_views_panel_does_something` |
+| Browse Apps › Copy app ID | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Browse Apps › Copy app location | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
 | Set Default Terminal › Set as default terminal | opens Root; hides; calls engine.defaults_set | `every_action_in_a_builtin_views_panel_does_something` |
 | Set Default Browser › Set as default browser | opens Root; hides; calls engine.defaults_set | `every_action_in_a_builtin_views_panel_does_something` |
 | Search Tray › Activate | opens Root; hides; calls engine.tray_calls | `every_action_in_a_builtin_views_panel_does_something` |
-| Search Tray › Browse Menu | changes Tray; calls engine.tray_calls | `every_action_in_a_builtin_views_panel_does_something` |
-| Search Tray › Secondary Activate | opens Root; hides; calls engine.tray_calls | `every_action_in_a_builtin_views_panel_does_something` |
+| Search Tray › Browse menu | changes Tray; calls engine.tray_calls | `every_action_in_a_builtin_views_panel_does_something` |
+| Search Tray › Secondary activate | opens Root; hides; calls engine.tray_calls | `every_action_in_a_builtin_views_panel_does_something` |
 | Configure Fallback Commands › Disable fallback | changes Fallbacks; calls engine.root_edits | `every_action_in_a_builtin_views_panel_does_something` |
 | Show Installed Extensions › Uninstall | asks to confirm; then changes Extensions | `every_action_in_a_builtin_views_panel_does_something` |
-| Show Installed Extensions › Copy Name | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Show Installed Extensions › Copy name | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
 | Show Installed Extensions › Copy ID | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
-| Show Installed Extensions › Copy Path | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
-| Show Installed Extensions › Copy Author | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
-| Search Builtin Icons › Copy Icon Name | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Show Installed Extensions › Copy path | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Show Installed Extensions › Copy author | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Search Builtin Icons › Copy icon name | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
 | Manage OAuth Token Sets › Remove token set | asks to confirm; then changes Tokens; calls engine.token_sets | `every_action_in_a_builtin_views_panel_does_something` |
-| Manage OAuth Token Sets › Copy Access Token | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
-| Manage OAuth Token Sets › Copy Refresh Token | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
-| Manage OAuth Token Sets › Copy ID Token | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
-| Manage OAuth Token Sets › Copy Scopes | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
-| Manage OAuth Token Sets › Copy Expiration Date | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Manage OAuth Token Sets › Copy access token | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Manage OAuth Token Sets › Copy refresh token | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Manage OAuth Token Sets › Copy ID token | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Manage OAuth Token Sets › Copy scopes | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
+| Manage OAuth Token Sets › Copy expiration date | opens Root; HUD "Copied to clipboard"; hides; copies | `every_action_in_a_builtin_views_panel_does_something` |
 | Inspect Local Storage › Browse namespace | changes Storage | `every_action_in_a_builtin_views_panel_does_something` |
 <!-- /audit:view-panels -->
 
@@ -288,30 +288,30 @@ fails to compile until it says what it expects.
 | Application › Private Window | hides; calls launcher.launched | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Copy name | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Copy path | copies | `every_action_in_a_root_rows_panel_does_something` |
-| Application › Copy Deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Application › Copy deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Reset ranking | asks to confirm; then calls engine.root_edits | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Add to favorites | calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Set alias | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
-| Application › Set Global Shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
-| Application › Open Preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
+| Application › Set global shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
+| Application › Open preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Copy ID | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Disable item | asks to confirm; then calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Open command | opens Clipboard | `every_action_in_a_root_rows_panel_does_something` |
-| Builtin command › Copy Deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Builtin command › Copy deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Reset ranking | asks to confirm; then calls engine.root_edits | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Remove from favorites | calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Set alias | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
-| Builtin command › Set Global Shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
-| Builtin command › Open Preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
+| Builtin command › Set global shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
+| Builtin command › Open preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Copy ID | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Disable item | asks to confirm; then calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Open command | hides; calls engine.given; calls engine.ran | `every_action_in_a_root_rows_panel_does_something` |
-| Extension command › Copy Deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Extension command › Copy deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Reset ranking | asks to confirm; then calls engine.root_edits | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Add to favorites | calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Set alias | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
-| Extension command › Set Global Shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
-| Extension command › Open Preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
+| Extension command › Set global shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
+| Extension command › Open preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Copy ID | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Disable item | asks to confirm; then calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Quicklink › Open shortcut | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
@@ -323,12 +323,12 @@ fails to compile until it says what it expects.
 | Script command › Run script | says "count.sh "; calls engine.script_runs | `every_action_in_a_root_rows_panel_does_something` |
 | Script command › Copy path to script | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Open | hides; calls engine.given; calls engine.ran | `every_action_in_a_root_rows_panel_does_something` |
-| Rhai script › Copy Deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Rhai script › Copy deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Reset ranking | asks to confirm; then calls engine.root_edits | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Add to favorites | calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Set alias | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
-| Rhai script › Set Global Shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
-| Rhai script › Open Preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
+| Rhai script › Set global shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
+| Rhai script › Open preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Copy ID | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Disable item | asks to confirm; then calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Calculator answer › Copy Result | HUD "Answer copied to clipboard"; hides; copies; calls engine.calculations | `every_action_in_a_root_rows_panel_does_something` |
@@ -336,9 +336,9 @@ fails to compile until it says what it expects.
 | Calculator answer › Put answer in search bar | types "2" | `every_action_in_a_root_rows_panel_does_something` |
 | Calculator answer › Open Calculator History | opens Calculator | `every_action_in_a_root_rows_panel_does_something` |
 | Fallback › Open command | opens Files | `every_action_in_a_root_rows_panel_does_something` |
-| Fallback › Manage Fallback Actions | opens Fallbacks | `every_action_in_a_root_rows_panel_does_something` |
-| Update › View Release Notes | HUD "Opened in browser"; hides; calls engine.opened_urls | `every_action_in_a_root_rows_panel_does_something` |
-| Update › Skip This Version | calls engine.skipped; calls engine.update | `every_action_in_a_root_rows_panel_does_something` |
+| Fallback › Manage fallback actions | opens Fallbacks | `every_action_in_a_root_rows_panel_does_something` |
+| Update › View release notes | HUD "Opened in browser"; hides; calls engine.opened_urls | `every_action_in_a_root_rows_panel_does_something` |
+| Update › Skip this version | calls engine.skipped; calls engine.update | `every_action_in_a_root_rows_panel_does_something` |
 <!-- /audit:root-panels -->
 
 ## The settings view's controls
@@ -396,10 +396,11 @@ sidebar page, so a control is audited without anyone naming it.
 | Commands › Changed("providers.clipboard.preferences.ignorePasswords", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:switch-windows")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:switch-windows", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:switch-workspaces")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:toggle-fullscreen")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:toggle-floating")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:toggle-fullscreen", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:toggle-overview")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:toggle-floating", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:search-emojis")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:search-emojis", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.files.preferences.autoIndexing", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
@@ -408,63 +409,64 @@ sidebar page, so a control is audited without anyone naming it.
 | Commands › ItemToggled("commands:manage-shortcuts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:create-snippet", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.snippets.preferences.enabled", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.commands.entrypoints.run-program.preferences.default-action", String("run-in-terminal")) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:create-extension")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:create-extension", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:raycast-store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:raycast-store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:power-off")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.power.entrypoints.power-off.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:reboot")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:reboot", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Changed("providers.power.entrypoints.sleep.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:lock")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:lock", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.power.entrypoints.logout.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:suspend")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Changed("providers.power.entrypoints.hibernate.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:soft-reboot")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:soft-reboot", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:calculator-history")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:calculator-history", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:now-playing")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:suspend", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.power.entrypoints.suspend.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:hibernate")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:hibernate", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.power.entrypoints.soft-reboot.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:script-permissions")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:script-permissions", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:refresh-rates")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:play-pause")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:now-playing", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:play-pause", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:previous-track")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:volume-up")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:previous-track", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:volume-up", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:volume-down")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:volume-75")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:volume-75", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:volume-25")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:volume-0")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:volume-25", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:volume-0", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:volume-100")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:volume-100", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:volume-50")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:volume-50", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:browse-apps")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:browse-apps", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:set-default-terminal")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.commands.entrypoints.browse-apps.preferences.sortAlphabetically", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:set-default-browser")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:search-tray")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:set-default-browser", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:settings")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:search-tray", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:manage-fallback")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:settings", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:manage-fallback", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:refresh-apps")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:refresh-apps", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:sponsor")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:sponsor", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:open-config-file")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:open-config-file", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:reload-scripts")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:show-logs")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:reload-scripts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:search-builtin-icons")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:show-logs", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:oauth-token-store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:search-builtin-icons", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:oauth-token-store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:inspect-local-storage")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:inspect-local-storage", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:switch-workspaces")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:switch-workspaces", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:browse-fonts")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:browse-fonts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:run-program")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:run-program", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › ProviderToggled("shortcuts", false) | changes Settings; calls engine.providers_set; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › Record(Item("shortcuts:sct-docs")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › ItemToggled("shortcuts:sct-docs", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |

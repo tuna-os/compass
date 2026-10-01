@@ -18,7 +18,7 @@ use compass_core::root_items::RootEdit;
 
 /// The fallback manager's one action.
 const FALLBACK_TOGGLE: &str = "fallback.toggle";
-/// A fallback row's "Manage Fallback Actions" (`ManageFallbackActions`).
+/// A fallback row's "Manage fallback actions" (`ManageFallbackActions`).
 pub(super) const MANAGE_FALLBACKS: &str = "root.manage-fallbacks";
 /// A fallback row's Open.
 pub(super) const OPEN_FALLBACK: &str = "root.open-fallback";
@@ -246,7 +246,7 @@ impl LauncherApp {
                 Action::new(open)
                     .with_id(OPEN_FALLBACK)
                     .with_shortcut("enter"),
-                Action::new("Manage Fallback Actions")
+                Action::new("Manage fallback actions")
                     .with_id(MANAGE_FALLBACKS)
                     .with_shortcut("ctrl+enter"),
             ],
@@ -544,7 +544,7 @@ impl LauncherApp {
                 vec![PanelSection {
                     name: String::new(),
                     actions: vec![
-                        Action::new("Copy Icon Name")
+                        Action::new("Copy icon name")
                             .with_id(ICON_COPY_NAME)
                             .with_shortcut("enter"),
                     ],
@@ -564,18 +564,18 @@ impl LauncherApp {
             }
             Page::Tokens(page) => {
                 let set = page.selected_set()?;
-                let mut copies = vec![Action::new("Copy Access Token").with_id(TOKEN_COPY_ACCESS)];
+                let mut copies = vec![Action::new("Copy access token").with_id(TOKEN_COPY_ACCESS)];
                 if set.refresh_token.is_some() {
-                    copies.push(Action::new("Copy Refresh Token").with_id(TOKEN_COPY_REFRESH));
+                    copies.push(Action::new("Copy refresh token").with_id(TOKEN_COPY_REFRESH));
                 }
                 if set.id_token.is_some() {
-                    copies.push(Action::new("Copy ID Token").with_id(TOKEN_COPY_ID));
+                    copies.push(Action::new("Copy ID token").with_id(TOKEN_COPY_ID));
                 }
                 if set.scope.is_some() {
-                    copies.push(Action::new("Copy Scopes").with_id(TOKEN_COPY_SCOPES));
+                    copies.push(Action::new("Copy scopes").with_id(TOKEN_COPY_SCOPES));
                 }
                 if set.expires_at.is_some() {
-                    copies.push(Action::new("Copy Expiration Date").with_id(TOKEN_COPY_EXPIRY));
+                    copies.push(Action::new("Copy expiration date").with_id(TOKEN_COPY_EXPIRY));
                 }
                 vec![
                     PanelSection {
@@ -595,12 +595,12 @@ impl LauncherApp {
             Page::Extensions(page) => {
                 let extension = page.selected_extension()?;
                 let mut copies = vec![
-                    Action::new("Copy Name").with_id(EXTENSION_COPY_NAME),
+                    Action::new("Copy name").with_id(EXTENSION_COPY_NAME),
                     Action::new("Copy ID").with_id(EXTENSION_COPY_ID),
-                    Action::new("Copy Path").with_id(EXTENSION_COPY_PATH),
+                    Action::new("Copy path").with_id(EXTENSION_COPY_PATH),
                 ];
                 if !extension.author.is_empty() {
-                    copies.push(Action::new("Copy Author").with_id(EXTENSION_COPY_AUTHOR));
+                    copies.push(Action::new("Copy author").with_id(EXTENSION_COPY_AUTHOR));
                 }
                 vec![
                     PanelSection {

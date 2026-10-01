@@ -242,7 +242,7 @@ impl LauncherApp {
         };
         column![
             body,
-            self.footer(page.list.navigation_title.as_deref(), primary)
+            self.footer(page.list.navigation_title.as_deref(), Some(primary))
         ]
         .into()
     }

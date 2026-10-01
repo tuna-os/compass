@@ -188,7 +188,7 @@ impl LauncherApp {
         };
         let favorite = self.root_config.favorites.iter().position(|fav| *fav == id);
         let mut item = vec![
-            Action::new("Copy Deeplink")
+            Action::new("Copy deeplink")
                 .with_id(COPY_DEEPLINK)
                 .with_shortcut("ctrl+shift+c"),
             Action::new("Reset ranking").with_id(RESET_RANKING),
@@ -214,8 +214,8 @@ impl LauncherApp {
             }
         }
         item.push(Action::new("Set alias").with_id(ALIAS));
-        item.push(Action::new("Set Global Shortcut").with_id(SHORTCUT));
-        item.push(Action::new("Open Preferences").with_id(PREFERENCES));
+        item.push(Action::new("Set global shortcut").with_id(SHORTCUT));
+        item.push(Action::new("Open preferences").with_id(PREFERENCES));
         item.push(Action::new("Copy ID").with_id(COPY_ID));
         item.push(
             Action::new("Disable item")

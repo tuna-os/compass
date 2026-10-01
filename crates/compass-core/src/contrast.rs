@@ -266,3 +266,105 @@ pub fn tonal_contrast_color_with_amount(background: Rgb, min_ratio: f64, color_a
 
     derived
 }
+
+/// `from` moved `amount` of the way to `to`, channel by channel.
+#[must_use]
+pub fn mix(from: Rgb, to: Rgb, amount: f64) -> Rgb {
+    let amount = amount.clamp(0.0, 1.0);
+    let channel = |a: u8, b: u8| {
+        (f64::from(b) - f64::from(a))
+            .mul_add(amount, f64::from(a))
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Rgb::new(
+        channel(from.r, to.r),
+        channel(from.g, to.g),
+        channel(from.b, to.b),
+    )
+}
+
+/// The least contrast `color` has against any of `backgrounds`.
+#[must_use]
+pub fn least_ratio(color: Rgb, backgrounds: &[Rgb]) -> f64 {
+    backgrounds
+        .iter()
+        .map(|background| contrast_ratio(color, *background))
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// `color`, or the nearest colour to it that reaches `min_ratio` against
+/// every one of `backgrounds`.
+///
+/// A theme's colour is kept when it already reads; otherwise it is mixed
+/// toward black or toward white, whichever gets there with less change, so
+/// the result keeps as much of the theme's hue as the ratio allows. When
+/// neither end reaches the ratio (backgrounds on both sides of mid-grey),
+/// the end that comes closest wins.
+#[must_use]
+pub fn ensure_contrast(color: Rgb, backgrounds: &[Rgb], min_ratio: f64) -> Rgb {
+    const STEPS: u32 = 100;
+    if backgrounds.is_empty() || least_ratio(color, backgrounds) >= min_ratio {
+        return color;
+    }
+    let black = Rgb::new(0, 0, 0);
+    let white = Rgb::new(255, 255, 255);
+    let reach = |end: Rgb| {
+        (1..=STEPS).find_map(|step| {
+            let candidate = mix(color, end, f64::from(step) / f64::from(STEPS));
+            (least_ratio(candidate, backgrounds) >= min_ratio).then_some((step, candidate))
+        })
+    };
+    match (reach(black), reach(white)) {
+        (Some((dark, darker)), Some((light, lighter))) => {
+            if dark <= light {
+                darker
+            } else {
+                lighter
+            }
+        }
+        (Some((_, darker)), None) => darker,
+        (None, Some((_, lighter))) => lighter,
+        (None, None) => {
+            if least_ratio(black, backgrounds) >= least_ratio(white, backgrounds) {
+                black
+            } else {
+                white
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod ensure_tests {
+    use super::*;
+
+    #[test]
+    fn a_colour_that_already_reads_is_kept() {
+        let muted = Rgb::new(0x5e, 0x5c, 0x64);
+        assert_eq!(
+            ensure_contrast(muted, &[Rgb::new(0xfa, 0xfa, 0xfa)], 4.5),
+            muted
+        );
+    }
+
+    #[test]
+    fn a_faint_colour_is_moved_away_from_its_backgrounds_until_it_reads() {
+        let backgrounds = [Rgb::new(0x24, 0x24, 0x24), Rgb::new(0x36, 0x36, 0x36)];
+        let muted = Rgb::new(0x9a, 0x99, 0x96);
+        let fixed = ensure_contrast(muted, &backgrounds, 4.5);
+        assert!(least_ratio(fixed, &backgrounds) >= 4.5, "{fixed:?}");
+        assert!(fixed.r > muted.r, "lighter on a dark background: {fixed:?}");
+        let white = Rgb::new(255, 255, 255);
+        let fill = ensure_contrast(Rgb::new(0x35, 0x84, 0xe4), &[white], 4.5);
+        assert!(contrast_ratio(fill, white) >= 4.5);
+        assert!(fill.b > fill.r, "still blue: {fill:?}");
+    }
+
+    #[test]
+    fn mixing_reaches_both_ends() {
+        let grey = Rgb::new(0x80, 0x80, 0x80);
+        assert_eq!(mix(grey, Rgb::new(0, 0, 0), 1.0), Rgb::new(0, 0, 0));
+        assert_eq!(mix(grey, Rgb::new(255, 255, 255), 0.0), grey);
+    }
+}

@@ -1268,11 +1268,19 @@ fn card_background(surface: design::Rgb, tint: bool) -> iced::Color {
     }
 }
 
-fn query_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    // The enclosing field owns the fill and rounded border.
+/// The search field's and the panel filter's text: the enclosing field owns
+/// the fill and the rounded border, and the placeholder is the secondary
+/// text colour, which the palette holds at 4.5:1. Iced's own placeholder is
+/// a faded text colour, 3.03:1 on the light field.
+fn query_input_style(
+    theme: &Theme,
+    status: text_input::Status,
+    palette: design::Palette,
+) -> text_input::Style {
     text_input::Style {
         background: Color::TRANSPARENT.into(),
         border: Border::default(),
+        placeholder: palette.muted.to_iced(),
         ..text_input::default(theme, status)
     }
 }
@@ -3564,13 +3572,13 @@ impl LauncherApp {
                     };
                 }
                 if matches!(self.page, Page::Onboarding(_)) {
-                    return self.onboarding_key(key);
+                    return self.onboarding_key(key, modifiers);
                 }
                 if !panel_key && matches!(self.page, Page::StoreIntro(_)) {
                     return match key.as_ref() {
                         Key::Named(Named::Enter) => self.continue_to_store(),
                         Key::Named(Named::Escape) => self.update(Message::Back),
-                        _ => Task::none(),
+                        _ => crate::scroll::reading_key(key.as_ref()).unwrap_or_else(Task::none),
                     };
                 }
                 if let Page::Preferences(page) = &self.page {
@@ -3638,6 +3646,13 @@ impl LauncherApp {
                         } else {
                             iced::widget::operation::focus_next()
                         };
+                    }
+                    // A Markdown detail is read, not picked from: the
+                    // arrows and the page keys scroll it.
+                    if matches!(page.view, Some(compass_extension_api::View::Detail(_)))
+                        && let Some(scroll) = crate::scroll::reading_key(key.as_ref())
+                    {
+                        return scroll;
                     }
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
@@ -3946,6 +3961,12 @@ impl LauncherApp {
                     Key::Named(Named::ArrowUp) => {
                         return self.update(Message::MoveSelection(Direction::Up));
                     }
+                    // Text in the field is cleared first, and only an empty
+                    // field hides: `NavigationController::goBack` at the
+                    // root search, as Raycast does.
+                    Key::Named(Named::Escape) if !self.query.is_empty() => {
+                        return self.update(Message::QueryChanged(String::new()));
+                    }
                     Key::Named(Named::Escape) => return self.update(Message::Dismiss),
                     Key::Named(Named::Enter) => return self.update(Message::LaunchSelected),
                     _ => {}
@@ -3961,6 +3982,21 @@ impl LauncherApp {
             }
             Message::Keyboard(_) => Task::none(),
         }
+    }
+
+    /// What Enter does to the selected root row, as the first action of its
+    /// panel names it; `None` with nothing selected.
+    fn root_primary_action(&self) -> Option<&'static str> {
+        Some(match self.selected_row()? {
+            RootRow::App(_) | RootRow::RhaiScript(_) => "Open",
+            RootRow::Command(_) | RootRow::Extension(_) => "Open command",
+            RootRow::Calculator => "Copy answer",
+            RootRow::Shortcut(_) => "Open shortcut",
+            RootRow::Script(_) => "Run script",
+            RootRow::Fallback(Fallback::Shortcut(_)) => "Open",
+            RootRow::Fallback(_) => "Open command",
+            RootRow::Update => "View release notes",
+        })
     }
 
     /// The search field as the page on screen has it: its placeholder, its
@@ -4172,7 +4208,7 @@ impl LauncherApp {
         let input = text_input(placeholder, value)
             .id(SEARCH_INPUT)
             .font(self.font())
-            .style(query_input_style)
+            .style(move |theme: &Theme, status| query_input_style(theme, status, palette))
             .on_input_maybe(on_input)
             .padding(Padding::new(0.0).left(14).right(14))
             .size(f32::from(geometry.query_size));
@@ -4433,6 +4469,21 @@ impl LauncherApp {
                 .into()
         };
 
+        // At the root the status bar stays on the card: the list scrolls in
+        // what the card has left, rather than pushing the bar off its foot.
+        let root_footer = matches!(self.page, Page::Root)
+            && self.confirm.is_none()
+            && self.power_confirm.is_none();
+        let body: Element<Message> = if root_footer {
+            let room = f32::from(geometry.card_max_height)
+                - 2.0 * f32::from(geometry.card_padding)
+                - f32::from(geometry.field_height)
+                - preview::FOOTER_HEIGHT
+                - if self.field_rule { 1.0 } else { 0.0 };
+            container(body).max_height(room).into()
+        } else {
+            body
+        };
         // Flow's hairline rule under the query field (#84). A one-pixel
         // container rather than a border on the field, because the field has
         // its own rounded border in the other presets and a rule has to span
@@ -4455,20 +4506,14 @@ impl LauncherApp {
         } else {
             column![field, body].width(Length::Fill)
         };
-        // The root search's status bar carries the clock as its title, as
-        // `scheduleNextClockTick` sets the navigation title.
-        let card_content = match (&self.page, &self.clock_text) {
-            (Page::Root, Some(clock)) if self.confirm.is_none() => card_content.push(
-                container(
-                    text(clock.as_str())
-                        .font(self.font())
-                        .size(12)
-                        .color(palette.muted.to_iced()),
-                )
-                .width(Length::Fill)
-                .padding(Padding::new(6.0).left(14)),
-            ),
-            _ => card_content,
+        // The root search's status bar: the clock as its title, as
+        // `scheduleNextClockTick` sets the navigation title, and on the
+        // right what Enter does and how to reach the other actions, as
+        // dmenu's footer and Raycast's action bar say it.
+        let card_content = if root_footer {
+            card_content.push(self.footer(self.clock_text.as_deref(), self.root_primary_action()))
+        } else {
+            card_content
         };
 
         // The panel floats over the list rather than replacing it. The old
@@ -5386,7 +5431,7 @@ impl LauncherApp {
                     .left(design::panel_metric("inset"))
                     .right(design::panel_metric("inset")),
             )
-            .style(query_input_style)
+            .style(move |theme: &Theme, status| query_input_style(theme, status, palette))
             .size(f32::from(geometry.title_size));
         let filter = container(filter)
             .height(design::panel_metric("filter-height"))
@@ -5574,7 +5619,7 @@ impl LauncherApp {
         if let Some(shortcut) = shortcut {
             line = line.push(Space::new().width(Length::Fill));
             line = line.push(
-                text(shortcut.to_owned())
+                text(compass_core::key_combo::badge(shortcut))
                     .font(self.font())
                     .size(f32::from(geometry.subtitle_size))
                     .color(
@@ -7175,6 +7220,19 @@ mod tests {
     }
 
     #[test]
+    fn escape_clears_the_search_text_before_it_hides() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let _ = app.update(Message::QueryChanged("fire".into()));
+        app.window_focused = true;
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert_eq!(app.query, "", "the first Escape clears the text");
+        assert!(app.window_focused, "and does not hide");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.window_focused, "the second hides");
+    }
+
+    #[test]
     fn escape_closes_the_onboarding_without_recording_it() {
         use compass_core::onboarding;
         let dir = tempfile::tempdir().unwrap();
@@ -7190,8 +7248,108 @@ mod tests {
         let _ = app.update(Message::OnboardingBack);
         assert_eq!(app.onboarding_step(), Some(onboarding::Step::Extensions));
         let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
-        assert!(!app.showing_onboarding());
+        assert_eq!(
+            app.onboarding_step(),
+            Some(onboarding::Step::Personalize),
+            "Escape goes back a step"
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert_eq!(app.onboarding_step(), Some(onboarding::Step::Welcome));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.showing_onboarding(), "and closes from the first");
         assert!(!path.exists(), "the next start asks again");
+    }
+
+    #[test]
+    fn the_onboarding_is_worked_from_the_keyboard() {
+        use crate::onboarding_page::Control;
+        use compass_core::onboarding::Step;
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        let focused = |app: &LauncherApp| match &app.page {
+            Page::Onboarding(page) => page.focused,
+            _ => panic!("not the onboarding"),
+        };
+        let shift_tab = || {
+            Message::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(Named::Tab),
+                modified_key: iced::keyboard::Key::Named(Named::Tab),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::SHIFT,
+                text: None,
+                repeat: false,
+            })
+        };
+        let _ = app.update(pressed(Named::Tab));
+        assert_eq!(focused(&app), Some(Control::Continue));
+        let _ = app.update(pressed(Named::Space));
+        assert_eq!(app.onboarding_step(), Some(Step::Personalize));
+        assert_eq!(focused(&app), None, "a new step starts unfocused");
+
+        // The theme dropdown, from the keyboard.
+        let _ = app.update(pressed(Named::Tab));
+        assert_eq!(focused(&app), Some(Control::Theme));
+        let _ = app.update(pressed(Named::Enter));
+        let Page::Onboarding(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.menu, Some(0), "open at the current theme");
+        let _ = app.update(pressed(Named::ArrowDown));
+        let _ = app.update(pressed(Named::Enter));
+        assert_eq!(app.theme_choice, crate::theme::Theme::ALL[1]);
+        let _ = app.update(shift_tab());
+        assert_eq!(focused(&app), None, "Shift+Tab from the first control");
+
+        // Install is reached and pressed; Back and Continue close the walk.
+        let _ = app.update(pressed(Named::Enter));
+        assert_eq!(app.onboarding_step(), Some(Step::Extensions));
+        let _ = app.update(pressed(Named::Tab));
+        assert_eq!(focused(&app), Some(Control::Install(0)));
+        let _ = app.update(pressed(Named::Space));
+        let Page::Onboarding(page) = &app.page else {
+            unreachable!()
+        };
+        assert_ne!(
+            page.extensions.state(0),
+            Some(compass_core::onboarding::Install::Available),
+            "Install was pressed"
+        );
+        for _ in 0..10 {
+            if focused(&app) == Some(Control::Back) {
+                break;
+            }
+            let _ = app.update(pressed(Named::Tab));
+        }
+        assert_eq!(focused(&app), Some(Control::Back));
+        let _ = app.update(pressed(Named::Enter));
+        assert_eq!(app.onboarding_step(), Some(Step::Personalize));
+    }
+
+    #[test]
+    fn the_root_footer_names_enter_and_the_action_panel() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        let _ = app.update(Message::QueryChanged("fire".into()));
+        assert_eq!(app.root_primary_action(), Some("Open"));
+        let mut ui = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(800.0, 600.0),
+            app.view(),
+        );
+        for label in ["Open", "Actions", "Ctrl+B"] {
+            assert!(ui.find(label).is_ok(), "the footer has no {label:?}");
+        }
+        drop(ui);
+        let _ = app.update(Message::QueryChanged("zzzzqqq".into()));
+        assert!(
+            app.selected_row().is_none() || app.root_primary_action().is_some(),
+            "a row selected always says what Enter does"
+        );
     }
 
     #[test]
@@ -9193,9 +9351,9 @@ mod tests {
         let _ = app.update(Message::TogglePanel);
         assert_eq!(
             panel_titles(&app),
-            ["Open command", "Manage Fallback Actions"]
+            ["Open command", "Manage fallback actions"]
         );
-        let task = choose(&mut app, "Manage Fallback Actions");
+        let task = choose(&mut app, "Manage fallback actions");
         settle(&mut app, task);
         assert!(matches!(app.page, Page::Fallbacks(_)));
     }
@@ -9216,13 +9374,13 @@ mod tests {
             panel_titles(&app),
             [
                 "Uninstall",
-                "Copy Name",
+                "Copy name",
                 "Copy ID",
-                "Copy Path",
-                "Copy Author"
+                "Copy path",
+                "Copy author"
             ]
         );
-        let task = choose(&mut app, "Copy Author");
+        let task = choose(&mut app, "Copy author");
         assert_eq!(settle(&mut app, task), ["someone"]);
         assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
 
@@ -9348,12 +9506,12 @@ mod tests {
             panel_titles(&app),
             [
                 "Remove token set",
-                "Copy Access Token",
-                "Copy Scopes",
-                "Copy Expiration Date"
+                "Copy access token",
+                "Copy scopes",
+                "Copy expiration date"
             ]
         );
-        let task = choose(&mut app, "Copy Access Token");
+        let task = choose(&mut app, "Copy access token");
         assert_eq!(settle(&mut app, task), ["gho_token"]);
 
         let _ = app.update(Message::Command(UiCommand::Show));
@@ -11419,12 +11577,12 @@ mod tests {
         let skip = app
             .panel
             .as_ref()
-            .and_then(|panel| panel.row_titled("Skip This Version"))
+            .and_then(|panel| panel.row_titled("Skip this version"))
             .expect("the panel offers to skip");
         assert!(
             app.panel
                 .as_ref()
-                .and_then(|panel| panel.row_titled("View Release Notes"))
+                .and_then(|panel| panel.row_titled("View release notes"))
                 .is_some()
         );
         let task = app.update(Message::PanelClicked(skip));
@@ -11743,7 +11901,7 @@ mod tests {
         let row = app
             .panel
             .as_ref()
-            .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+            .and_then(|panel| panel.row_titled("Set global shortcut"))
             .expect("the panel offers a shortcut");
         // Attached from here: the fake engine searches nothing.
         app.backend = Some(backend.clone());
@@ -11794,7 +11952,7 @@ mod tests {
             let row = app
                 .panel
                 .as_ref()
-                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .and_then(|panel| panel.row_titled("Set global shortcut"))
                 .expect("the panel offers a shortcut");
             app.backend = Some(backend);
             let task = app.update(Message::PanelClicked(row));
@@ -11853,7 +12011,7 @@ mod tests {
             let row = app
                 .panel
                 .as_ref()
-                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .and_then(|panel| panel.row_titled("Set global shortcut"))
                 .expect("the panel offers a shortcut");
             let _ = app.update(Message::PanelClicked(row));
             assert!(
@@ -13392,7 +13550,7 @@ mod tests {
         assert_eq!(
             launcher.0.lock().unwrap().last(),
             Some(&None),
-            "Open Application"
+            "Open application"
         );
 
         open_builtin(&mut app, "browse apps", "commands:browse-apps");
@@ -13406,10 +13564,10 @@ mod tests {
         assert_eq!(
             titles,
             [
-                "Open Application",
+                "Open application",
                 "New Window",
-                "Copy App ID",
-                "Copy App Location"
+                "Copy app ID",
+                "Copy app location"
             ],
             "no Open Location without an engine to open it"
         );
@@ -13592,7 +13750,7 @@ mod tests {
             .iter()
             .flat_map(|section| section.actions.iter().map(|a| a.title.clone()))
             .collect();
-        assert_eq!(titles, ["Activate", "Browse Menu", "Secondary Activate"]);
+        assert_eq!(titles, ["Activate", "Browse menu", "Secondary activate"]);
         let _ = app.update(Message::TogglePanel);
 
         let _ = app.update(Message::TrayQueryChanged("network".into()));
@@ -13608,7 +13766,7 @@ mod tests {
         open_builtin(&mut app, "search tray", "commands:search-tray");
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let _ = app.update(Message::PanelFilterChanged("Browse Menu".into()));
+        let _ = app.update(Message::PanelFilterChanged("Browse menu".into()));
         let task = app.update(Message::PanelActivate);
         settle(&mut app, task);
         let Page::Tray(page) = &app.page else {
@@ -15387,18 +15545,18 @@ mod tests {
             panel_titles(&app),
             [
                 "Open",
-                "Focus Window",
-                "Close Window",
+                "Focus window",
+                "Close window",
                 "Copy name",
                 "Copy path",
-                "Quit Application",
-                "Force Quit Application",
-                "Copy Deeplink",
+                "Quit application",
+                "Force quit application",
+                "Copy deeplink",
                 "Reset ranking",
                 "Add to favorites",
                 "Set alias",
-                "Set Global Shortcut",
-                "Open Preferences",
+                "Set global shortcut",
+                "Open preferences",
                 "Copy ID",
                 "Disable item"
             ]
@@ -15418,7 +15576,7 @@ mod tests {
             .unwrap();
         assert_eq!(quit_row.actions[0].shortcut.as_deref(), Some("ctrl+q"));
 
-        let task = choose(&mut app, "Force Quit Application");
+        let task = choose(&mut app, "Force quit application");
         settle(&mut app, task);
         assert_eq!(
             windows.quits.lock().unwrap().as_slice(),
@@ -15427,11 +15585,11 @@ mod tests {
 
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Quit Application");
+        let task = choose(&mut app, "Quit application");
         settle(&mut app, task);
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Focus Window");
+        let task = choose(&mut app, "Focus window");
         settle(&mut app, task);
         assert_eq!(
             windows.quits.lock().unwrap().last(),
@@ -15458,7 +15616,7 @@ mod tests {
         app.search();
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Quit Application");
+        let task = choose(&mut app, "Quit application");
         settle(&mut app, task);
         assert_eq!(app.error.as_deref(), Some("Failed to quit files.desktop"));
     }
@@ -15533,7 +15691,7 @@ mod tests {
         app.search();
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Quit Application");
+        let task = choose(&mut app, "Quit application");
         settle(&mut app, task);
         assert_eq!(app.hud_content(), Some(&crate::hud::Hud::new("Quit Files")));
         assert!(matches!(app.page, Page::Root), "the launcher hid");
@@ -15542,7 +15700,7 @@ mod tests {
         app.search();
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Force Quit Application");
+        let task = choose(&mut app, "Force quit application");
         settle(&mut app, task);
         assert_eq!(
             app.hud_content().map(|hud| hud.text.as_str()),
@@ -15804,13 +15962,13 @@ mod tests {
         assert_eq!(
             panel_titles(&app),
             [
-                "Focus Window",
-                "Close Window",
-                "Quit Application",
-                "Force Quit Application"
+                "Focus window",
+                "Close window",
+                "Quit application",
+                "Force quit application"
             ]
         );
-        let task = choose(&mut app, "Force Quit Application");
+        let task = choose(&mut app, "Force quit application");
         settle(&mut app, task);
         assert_eq!(windows.window_quits.lock().unwrap().as_slice(), [(7, true)]);
 
@@ -15820,10 +15978,10 @@ mod tests {
         let _ = app.update(Message::TogglePanel);
         assert_eq!(
             panel_titles(&app),
-            ["Focus Window", "Close Window"],
+            ["Focus window", "Close window"],
             "no application to quit"
         );
-        let task = choose(&mut app, "Close Window");
+        let task = choose(&mut app, "Close window");
         settle(&mut app, task);
         assert_eq!(windows.closed.lock().unwrap().as_slice(), [9]);
     }
@@ -15913,7 +16071,7 @@ mod tests {
             .iter()
             .map(|action| action.title.clone())
             .collect();
-        assert_eq!(titles[..2], ["Focus Window", "Open Application"]);
+        assert_eq!(titles[..2], ["Focus window", "Open application"]);
         let _ = app.update(Message::TogglePanel);
         let task = app.update(pressed(iced::keyboard::key::Named::Enter));
         settle(&mut app, task);
@@ -15926,7 +16084,7 @@ mod tests {
         let _ = app.open_apps_panel().expect("a panel");
         assert_eq!(
             app.panel.as_ref().unwrap().sections[0].actions[0].title,
-            "Open Application"
+            "Open application"
         );
     }
 
@@ -17239,7 +17397,7 @@ mod view_tests {
                     iced::Size::new(288.0, 34.0),
                     app.panel_item("Open", Some("enter"), true),
                 );
-                for label in ["Open", "enter"] {
+                for label in ["Open", "Enter"] {
                     let bounds = row.find(label).unwrap().bounds();
                     assert!(
                         (bounds.y + bounds.height / 2.0 - 17.0).abs() < 0.1,
@@ -17364,12 +17522,12 @@ mod view_tests {
                 text_input::Status::Focused { is_hovered: true },
                 text_input::Status::Disabled,
             ] {
-                let style = query_input_style(&theme, status);
+                let style = query_input_style(&theme, status, design::LIGHT);
                 let default = text_input::default(&theme, status);
                 assert_eq!(style.background, Color::TRANSPARENT.into());
                 assert_eq!(style.border.width, 0.0);
                 assert_eq!(style.value, default.value);
-                assert_eq!(style.placeholder, default.placeholder);
+                assert_eq!(style.placeholder, design::LIGHT.muted.to_iced());
                 assert_eq!(style.selection, default.selection);
             }
         }

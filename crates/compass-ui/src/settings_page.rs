@@ -22,7 +22,7 @@ use crate::settings::{ProviderInfo, SidebarKind, SidebarModel};
 pub const PLACEHOLDER: &str = "Search settings...";
 
 /// The line under the pages saying what the keys do.
-pub const HINT: &str = "↑↓: pages    Tab: fields    Esc: back";
+pub const HINT: &str = "↑↓: pages    Tab: controls    Space: change    Esc: back";
 
 /// Why a change could not be kept: no engine to write it, and no file to
 /// write it to.
@@ -38,6 +38,47 @@ pub enum RecordTarget {
     Setting(String),
     /// A root item's shortcut, by its `provider:entrypoint` id.
     Item(String),
+}
+
+/// A control on a settings page that the keyboard can reach, in the order
+/// [`SettingsPage::controls`] lists them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Control {
+    /// A setting's switch, dropdown, shortcut button or field, by its key.
+    Setting(String),
+    /// A provider's switch, by its id.
+    ProviderSwitch(String),
+    /// A root item's alias field, by the item's id.
+    ItemAlias(String),
+    /// A root item's shortcut button.
+    ItemShortcut(String),
+    /// A root item's Preferences button.
+    ItemPreferences(String),
+    /// A root item's switch.
+    ItemSwitch(String),
+    /// A link button (About), by its URL.
+    Link(String),
+}
+
+impl Control {
+    /// The id of its text field, when it is one: typing goes there, so it
+    /// takes Iced's own focus as well as the page's.
+    #[must_use]
+    pub fn field_id(&self) -> Option<String> {
+        use settings_catalog::Kind;
+        match self {
+            Self::Setting(key) => settings_catalog::find(key)
+                .filter(|setting| {
+                    matches!(
+                        setting.kind,
+                        Kind::Number { .. } | Kind::Text | Kind::Paths | Kind::Names | Kind::Font
+                    )
+                })
+                .map(|_| format!("settings-field:{key}")),
+            Self::ItemAlias(id) => Some(format!("settings-field:{}", alias_key(id))),
+            _ => None,
+        }
+    }
 }
 
 /// The settings view's messages.
@@ -148,6 +189,12 @@ pub struct SettingsPage {
     pub recorder: Option<(RecordTarget, crate::shortcut_recorder::ShortcutRecorder)>,
     /// Why the last write failed, or what it needs.
     pub notice: Option<String>,
+    /// The control with the keyboard; `None` while the search field has it.
+    pub focused: Option<Control>,
+    /// The option highlighted in the focused dropdown, while it is open.
+    pub menu: Option<usize>,
+    /// The settings the search matched by label or description, best first.
+    pub matches: Vec<String>,
 }
 
 impl SettingsPage {
@@ -172,6 +219,9 @@ impl SettingsPage {
             themes,
             recorder: None,
             notice: None,
+            focused: None,
+            menu: None,
+            matches: Vec::new(),
         };
         if let Some(tab) = tab {
             page.open_tab(tab);
@@ -192,29 +242,107 @@ impl SettingsPage {
         if row < 0 {
             return false;
         }
-        self.selected = row;
+        self.select_row(row);
         true
     }
 
-    /// Filters the sidebar, keeping the selected page when it still shows.
+    /// Shows the sidebar's `row`, with the keyboard back in the search field.
+    fn select_row(&mut self, row: isize) {
+        if row != self.selected {
+            self.focused = None;
+            self.menu = None;
+        }
+        self.selected = row;
+    }
+
+    /// Filters the sidebar by page name and by each setting's label and
+    /// description, fuzzily, and shows the page of the best match; with
+    /// nothing typed, the page shown stays.
     pub fn set_query(&mut self, query: String) {
         let key = self.selected_key().to_owned();
         let infos = provider_infos(&self.providers);
-        self.sidebar.set_query(query.clone(), &infos);
+        let matched = self.setting_matches(&query);
+        let hits = matched
+            .iter()
+            .map(|(row, _, score)| (row.clone(), *score))
+            .collect();
+        self.matches = matched.into_iter().map(|(_, key, _)| key).collect();
+        self.sidebar
+            .set_query_with_hits(query.clone(), &infos, hits);
         self.query = query;
         let row = self.sidebar.index_of_key(&key);
-        self.selected = if row >= 0 && !key.is_empty() {
+        self.select_row(if self.query.is_empty() && row >= 0 && !key.is_empty() {
             row
         } else {
             self.sidebar.first_selectable_row()
-        };
+        });
+    }
+
+    /// Every setting whose label or description `query` matches, as
+    /// `(sidebar row key, setting key, score)`, best first. A setting under
+    /// a provider that is not listed is left out.
+    fn setting_matches(&self, query: &str) -> Vec<(String, String, u32)> {
+        use compass_search::{Query, WeightedField, score_weighted};
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        let query = Query::new(query);
+        let mut matched: Vec<(String, String, u32)> = settings_catalog::catalog()
+            .into_iter()
+            .filter_map(|setting| {
+                let row = match &setting.scope {
+                    Scope::Core(page) => page.id().to_owned(),
+                    Scope::Provider(id) => (*id).to_owned(),
+                    Scope::Command(item) => compass_core::root_items::split_entrypoint_id(item)
+                        .map_or_else(|| item.clone(), |(provider, _)| provider.to_owned()),
+                };
+                if !self.sidebar_lists(&row) {
+                    return None;
+                }
+                let found = score_weighted(
+                    &[
+                        WeightedField::new(setting.label, 1.0),
+                        WeightedField::new(setting.description, 0.5),
+                    ],
+                    &query,
+                );
+                found.accepted().then_some((row, setting.key, found.score))
+            })
+            .collect();
+        matched.sort_by(|left, right| right.2.cmp(&left.2));
+        matched
+    }
+
+    /// Whether `key` is a page the sidebar can list: a core page or a
+    /// provider.
+    fn sidebar_lists(&self, key: &str) -> bool {
+        CorePage::ALL.iter().any(|page| page.id() == key)
+            || self.providers.iter().any(|provider| provider.id == key)
+    }
+
+    /// Whether the search matched `key`, a setting on the page on show.
+    #[must_use]
+    pub fn is_match(&self, key: &str) -> bool {
+        !self.query.is_empty() && self.matches.iter().any(|matched| matched == key)
+    }
+
+    /// The best match on the page on show, which the page scrolls to and
+    /// Enter in the search field moves the keyboard to.
+    #[must_use]
+    pub fn first_match_shown(&self) -> Option<String> {
+        let controls = self.controls(None);
+        self.matches
+            .iter()
+            .find(|key| controls.contains(&Control::Setting((*key).clone())))
+            .cloned()
     }
 
     /// Moves the sidebar selection one selectable row.
     pub fn step(&mut self, down: bool) {
-        self.selected = self
-            .sidebar
-            .step_row(self.selected, if down { 1 } else { -1 });
+        self.select_row(
+            self.sidebar
+                .step_row(self.selected, if down { 1 } else { -1 }),
+        );
     }
 
     /// Selects a clicked row, when it can be.
@@ -225,8 +353,119 @@ impl SettingsPage {
             .get(row)
             .is_some_and(crate::settings::SidebarRow::selectable)
         {
-            self.selected = row as isize;
+            self.select_row(row as isize);
         }
+    }
+
+    /// The controls the page on show has, in the order they are drawn;
+    /// `release_url` is the update's, when About offers one.
+    #[must_use]
+    pub fn controls(&self, release_url: Option<&str>) -> Vec<Control> {
+        if self.recorder.is_some() {
+            return Vec::new();
+        }
+        let settings = |list: Vec<Setting>| list.into_iter().map(|s| Control::Setting(s.key));
+        match self.shown() {
+            Shown::Nothing => Vec::new(),
+            Shown::Core(CorePage::About) => release_url
+                .map(str::to_owned)
+                .into_iter()
+                .chain([
+                    DOCS_URL.to_owned(),
+                    compass_core::bug_report::CREATE_ISSUE_URL.to_owned(),
+                ])
+                .map(Control::Link)
+                .collect(),
+            Shown::Core(CorePage::Keybindings) => Vec::new(),
+            Shown::Core(core) => settings(Self::core_settings(core)).collect(),
+            Shown::Provider(provider) => {
+                let mut controls = vec![Control::ProviderSwitch(provider.id.clone())];
+                controls.extend(settings(Self::provider_settings(&provider.id)));
+                for item in &provider.items {
+                    controls.push(Control::ItemAlias(item.id.clone()));
+                    controls.push(Control::ItemShortcut(item.id.clone()));
+                    if item.has_preferences {
+                        controls.push(Control::ItemPreferences(item.id.clone()));
+                    }
+                    controls.push(Control::ItemSwitch(item.id.clone()));
+                    controls.extend(settings(Self::item_settings(&item.id)));
+                }
+                controls
+            }
+        }
+    }
+
+    /// Tab (`forward`) or Shift+Tab: the next control, or back to the
+    /// search field past either end. Closes an open dropdown.
+    pub fn move_focus(&mut self, forward: bool, release_url: Option<&str>) {
+        let controls = self.controls(release_url);
+        self.focused = crate::focus::step(&controls, self.focused.as_ref(), forward);
+        self.menu = None;
+    }
+
+    /// Whether `control` has the keyboard.
+    #[must_use]
+    pub fn has_focus(&self, control: &Control) -> bool {
+        self.focused.as_ref() == Some(control)
+    }
+
+    /// A dropdown setting's options, as `(value, label)`.
+    #[must_use]
+    pub fn options(&self, setting: &Setting) -> Vec<(String, String)> {
+        match &setting.kind {
+            settings_catalog::Kind::Choice(options) => options
+                .iter()
+                .map(|(value, label)| ((*value).to_owned(), (*label).to_owned()))
+                .collect(),
+            settings_catalog::Kind::Theme => self.themes.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The focused dropdown's setting and its options, when one is focused.
+    #[must_use]
+    pub fn focused_choice(&self) -> Option<(Setting, Vec<(String, String)>)> {
+        let Some(Control::Setting(key)) = &self.focused else {
+            return None;
+        };
+        let setting = settings_catalog::find(key)?;
+        let options = self.options(&setting);
+        (!options.is_empty()).then_some((setting, options))
+    }
+
+    /// Opens the focused dropdown with its current value highlighted.
+    /// Returns whether one opened.
+    pub fn open_menu(&mut self) -> bool {
+        let Some((setting, options)) = self.focused_choice() else {
+            return false;
+        };
+        let value = self.value(&setting);
+        let current = value.as_str().unwrap_or_default();
+        self.menu = Some(
+            options
+                .iter()
+                .position(|(option, _)| option.eq_ignore_ascii_case(current))
+                .unwrap_or(0),
+        );
+        true
+    }
+
+    /// Moves the open dropdown's highlight by `delta`.
+    pub fn move_menu(&mut self, delta: isize) {
+        let len = self
+            .focused_choice()
+            .map_or(0, |(_, options)| options.len());
+        if let Some(at) = self.menu {
+            self.menu = Some(crate::focus::move_highlight(len, at, delta));
+        }
+    }
+
+    /// The open dropdown's highlighted choice, as `(setting key, value)`.
+    #[must_use]
+    pub fn menu_choice(&self) -> Option<(String, String)> {
+        let (setting, options) = self.focused_choice()?;
+        let (value, _) = options.into_iter().nth(self.menu?)?;
+        Some((setting.key, value))
     }
 
     /// The selected row's key.
@@ -567,14 +806,49 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_keeps_the_page_when_it_still_matches() {
+    fn the_filter_shows_the_best_match_and_nothing_when_nothing_does() {
         let mut page = page(Some("@me/notes"));
-        page.set_query("not".into());
+        page.set_query("notes".into());
         assert_eq!(page.selected_key(), "@me/notes");
         page.set_query("appear".into());
         assert_eq!(page.shown(), Shown::Core(CorePage::Appearance));
         page.set_query("zzzz".into());
         assert_eq!(page.shown(), Shown::Nothing);
+    }
+
+    #[test]
+    fn a_setting_is_found_by_its_label_and_its_page_shown() {
+        let mut page = page(Some("about"));
+        page.set_query("quick launch".into());
+        assert_eq!(page.shown(), Shown::Core(CorePage::General));
+        assert_eq!(
+            page.matches.first().map(String::as_str),
+            Some("launcher.quick_launch")
+        );
+        assert_eq!(
+            page.first_match_shown().as_deref(),
+            Some("launcher.quick_launch")
+        );
+        assert!(page.is_match("launcher.quick_launch"));
+
+        page.set_query("translucnt".into());
+        assert_eq!(page.shown(), Shown::Core(CorePage::Appearance), "fuzzily");
+        assert!(page.is_match("launcher.appearance.tint"));
+
+        page.set_query(String::new());
+        assert!(!page.is_match("launcher.appearance.tint"));
+        assert_eq!(
+            page.shown(),
+            Shown::Core(CorePage::Appearance),
+            "the page stays"
+        );
+    }
+
+    #[test]
+    fn a_setting_is_found_by_its_description() {
+        let mut page = page(None);
+        page.set_query("ctrl+1".into());
+        assert!(page.is_match("launcher.quick_launch"), "{:?}", page.matches);
     }
 
     #[test]

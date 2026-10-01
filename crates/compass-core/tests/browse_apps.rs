@@ -232,8 +232,8 @@ fn the_two_copy_actions_are_last_and_in_the_utils_section() {
         assert_eq!(action.section, Section::Utils);
         assert_eq!(action.shortcut, None);
     }
-    assert_eq!(COPY_ID_TITLE, "Copy App ID");
-    assert_eq!(COPY_LOCATION_TITLE, "Copy App Location");
+    assert_eq!(COPY_ID_TITLE, "Copy app ID");
+    assert_eq!(COPY_LOCATION_TITLE, "Copy app location");
 }
 
 #[test]
