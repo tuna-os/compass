@@ -124,9 +124,38 @@ pub async fn kwin<B: BusProbe>(env: &Env, bus: &B) -> DoctorCheck {
     }
 }
 
+/// The wlroots compositor this session runs, by its own socket variable
+/// (`SWAYSOCK`, `HYPRLAND_INSTANCE_SIGNATURE`, `NIRI_SOCKET`) or
+/// `XDG_CURRENT_DESKTOP`.
+#[must_use]
+pub fn wlroots_compositor(env: &Env) -> Option<compass_core::hotkey_guide::Compositor> {
+    compass_core::hotkey_guide::Compositor::detect(|name| env.get(name).map(str::to_owned))
+}
+
 /// Which desktop this is, and GNOME Shell's version when it will tell us.
 pub async fn desktop_environment<B: BusProbe>(env: &Env, bus: &B) -> DoctorCheck {
     const NAME: &str = "desktop.environment";
+
+    if !is_gnome(env)
+        && let Some(compositor) = wlroots_compositor(env)
+    {
+        return check(
+            NAME,
+            DoctorStatus::Ok,
+            format!(
+                "{}, a wlroots compositor: Compass draws as an overlay and lists windows \
+                 through its Wayland protocols (see wlroots.capabilities)",
+                compositor.name()
+            ),
+        );
+    }
+    if is_kde(env) {
+        return check(
+            NAME,
+            DoctorStatus::Ok,
+            "KDE Plasma: windows and workspaces come from KWin (see kde.kwin)",
+        );
+    }
 
     let Some(current) = env.get("XDG_CURRENT_DESKTOP") else {
         let session = env.get("XDG_SESSION_DESKTOP").unwrap_or("also unset");
@@ -145,12 +174,9 @@ pub async fn desktop_environment<B: BusProbe>(env: &Env, bus: &B) -> DoctorCheck
             NAME,
             DoctorStatus::Warn,
             format!(
-                "XDG_CURRENT_DESKTOP={current} — not a GNOME session. The Rust engine targets \
-                 GNOME 50/51, the wlroots compositors (Sway, Hyprland, niri: see \
-                 wlroots.capabilities for what this one offers) and, for windows and \
-                 workspaces, KDE Plasma (see kde.kwin); the rest of Phase 5 is still to come, \
-                 so elsewhere window switching, clipboard history and the global hotkey may all \
-                 be unavailable"
+                "XDG_CURRENT_DESKTOP={current}: Compass supports GNOME, KDE Plasma and the \
+                 wlroots compositors (Sway, Hyprland and niri). On this desktop, window \
+                 switching, clipboard history and the global hotkey may not work"
             ),
         );
     }
@@ -364,13 +390,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn desktop_non_gnome_warns_about_the_target() {
-        let env = Env::from_pairs([("XDG_CURRENT_DESKTOP", "sway:wlroots")]);
+    async fn desktop_unsupported_warns_about_what_may_not_work() {
+        let env = Env::from_pairs([("XDG_CURRENT_DESKTOP", "XFCE")]);
         assert!(!is_gnome(&env));
         let c = desktop_environment(&env, &FakeBus::new()).await;
         assert_eq!(c.status, DoctorStatus::Warn);
-        assert!(detail(&c).contains("not a GNOME session"));
-        assert!(detail(&c).contains("Phase 5"));
+        assert!(detail(&c).contains("Compass supports GNOME"));
+        assert!(!detail(&c).contains("Phase"));
+    }
+
+    #[tokio::test]
+    async fn sway_hyprland_and_niri_are_supported_desktops() {
+        for env in [
+            Env::from_pairs([("XDG_CURRENT_DESKTOP", "sway:wlroots")]),
+            Env::from_pairs([("SWAYSOCK", "/run/user/1000/sway-ipc.1000.1.sock")]),
+            Env::from_pairs([("HYPRLAND_INSTANCE_SIGNATURE", "x")]),
+            Env::from_pairs([("NIRI_SOCKET", "/run/user/1000/niri.sock")]),
+        ] {
+            let c = desktop_environment(&env, &FakeBus::new()).await;
+            assert_eq!(c.status, DoctorStatus::Ok, "{env:?}");
+        }
+        let c = desktop_environment(
+            &Env::from_pairs([("SWAYSOCK", "/s"), ("XDG_CURRENT_DESKTOP", "sway")]),
+            &FakeBus::new(),
+        )
+        .await;
+        assert!(detail(&c).starts_with("Sway, a wlroots compositor"));
     }
 
     #[tokio::test]

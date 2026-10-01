@@ -36,6 +36,11 @@
 //!   getters take the "absent means default" decision at read time rather than at parse time:
 //!   materialising defaults into the file would rewrite a user's config with values they never
 //!   chose.
+//! * **One bad value costs one setting.** A value of the wrong type is set aside, its default
+//!   used and the value kept as written; a key nothing reads is named with a "did you mean"
+//!   ([`crate::config_issues`]). The published schema closes every section
+//!   (`additionalProperties: false`) so an editor flags the typo as it is made, even though the
+//!   types keep unknown keys.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -77,6 +82,14 @@ pub const DEFAULT_QUICK_LAUNCH: bool = true;
 /// switch (it checks wherever it can install); a fork that only checks gives
 /// the person who does not want the request a way to refuse it.
 pub const DEFAULT_CHECK_FOR_UPDATES: bool = true;
+
+/// Default for `launcher.pop_to_root_on_close`.
+///
+/// Off, as Vicinae's `pop_to_root_on_close` (v0.29.0's default file): the
+/// search text is still there when the launcher is opened again. On, every
+/// summon starts with an empty search. A view opened from the search closes
+/// on hide either way (PARITY.md).
+pub const DEFAULT_POP_TO_ROOT_ON_CLOSE: bool = false;
 
 /// Default for `launcher.appearance.preset`.
 ///
@@ -160,6 +173,9 @@ struct RootEntrypointSettings {
     /// A hotkey that runs the entrypoint directly, e.g. `ctrl+shift+c`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shortcut: Option<String>,
+    /// The command's own preferences, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preferences: Option<serde_json::Map<String, Value>>,
     #[serde(flatten)]
     unknown: BTreeMap<String, Value>,
 }
@@ -173,6 +189,9 @@ struct RootProviderSettings {
     /// Settings for individual entrypoints of this provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     entrypoints: Option<BTreeMap<String, RootEntrypointSettings>>,
+    /// The provider's preferences, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preferences: Option<serde_json::Map<String, Value>>,
     #[serde(flatten)]
     unknown: BTreeMap<String, Value>,
 }
@@ -256,7 +275,11 @@ pub struct LauncherConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = DEFAULT_CHECK_FOR_UPDATES))]
     check_for_updates: Option<bool>,
-    /// Colour mode and row presentation.
+    /// Whether hiding the launcher clears the search, so it always opens empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_POP_TO_ROOT_ON_CLOSE))]
+    pop_to_root_on_close: Option<bool>,
+    /// The color scheme, the theme and how results look.
     #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
     appearance: AppearanceConfig,
     /// The clock the root search shows in its status bar.
@@ -268,14 +291,15 @@ pub struct LauncherConfig {
     unknown: BTreeMap<String, Value>,
 }
 
-/// The `launcher.clock` section (the C++ `launcher_window.clock`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// The `launcher.clock` section: the clock in the search's status bar.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ClockConfig {
     /// Whether the clock is shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = DEFAULT_CLOCK_ENABLED))]
     enabled: Option<bool>,
-    /// A Qt date-time format, e.g. `hh:mm:ss`; `hh:mm` when unset.
+    /// How the time is written: `hh:mm` (the default), `hh:mm:ss`, or `h:mm ap` for a 12-hour
+    /// clock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("examples" = ["hh:mm:ss", "ddd hh:mm"]))]
     format: Option<String>,
@@ -283,6 +307,10 @@ pub struct ClockConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = DEFAULT_CLOCK_INTERVAL))]
     interval: Option<u64>,
+
+    /// Keys this build does not know about, preserved verbatim.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
 }
 
 impl ClockConfig {
@@ -306,11 +334,17 @@ impl ClockConfig {
     }
 
     fn is_empty(&self) -> bool {
-        self.enabled.is_none() && self.format.is_none() && self.interval.is_none()
+        let Self {
+            enabled,
+            format,
+            interval,
+            unknown,
+        } = self;
+        enabled.is_none() && format.is_none() && interval.is_none() && unknown.is_empty()
     }
 }
 
-/// The `launcher.appearance` section: colour mode and row presentation, not behavior.
+/// The `launcher.appearance` section: the color scheme, the theme and how results look.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AppearanceConfig {
     /// Light or dark: `system` follows the desktop, `light` and `dark` force one.
@@ -528,6 +562,15 @@ impl LauncherConfig {
         self.check_for_updates.unwrap_or(DEFAULT_CHECK_FOR_UPDATES)
     }
 
+    /// Whether hiding the launcher clears the search.
+    ///
+    /// Defaults to [`DEFAULT_POP_TO_ROOT_ON_CLOSE`].
+    #[must_use]
+    pub fn pop_to_root_on_close(&self) -> bool {
+        self.pop_to_root_on_close
+            .unwrap_or(DEFAULT_POP_TO_ROOT_ON_CLOSE)
+    }
+
     /// The scheme [`keybinding`](Self::keybinding) names.
     #[must_use]
     pub fn keybinding_scheme(&self) -> crate::keybinding::Scheme {
@@ -597,6 +640,7 @@ impl LauncherConfig {
             wrap_navigation,
             quick_launch,
             check_for_updates,
+            pop_to_root_on_close,
             appearance,
             clock,
             unknown,
@@ -608,6 +652,7 @@ impl LauncherConfig {
             && wrap_navigation.is_none()
             && quick_launch.is_none()
             && check_for_updates.is_none()
+            && pop_to_root_on_close.is_none()
             && appearance.is_empty()
             && clock.is_empty()
             && unknown.is_empty()
@@ -759,8 +804,7 @@ impl TrayConfig {
     }
 }
 
-/// The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose
-/// `toggle` is [`LauncherConfig::hotkey`] here).
+/// The `global_shortcuts` section. The launcher's own key is `launcher.hotkey`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct GlobalShortcutsConfig {
     /// While one of these applications is focused, every global shortcut is
@@ -832,6 +876,15 @@ pub struct Config {
     /// The global shortcuts, beyond the launcher hotkey.
     #[serde(default, skip_serializing_if = "GlobalShortcutsConfig::is_empty")]
     global_shortcuts: GlobalShortcutsConfig,
+    /// The interface font: `font.normal.family` names a family, and `auto` or `system` follow
+    /// the desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("examples" = [{"normal": {"family": "Inter"}}]))]
+    font: Option<Value>,
+    /// Where website icons are fetched from: `twenty`, `google` or `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("examples" = ["twenty", "google", "none"]))]
+    favicon_service: Option<Value>,
 
     /// Top level keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -1009,12 +1062,7 @@ impl Config {
     /// an object.
     #[must_use]
     pub fn provider_preferences(&self, provider: &str) -> Option<&serde_json::Map<String, Value>> {
-        self.providers
-            .as_ref()?
-            .get(provider)?
-            .unknown
-            .get("preferences")?
-            .as_object()
+        self.providers.as_ref()?.get(provider)?.preferences.as_ref()
     }
 
     /// A command's own `preferences` object, as
@@ -1033,9 +1081,8 @@ impl Config {
             .entrypoints
             .as_ref()?
             .get(entrypoint)?
-            .unknown
-            .get("preferences")?
-            .as_object()
+            .preferences
+            .as_ref()
     }
 
     /// The `launcher` section.
@@ -1099,14 +1146,62 @@ impl Config {
         &self.unknown
     }
 
+    /// `favicon_service` as written, if it is set.
+    #[must_use]
+    pub fn favicon_service(&self) -> Option<&Value> {
+        self.favicon_service.as_ref()
+    }
+
+    /// Puts a value [`crate::config_issues::parse_value`] set aside for its
+    /// type back into the unknown fields of the section at `path`, so a write
+    /// keeps what the user wrote.
+    pub(crate) fn keep_invalid(&mut self, path: &[String], value: Value) {
+        let Some((last, parent)) = path.split_last() else {
+            return;
+        };
+        let parent: Vec<&str> = parent.iter().map(String::as_str).collect();
+        let unknown = match parent.as_slice() {
+            [] => &mut self.unknown,
+            ["launcher"] => &mut self.launcher.unknown,
+            ["launcher", "appearance"] => &mut self.launcher.appearance.unknown,
+            ["launcher", "clock"] => &mut self.launcher.clock.unknown,
+            ["extensions"] => &mut self.extensions.unknown,
+            ["input_server"] => &mut self.input_server.unknown,
+            ["tray"] => &mut self.tray.unknown,
+            ["global_shortcuts"] => &mut self.global_shortcuts.unknown,
+            ["providers", provider] => {
+                &mut self
+                    .providers
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry((*provider).to_owned())
+                    .or_default()
+                    .unknown
+            }
+            ["providers", provider, "entrypoints", entrypoint] => {
+                &mut self
+                    .providers
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry((*provider).to_owned())
+                    .or_default()
+                    .entrypoints
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry((*entrypoint).to_owned())
+                    .or_default()
+                    .unknown
+            }
+            _ => return,
+        };
+        unknown.insert(last.clone(), value);
+    }
+
     /// `font.normal.family`, when it names a family: `auto` and `system`
     /// (and no value) mean the launcher picks, which here is the desktop's
     /// interface font.
     #[must_use]
     pub fn font_family(&self) -> Option<&str> {
         let family = self
-            .unknown
-            .get("font")?
+            .font
+            .as_ref()?
             .get("normal")?
             .get("family")?
             .as_str()?
@@ -1128,27 +1223,20 @@ impl Config {
             .get_or_insert_with(BTreeMap::new)
             .entry(provider.to_owned())
             .or_default();
-        let preferences = settings
-            .unknown
-            .entry("preferences".to_owned())
-            .or_insert_with(|| Value::Object(serde_json::Map::new()));
-        if !preferences.is_object() {
-            *preferences = Value::Object(serde_json::Map::new());
-        }
-        if let Some(preferences) = preferences.as_object_mut() {
-            preferences.insert(key.to_owned(), value);
-        }
+        settings
+            .preferences
+            .get_or_insert_with(serde_json::Map::new)
+            .insert(key.to_owned(), value);
         self
     }
 
     /// Sets `font.normal.family`, keeping the rest of the `font` object (its
     /// `rendering` and `normal.size`), as "Set as Compass font" merges it.
     pub fn set_font_family(&mut self, family: &str) -> &mut Self {
-        if !matches!(self.unknown.get("font"), Some(Value::Object(_))) {
-            self.unknown
-                .insert("font".to_owned(), Value::Object(serde_json::Map::new()));
+        if !matches!(self.font, Some(Value::Object(_))) {
+            self.font = Some(Value::Object(serde_json::Map::new()));
         }
-        if let Some(Value::Object(font)) = self.unknown.get_mut("font") {
+        if let Some(Value::Object(font)) = &mut self.font {
             let normal = font
                 .entry("normal")
                 .or_insert_with(|| Value::Object(serde_json::Map::new()));
@@ -1164,23 +1252,69 @@ impl Config {
 
     /// Parses `data`. An empty or whitespace-only input yields the default configuration.
     ///
-    /// `path` is used only to build error messages.
+    /// A value of the wrong type does not fail the parse: its default is used
+    /// and the value is kept as written (see [`Config::parse_checked`], which
+    /// also says what was wrong). `path` is used only to build error messages.
     ///
     /// # Errors
     ///
-    /// [`ConfigError::Parse`] when `data` is not a JSON object of the expected shape.
+    /// [`ConfigError::Parse`] when `data` is not JSON, or not a JSON object.
     pub fn parse(data: &str, path: &Path) -> Result<Config, ConfigError> {
-        if data.trim().is_empty() {
-            return Ok(Config::default());
-        }
+        Config::parse_checked(data, path).map(|(config, _)| config)
+    }
 
-        serde_json::from_str(data).map_err(|source| ConfigError::Parse {
+    /// [`Config::parse`], and every problem that did not stop it: values of
+    /// the wrong type and keys nothing reads ([`crate::config_issues`]).
+    ///
+    /// # Errors
+    ///
+    /// See [`Config::parse`].
+    pub fn parse_checked(
+        data: &str,
+        path: &Path,
+    ) -> Result<(Config, Vec<crate::config_issues::ConfigIssue>), ConfigError> {
+        if data.trim().is_empty() {
+            return Ok((Config::default(), Vec::new()));
+        }
+        let parse_error = |source: serde_json::Error| ConfigError::Parse {
             path: path.to_path_buf(),
             line: source.line(),
             column: source.column(),
             message: parse_message(&source),
             source,
-        })
+        };
+        let document: Value = serde_json::from_str(data).map_err(parse_error)?;
+        if !document.is_object() {
+            // Not an object at all: the strict parse names what it is.
+            return serde_json::from_value::<Config>(document)
+                .map(|config| (config, Vec::new()))
+                .map_err(parse_error);
+        }
+        let mut unknown = crate::config_issues::unknown_keys(&document);
+        let (config, mut issues) = crate::config_issues::parse_value(document);
+        issues.append(&mut unknown);
+        Ok((config, issues))
+    }
+
+    /// [`Config::load_from`], and what [`Config::parse_checked`] found.
+    ///
+    /// # Errors
+    ///
+    /// See [`Config::load_from`].
+    pub fn load_checked(
+        path: impl AsRef<Path>,
+    ) -> Result<(Config, Vec<crate::config_issues::ConfigIssue>), ConfigError> {
+        let path = path.as_ref();
+        match std::fs::read_to_string(path) {
+            Ok(data) => Config::parse_checked(&data, path),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                Ok((Config::default(), Vec::new()))
+            }
+            Err(source) => Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
     }
 
     /// Loads the configuration from `path`.
@@ -1229,6 +1363,23 @@ impl Config {
         Config::load_or_migrate(&path, legacy.as_deref())
     }
 
+    /// [`Config::load`], and the problems [`Config::parse_checked`] found in
+    /// the file. A configuration migrated from `settings.json` has none to
+    /// report: it was never a hand-written `compass.json`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Config::load`].
+    pub fn load_with_issues()
+    -> Result<(Config, Vec<crate::config_issues::ConfigIssue>), ConfigError> {
+        let path = default_config_path()?;
+        if path.exists() {
+            Config::load_checked(&path)
+        } else {
+            Config::load().map(|config| (config, Vec::new()))
+        }
+    }
+
     /// Loads `path`, or, when it does not exist, migrates `legacy` (the C++ `settings.json`).
     ///
     /// Nothing is written: the migrated configuration is only materialised when something saves
@@ -1245,16 +1396,23 @@ impl Config {
         };
         match crate::config_migration::migrate_file(legacy) {
             Ok(migration) => {
+                // Every reader of the configuration comes through here, many
+                // times per start: once per process is enough to say it.
+                static SAID: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    return Ok(migration.config);
+                }
                 tracing::info!(
                     from = %legacy.display(),
                     mapped = migration.mapped.len(),
                     skipped = migration.skipped.len(),
-                    "no compass.json; using the settings migrated from the C++ engine"
+                    "no compass.json yet; using the settings carried over from Vicinae"
                 );
                 Ok(migration.config)
             }
             Err(error) => {
-                tracing::warn!(%error, "could not migrate the C++ engine's settings; using defaults");
+                tracing::warn!(%error, "could not read the Vicinae settings; using defaults");
                 Ok(Config::default())
             }
         }
@@ -1334,8 +1492,20 @@ impl Config {
                 node.insert((*last).to_owned(), value);
             }
         }
-        *self = serde_json::from_value(document)
-            .map_err(|err| format!("{path:?} cannot take that value: {err}"))?;
+        let (config, issues) = crate::config_issues::parse_value(document);
+        let touched = |key: &str| {
+            key == path
+                || key.starts_with(&format!("{path}."))
+                || path.starts_with(&format!("{key}."))
+        };
+        if let Some(issue) = issues.iter().find(|issue| touched(&issue.key)) {
+            let reason = match &issue.problem {
+                crate::config_issues::Problem::InvalidValue { reason } => reason.clone(),
+                _ => issue.to_string(),
+            };
+            return Err(format!("{path:?} cannot take that value: {reason}"));
+        }
+        *self = config;
         Ok(())
     }
 
@@ -1353,6 +1523,11 @@ impl Config {
 
     /// Writes the configuration to `path`, creating parent directories.
     ///
+    /// An existing file keeps its layout: key order, indentation and comments
+    /// stay, only what changed is rewritten, and a new key goes at the end of
+    /// its section ([`crate::config_edit`]). A file that cannot be read that
+    /// way is written out afresh.
+    ///
     /// The write goes to a sibling temporary file and is renamed into place, so a crash cannot
     /// leave a half-written config behind.
     ///
@@ -1361,10 +1536,19 @@ impl Config {
     /// [`ConfigError::Write`] on any I/O failure.
     pub fn save_to(&self, path: impl AsRef<Path>) -> Result<(), ConfigError> {
         let path = path.as_ref();
-        let data = self.to_json_pretty().map_err(|err| ConfigError::Write {
-            path: path.to_path_buf(),
-            source: std::io::Error::other(err),
-        })?;
+        let edited = match std::fs::read_to_string(path) {
+            Ok(existing) if !existing.trim().is_empty() => serde_json::to_value(self)
+                .ok()
+                .and_then(|value| crate::config_edit::rewrite(&existing, &value)),
+            _ => None,
+        };
+        let data = match edited {
+            Some(data) => data,
+            None => self.to_json_pretty().map_err(|err| ConfigError::Write {
+                path: path.to_path_buf(),
+                source: std::io::Error::other(err),
+            })?,
+        };
         crate::atomic_write(path, data.as_bytes()).map_err(|source| ConfigError::Write {
             path: path.to_path_buf(),
             source,
@@ -1389,7 +1573,37 @@ fn parse_message(err: &serde_json::Error) -> String {
 /// `compass config schema`.
 #[must_use]
 pub fn json_schema() -> Value {
-    schemars::schema_for!(Config).to_value()
+    let mut schema = schemars::schema_for!(Config).to_value();
+    close_sections(&mut schema);
+    schema
+}
+
+/// Sets `additionalProperties: false` on every section with declared keys.
+///
+/// The types keep unknown keys so that a file written by a newer build
+/// survives a round trip, which schemars reads as "anything else is
+/// allowed". For an editor, though, an undeclared key is far more often a
+/// typo than a setting from the future, so the published schema flags it.
+/// The open objects (a provider's `preferences`, `font`) declare no keys and
+/// stay open.
+fn close_sections(node: &mut Value) {
+    match node {
+        Value::Object(map) => {
+            if map.contains_key("properties")
+                && matches!(
+                    map.get("additionalProperties"),
+                    Some(Value::Bool(true)) | None
+                )
+            {
+                map.insert("additionalProperties".to_owned(), Value::Bool(false));
+            }
+            for child in map.values_mut() {
+                close_sections(child);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(close_sections),
+        _ => {}
+    }
 }
 
 /// [`json_schema`] as the pretty-printed, newline-terminated text that is committed.

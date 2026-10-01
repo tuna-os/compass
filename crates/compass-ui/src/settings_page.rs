@@ -101,6 +101,9 @@ pub enum SettingsMessage {
         key: String,
         /// The answer.
         result: Result<(), String>,
+        /// The view's copy of the file before the change, put back when the
+        /// change is refused.
+        previous: Box<compass_core::Config>,
     },
     /// Start recording a shortcut.
     Record(RecordTarget),
@@ -195,6 +198,9 @@ pub struct SettingsPage {
     pub menu: Option<usize>,
     /// The settings the search matched by label or description, best first.
     pub matches: Vec<String>,
+    /// Whether the compositor binds the launcher's hotkey, so its row is
+    /// guidance with nothing for the keyboard to land on.
+    pub hotkey_elsewhere: bool,
 }
 
 impl SettingsPage {
@@ -222,6 +228,7 @@ impl SettingsPage {
             focused: None,
             menu: None,
             matches: Vec::new(),
+            hotkey_elsewhere: false,
         };
         if let Some(tab) = tab {
             page.open_tab(tab);
@@ -364,7 +371,11 @@ impl SettingsPage {
         if self.recorder.is_some() {
             return Vec::new();
         }
-        let settings = |list: Vec<Setting>| list.into_iter().map(|s| Control::Setting(s.key));
+        let settings = |list: Vec<Setting>| {
+            list.into_iter()
+                .filter(|s| !(self.hotkey_elsewhere && s.key == "launcher.hotkey"))
+                .map(|s| Control::Setting(s.key))
+        };
         match self.shown() {
             Shown::Nothing => Vec::new(),
             Shown::Core(CorePage::About) => release_url

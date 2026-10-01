@@ -105,7 +105,7 @@ pub enum Kind {
     },
     /// A line of text; a JSON string.
     Text,
-    /// A list of paths, one per line in the view; a JSON array of strings.
+    /// A list of paths, separated by colons in the view; a JSON array of strings.
     Paths,
     /// A list of names (application ids), comma-separated in the view; a
     /// JSON array of strings.
@@ -195,7 +195,7 @@ pub struct NotPorted {
     pub reason: &'static str,
 }
 
-const LAUNCHER_DRAWS: &str = "the Iced launcher does not read it";
+const LAUNCHER_DRAWS: &str = "Compass does not offer this yet";
 
 /// The C++ settings with no counterpart in Compass, each with why. The view
 /// lists them at the foot of their page; PARITY.md declares them.
@@ -207,12 +207,6 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         reason: "Escape always goes back one view, clears the search, then hides the launcher",
     },
     NotPorted {
-        cpp: "popToRootOnClose",
-        page: CorePage::General,
-        label: "Pop to root on close",
-        reason: "the launcher always opens at the root search",
-    },
-    NotPorted {
         cpp: "language",
         page: CorePage::General,
         label: "Language",
@@ -222,25 +216,25 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         cpp: "telemetrySystemInfo",
         page: CorePage::General,
         label: "Basic usage statistics",
-        reason: "Compass sends no telemetry (a hard fork: no telemetry, by decision)",
+        reason: "Compass sends no usage statistics",
     },
     NotPorted {
         cpp: "fontSize",
         page: CorePage::Appearance,
         label: "Font size",
-        reason: "the preset sets the type sizes",
+        reason: "the layout preset sets the text size",
     },
     NotPorted {
         cpp: "iconTheme",
         page: CorePage::Appearance,
-        label: "Icon Theme",
+        label: "Icon theme",
         reason: "icons follow the desktop's icon theme",
     },
     NotPorted {
         cpp: "windowMaterial",
         page: CorePage::Appearance,
         label: "Window material",
-        reason: "the background effect protocol is not supported yet; see Translucent background",
+        reason: "Compass cannot blur the desktop behind it yet; see Translucent background",
     },
     NotPorted {
         cpp: "windowOpacity",
@@ -264,25 +258,25 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         cpp: "layerShellEnabled",
         page: CorePage::Appearance,
         label: "Use layer shell",
-        reason: "the surface is chosen per compositor, or by COMPASS_LAYER_SHELL",
+        reason: "Compass picks the kind of window that suits your desktop",
     },
     NotPorted {
         cpp: "clientSideDecorations",
         page: CorePage::Appearance,
         label: "Client-side decorations",
-        reason: "the preset draws the window's border and corners",
+        reason: "the layout preset draws the window's border and corners",
     },
     NotPorted {
         cpp: "rounding",
         page: CorePage::Appearance,
         label: "Corner rounding",
-        reason: "the preset sets the corner radius",
+        reason: "the layout preset sets the corner radius",
     },
     NotPorted {
         cpp: "csdBorderWidth",
         page: CorePage::Appearance,
         label: "Border width",
-        reason: "the preset sets the border",
+        reason: "the layout preset sets the border",
     },
     NotPorted {
         cpp: "csdShadowSize",
@@ -294,7 +288,7 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         cpp: "nativeTextRendering",
         page: CorePage::Appearance,
         label: "Native font rendering",
-        reason: "Iced has one text renderer",
+        reason: "Compass draws text the same way on every desktop",
     },
     NotPorted {
         cpp: "keybinds",
@@ -318,7 +312,7 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         cpp: "considerPreedit",
         page: CorePage::Advanced,
         label: "IME handling",
-        reason: "Iced does not report preedit text to the search",
+        reason: "Compass cannot search text an input method is still composing",
     },
     NotPorted {
         cpp: "searchFilesInRoot",
@@ -329,7 +323,7 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
     NotPorted {
         cpp: "faviconService",
         page: CorePage::Advanced,
-        label: "Favicon Fetching",
+        label: "Favicon fetching",
         reason: "Compass fetches no favicons yet",
     },
     NotPorted {
@@ -407,6 +401,16 @@ pub fn catalog() -> Vec<Setting> {
                 json!(crate::config::DEFAULT_CLOSE_ON_FOCUS_LOSS),
             )
             .cpp("closeOnFocusLoss"),
+        Setting::new("launcher.pop_to_root_on_close", core(General), "Behavior")
+            .label(
+                "Clear the search on close",
+                "Open the launcher with an empty search every time.",
+            )
+            .kind(
+                Kind::Toggle,
+                json!(crate::config::DEFAULT_POP_TO_ROOT_ON_CLOSE),
+            )
+            .cpp("popToRootOnClose"),
         Setting::new("launcher.quick_launch", core(General), "Behavior")
             .label(
                 "Quick launch",
@@ -429,7 +433,10 @@ pub fn catalog() -> Vec<Setting> {
             .label("Show the clock", "The time, in the root search's status bar.")
             .kind(Kind::Toggle, json!(crate::config::DEFAULT_CLOCK_ENABLED)),
         Setting::new("launcher.clock.format", core(General), "Clock")
-            .label("Clock format", "A Qt time format, such as hh:mm or h:mm ap.")
+            .label(
+                "Clock format",
+                "Such as hh:mm for 14:05, or h:mm ap for 2:05 pm.",
+            )
             .kind(Kind::Text, json!(crate::config::DEFAULT_CLOCK_FORMAT)),
         Setting::new("launcher.clock.interval", core(General), "Clock")
             .label("Clock refresh", "How often the clock is redrawn, in seconds.")
@@ -443,7 +450,7 @@ pub fn catalog() -> Vec<Setting> {
             .cpp("theme"),
         Setting::new("launcher.appearance.color_scheme", core(Appearance), "Theme")
             .label(
-                "Colour scheme",
+                "Color scheme",
                 "Light or dark; System follows the desktop.",
             )
             .kind(
@@ -581,12 +588,15 @@ pub fn catalog() -> Vec<Setting> {
             .kind(Kind::Toggle, json!(true))
             .cpp("files.autoIndexing"),
         Setting::new(files_key("indexingPaths"), files(), "File index")
-            .label("Indexed folders", "One folder per line.")
+            .label("Indexed folders", "Separate folders with a colon (:).")
             .kind(Kind::Paths, json!([]))
             .placeholder("Your home folder")
             .cpp("files.indexingPaths"),
         Setting::new(files_key("excludedIndexingPaths"), files(), "File index")
-            .label("Excluded folders", "One folder per line; never indexed.")
+            .label(
+                "Excluded folders",
+                "Never indexed. Separate folders with a colon (:).",
+            )
             .kind(Kind::Paths, json!([]))
             .cpp("files.excludedIndexingPaths"),
     ]);
@@ -642,7 +652,7 @@ pub fn catalog() -> Vec<Setting> {
         )
         .label(
             "Script directories",
-            "One folder per line, searched before the default ones.",
+            "Searched before the default ones. Separate folders with a colon (:).",
         )
         .kind(Kind::Paths, json!([]))
         .cpp("scripts.customDirs"),

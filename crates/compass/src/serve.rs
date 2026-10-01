@@ -45,7 +45,7 @@ mod calculator;
 mod files;
 mod launch;
 mod openers;
-mod settings;
+pub(crate) mod settings;
 mod storage;
 mod workspaces;
 
@@ -182,8 +182,12 @@ impl EngineState {
         // A bad config is reported and then ignored rather than fatal. Refusing
         // to start because `max_results` is misspelled would be a worse outcome
         // than starting with the default and saying so.
-        let config = match Config::load() {
-            Ok(config) => config,
+        let config = match Config::load_with_issues() {
+            Ok((config, issues)) => {
+                let _ = compass_ui::theme::load_default_user_themes();
+                crate::config_watch::log_issues(&crate::config_watch::check(&config, issues));
+                config
+            }
             Err(err) => {
                 let fallback = Config::default();
                 tracing::warn!(error = %err, "using default configuration");
@@ -1251,11 +1255,15 @@ fn text_offers(text: &str) -> Vec<compass_wayland::data_control::Offer> {
         .collect()
 }
 
+/// Why clipboard history answers nothing: almost always a keyring that is
+/// missing or locked, which `compass doctor` explains.
+const CLIPBOARD_UNAVAILABLE: &str = "clipboard history is unavailable: Compass needs an unlocked \
+     keyring to keep it encrypted. Run compass doctor to see what is missing";
+
 fn clipboard_unavailable() -> Response {
     Response::Error(ProtocolError::new(
         ErrorKind::Unsupported,
-        "clipboard history is unavailable: no keyring, or the store would not open \
-         (the engine log says which)",
+        CLIPBOARD_UNAVAILABLE,
     ))
 }
 
@@ -1393,7 +1401,7 @@ async fn sync_keywords(state: &Arc<RwLock<EngineState>>) {
 async fn input_server(state: &Arc<RwLock<EngineState>>, enable: Option<bool>) -> Response {
     if let Some(enabled) = enable {
         let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let mut config = Config::load().unwrap_or_default();
+            let mut config = Config::load()?;
             config.input_server_mut().set_enabled(Some(enabled));
             config.save_to(compass_core::config::default_config_path()?)?;
             Ok(())
@@ -2807,8 +2815,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let Some(store) = state.read().await.clipboard.clone() else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::Unsupported,
-                    "clipboard history is unavailable: no keyring, or the store would not open \
-                     (the engine log says which)",
+                    CLIPBOARD_UNAVAILABLE,
                 ));
             };
             match tokio::task::spawn_blocking(move || store.content(&id)).await {
@@ -3244,7 +3251,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 ));
             }
             let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                let mut config = Config::load().unwrap_or_default();
+                let mut config = Config::load()?;
                 config.set_font_family(&family);
                 config.save_to(compass_core::config::default_config_path()?)?;
                 Ok(())
@@ -3271,7 +3278,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 ));
             };
             let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                let mut config = Config::load().unwrap_or_default();
+                let mut config = Config::load()?;
                 config
                     .launcher_mut()
                     .appearance_mut()
@@ -3588,8 +3595,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let Some(store) = state.read().await.clipboard.clone() else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::Unsupported,
-                    "clipboard history is unavailable: no keyring, or the store would not open \
-                     (the engine log says which)",
+                    CLIPBOARD_UNAVAILABLE,
                 ));
             };
             let changed = tokio::task::spawn_blocking(move || match request {
@@ -3623,8 +3629,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let Some(store) = store else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::Unsupported,
-                    "clipboard history is unavailable: no keyring, or the store would not open \
-                     (the engine log says which)",
+                    CLIPBOARD_UNAVAILABLE,
                 ));
             };
             let (mime_type, data) =
@@ -3766,6 +3771,8 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     tokio::spawn(crate::catalog_watch::watch_applications(Arc::clone(&state)));
     // An extension a developer builds into place.
     tokio::spawn(crate::catalog_watch::watch_extensions(Arc::clone(&state)));
+    // `compass.json` edited by hand or by `compass theme set`.
+    tokio::spawn(crate::config_watch::run(Arc::clone(&state)));
 
     // Snippet keyword expansion: the input server, when `input_server.enabled`.
     {
@@ -3787,9 +3794,18 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
         tokio::spawn(async move {
             match compass_shell::ShellClient::connect_session().await {
                 Ok(client) => state.write().await.set_shell(Arc::new(client)),
-                Err(err) => {
-                    tracing::warn!(error = %err, "no session bus; window switching unavailable")
+                // Only GNOME switches windows through the Shell extension; the
+                // wlroots compositors and KWin list them without the bus.
+                Err(err)
+                    if compass_wayland::compositor::desktop_is_gnome(
+                        std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+                    ) =>
+                {
+                    tracing::warn!(error = %err,
+                        "no session bus, so the GNOME Shell extension cannot be reached; window switching is unavailable")
                 }
+                Err(err) => tracing::info!(error = %err,
+                    "no session bus; the GNOME Shell extension is not used on this desktop"),
             }
         });
     }

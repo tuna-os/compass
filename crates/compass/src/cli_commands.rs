@@ -238,6 +238,16 @@ pub fn script(command: ScriptCommand) -> Result<ExitCode> {
                 bail!("Invalid output mode: {mode}\n\nSupported modes: {MODES}");
             };
             println!("{}", generate(&title, language, mode));
+            // On stderr, so `compass script template … > file` saves the
+            // script alone.
+            let dir = compass_core::xdg_dirs::data_home().map_or_else(
+                || "~/.local/share/compass/scripts".to_owned(),
+                |home| home.join("compass/scripts").display().to_string(),
+            );
+            eprintln!(
+                "Save this in {dir}, make it executable with `chmod +x`, and Compass lists it \
+                 in the search at once."
+            );
             Ok(ExitCode::from(EXIT_OK))
         }
         ScriptCommand::Check { file } => {
@@ -322,7 +332,7 @@ mod tests {
     fn the_theme_template_is_a_valid_theme_with_nothing_to_warn_about() {
         let theme =
             compass_core::theme_file::parse(Path::new("template.toml"), THEME_TEMPLATE).unwrap();
-        assert_eq!(theme.name, "Vicinae Dark");
+        assert_eq!(theme.name, "My Dark Theme");
         assert!(theme.dark);
         assert!(theme.diagnostics.is_empty(), "{:?}", theme.diagnostics);
     }

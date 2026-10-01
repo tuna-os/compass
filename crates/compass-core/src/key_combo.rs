@@ -261,7 +261,7 @@ impl KeyCombo {
             .filter(|modifier| modifiers.has(*modifier))
             .map(|modifier| {
                 match modifier {
-                    Modifier::Super => "◈",
+                    Modifier::Super => "Super",
                     Modifier::Control => "Ctrl",
                     Modifier::Alt => "Alt",
                     Modifier::Shift => "Shift",
@@ -561,11 +561,11 @@ mod tests {
         );
         assert_eq!(
             KeyCombo::parse("super+e").unwrap().display_tokens(),
-            ["◈", "E"]
+            ["Super", "E"]
         );
         assert_eq!(
             KeyCombo::parse("control+super").unwrap().display_tokens(),
-            ["◈", "Ctrl"]
+            ["Super", "Ctrl"]
         );
     }
 }

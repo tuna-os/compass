@@ -79,15 +79,37 @@ pub async fn desktop_portal<B: BusProbe>(bus: &B) -> DoctorCheck {
         }
     }
 
-    match bus
+    // Asking for a property starts a D-Bus-activatable portal. On a first
+    // run that start can outlast the call, so the answer is "no such thing"
+    // or an error although the portal is now coming up: it is asked once
+    // more, after the name has had a moment to be taken.
+    let mut answer = bus
         .property(
             PORTAL_BUS_NAME,
             PORTAL_OBJECT_PATH,
             "org.freedesktop.portal.OpenURI",
             "version",
         )
-        .await
-    {
+        .await;
+    if !matches!(answer, Ok(Some(_))) {
+        tokio::time::sleep(PORTAL_START_GRACE).await;
+        if matches!(bus.name_has_owner(PORTAL_BUS_NAME).await, Ok(true)) {
+            return check(
+                NAME,
+                DoctorStatus::Ok,
+                format!("{PORTAL_BUS_NAME} was not running and started when asked"),
+            );
+        }
+        answer = bus
+            .property(
+                PORTAL_BUS_NAME,
+                PORTAL_OBJECT_PATH,
+                "org.freedesktop.portal.OpenURI",
+                "version",
+            )
+            .await;
+    }
+    match answer {
         Ok(Some(version)) => check(
             NAME,
             DoctorStatus::Ok,
@@ -118,8 +140,39 @@ pub async fn desktop_portal<B: BusProbe>(bus: &B) -> DoctorCheck {
 /// (PLAN §3.4); `xdg-desktop-portal-gnome` has shipped a backend since 48.rc,
 /// while `xdg-desktop-portal-wlr` ships none at all — so a running portal
 /// proves nothing and the interface has to be probed directly.
-pub async fn global_shortcuts<B: BusProbe>(bus: &B) -> DoctorCheck {
+/// How long a portal that is being started on demand gets before it is asked
+/// again.
+const PORTAL_START_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Whether the launcher's hotkey can be bound, and how.
+///
+/// On Sway, Hyprland and niri the compositor's own configuration binds keys,
+/// so a missing GlobalShortcuts portal is how those desktops work, not a
+/// fault: the check passes and says which line to add. Elsewhere the portal
+/// is the way, and its absence fails on GNOME and KDE, where it should be.
+pub async fn global_shortcuts<B: BusProbe>(env: &Env, flatpak: bool, bus: &B) -> DoctorCheck {
     const NAME: &str = "portal.global-shortcuts";
+    if let Some(compositor) = super::desktop::wlroots_compositor(env) {
+        let command = compass_core::hotkey_guide::toggle_command(flatpak);
+        return check(
+            NAME,
+            DoctorStatus::Ok,
+            format!(
+                "the launcher's key is bound in {}'s own configuration, not through a portal: \
+                 add `{}` to {}, then reload it",
+                compositor.name(),
+                compositor.binding(&command),
+                compositor.config_file()
+            ),
+        );
+    }
+    let expected = super::desktop::is_gnome(env) || super::desktop::is_kde(env);
+    let missing = if expected {
+        DoctorStatus::Fail
+    } else {
+        DoctorStatus::Warn
+    };
+    let command = compass_core::hotkey_guide::toggle_command(flatpak);
     match bus
         .property(
             PORTAL_BUS_NAME,
@@ -136,18 +189,21 @@ pub async fn global_shortcuts<B: BusProbe>(bus: &B) -> DoctorCheck {
         ),
         Ok(None) => check(
             NAME,
-            DoctorStatus::Fail,
+            missing,
             format!(
                 "{GLOBAL_SHORTCUTS_INTERFACE} is not implemented by the running portal backend, \
-                 so the global hotkey cannot be bound. xdg-desktop-portal-gnome provides it from \
-                 48.rc onwards; xdg-desktop-portal-wlr ships no GlobalShortcuts backend at all, \
-                 so on wlroots compositors there is currently no hotkey path"
+                 so Compass cannot bind its hotkey. GNOME provides it from 48 onwards \
+                 (xdg-desktop-portal-gnome) and KDE Plasma from 6 (xdg-desktop-portal-kde). \
+                 Until then, bind a key to `{command}` in your desktop's keyboard settings"
             ),
         ),
         Err(err) => check(
             NAME,
-            DoctorStatus::Fail,
-            format!("could not query {GLOBAL_SHORTCUTS_INTERFACE}: {err}"),
+            missing,
+            format!(
+                "could not query {GLOBAL_SHORTCUTS_INTERFACE}: {err}. Bind a key to `{command}` \
+                 in your desktop's keyboard settings if the hotkey does not work"
+            ),
         ),
     }
 }
@@ -242,29 +298,50 @@ mod tests {
             "version",
             "2",
         );
-        let c = global_shortcuts(&bus).await;
+        let c = global_shortcuts(&gnome(), false, &bus).await;
         assert_eq!(c.status, DoctorStatus::Ok);
         assert!(detail(&c).contains("v2"));
     }
 
+    fn gnome() -> Env {
+        Env::from_pairs([("XDG_CURRENT_DESKTOP", "GNOME")])
+    }
+
     #[tokio::test]
-    async fn global_shortcuts_absent_fails_and_explains_the_backend_situation() {
-        // A running portal proves nothing: this is the wlr case, where the
-        // portal exists but ships no GlobalShortcuts backend.
+    async fn global_shortcuts_absent_on_gnome_fails_and_says_what_to_do() {
         let bus = FakeBus::new().with_name(PORTAL_BUS_NAME);
-        let c = global_shortcuts(&bus).await;
+        let c = global_shortcuts(&gnome(), false, &bus).await;
         assert_eq!(c.status, DoctorStatus::Fail);
         let d = detail(&c);
-        assert!(d.contains("cannot be bound"));
-        assert!(d.contains("xdg-desktop-portal-wlr"));
-        assert!(d.contains("48.rc"));
+        assert!(d.contains("cannot bind its hotkey"));
+        assert!(d.contains("`compass toggle`"));
     }
 
     #[tokio::test]
     async fn global_shortcuts_unqueryable_fails_without_claiming_absence() {
-        let c = global_shortcuts(&FakeBus::failing_queries("Timeout")).await;
+        let c = global_shortcuts(&gnome(), false, &FakeBus::failing_queries("Timeout")).await;
         assert_eq!(c.status, DoctorStatus::Fail);
         assert!(detail(&c).contains("could not query"));
         assert!(!detail(&c).contains("not implemented"));
+    }
+
+    #[tokio::test]
+    async fn on_sway_the_compositor_binding_is_the_hotkey_and_passes() {
+        let env = Env::from_pairs([
+            ("SWAYSOCK", "/run/user/1000/sway-ipc.sock"),
+            ("XDG_CURRENT_DESKTOP", "sway"),
+        ]);
+        let bus = FakeBus::new().with_name(PORTAL_BUS_NAME);
+        let c = global_shortcuts(&env, false, &bus).await;
+        assert_eq!(c.status, DoctorStatus::Ok);
+        assert!(
+            detail(&c)
+                .contains("`bindsym $mod+space exec compass toggle` to ~/.config/sway/config"),
+            "{}",
+            detail(&c)
+        );
+        let c = global_shortcuts(&env, true, &FakeBus::unreachable("no bus")).await;
+        assert_eq!(c.status, DoctorStatus::Ok, "no bus is no matter here");
+        assert!(detail(&c).contains("exec flatpak run org.tunaos.compass toggle"));
     }
 }

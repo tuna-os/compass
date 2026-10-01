@@ -96,7 +96,7 @@ pub const COMMANDS: &[PowerCommand] = &[
     PowerCommand {
         id: "hibernate",
         name: "Hibernate System",
-        description: "Suspend the system to disk. This turns off the system completely and saves its state on disk, to be restored on next boot.",
+        description: "Save the session to disk and turn the computer off. It comes back as it was at the next start.",
         keywords: &["disk", "suspend"],
         confirm_by_default: true,
         cannot_message: "System can't hibernate",
@@ -121,9 +121,9 @@ pub const EXTENSION_NAME: &str = "Power Management";
 pub const EXTENSION_DESCRIPTION: &str = "Power off, suspend, sleep, hibernate your computer.";
 
 /// The confirmation dialog's title.
-pub const CONFIRM_TITLE: &str = "Are you sure";
+pub const CONFIRM_TITLE: &str = "Are you sure?";
 /// The confirmation dialog's body.
-pub const CONFIRM_BODY: &str = "High-impact operation, please confirm";
+pub const CONFIRM_BODY: &str = "This affects your whole session.";
 
 /// The preference that decides whether to ask.
 pub const CONFIRM_PREFERENCE: &str = "confirm";
@@ -351,6 +351,6 @@ mod tests {
         assert!(command("power-off").is_some());
         assert!(command("missing").is_none());
         assert_eq!(EXTENSION_ID, "power");
-        assert_eq!(CONFIRM_TITLE, "Are you sure");
+        assert_eq!(CONFIRM_TITLE, "Are you sure?");
     }
 }

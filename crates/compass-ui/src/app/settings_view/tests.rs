@@ -675,3 +675,153 @@ fn page_keys_and_space_in_the_search_field_do_not_change_settings() {
 fn saved_or_default(app: &LauncherApp) -> compass_core::Config {
     compass_core::Config::load_from(app.config_path.as_ref().unwrap()).unwrap_or_default()
 }
+
+#[test]
+fn a_refused_write_puts_the_switch_back_and_says_why_in_the_error_colour() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    // Nothing can be written under a path whose parent is a file.
+    std::fs::write(dir.path().join("blocker"), "").unwrap();
+    app.config_path = Some(dir.path().join("blocker").join("compass.json"));
+    let _ = app.open_settings(None);
+    let setting = settings_catalog::find("launcher.close_on_focus_loss").unwrap();
+    assert_eq!(page(&app).value(&setting), json!(false));
+
+    send(
+        &mut app,
+        SettingsMessage::Changed("launcher.close_on_focus_loss".into(), json!(true)),
+    );
+    assert_eq!(
+        page(&app).value(&setting),
+        json!(false),
+        "the switch shows what the file still says"
+    );
+    assert!(
+        page(&app)
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("could not save")),
+        "{:?}",
+        page(&app).notice
+    );
+    let palette = app.palette();
+    assert_ne!(palette.error(), palette.accent, "not drawn as a link");
+}
+
+#[test]
+fn a_file_with_a_typo_opens_with_the_problem_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    std::fs::write(
+        dir.path().join("compass.json"),
+        r#"{"launcher": {"close_on_focus_los": true, "max_results": 7}}"#,
+    )
+    .unwrap();
+    let _ = app.open_settings(None);
+    let notice = page(&app).notice.clone().unwrap_or_default();
+    assert!(
+        notice.contains("Did you mean launcher.close_on_focus_loss?"),
+        "{notice}"
+    );
+    let max = settings_catalog::find("launcher.max_results").unwrap();
+    assert_eq!(
+        page(&app).value(&max),
+        json!(7),
+        "the rest of the file is read"
+    );
+}
+
+#[test]
+fn a_reloaded_file_reaches_the_window_and_an_open_settings_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    let _ = app.open_settings(None);
+    let config = compass_core::Config::parse(
+        r#"{"launcher": {"wrap_navigation": true, "keybinding": "emacs",
+            "appearance": {"theme": "dracula", "preset": "rofi"}}}"#,
+        std::path::Path::new("compass.json"),
+    )
+    .unwrap();
+    let task = app.update(Message::ConfigReloaded(Arc::new(config)));
+    settle(&mut app, task);
+    assert!(app.wrap_navigation);
+    assert_eq!(app.keybinding, compass_core::keybinding::Scheme::Emacs);
+    assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+    let wrap = settings_catalog::find("launcher.wrap_navigation").unwrap();
+    assert_eq!(page(&app).value(&wrap), json!(true));
+}
+
+#[test]
+fn clear_the_search_on_close_empties_the_query_only_when_it_is_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    let _ = app.update(Message::QueryChanged("fire".into()));
+    let _ = app.conceal();
+    assert_eq!(app.query, "fire", "off, as in Vicinae: the search is kept");
+
+    let config = compass_core::Config::parse(
+        r#"{"launcher": {"pop_to_root_on_close": true}}"#,
+        std::path::Path::new("compass.json"),
+    )
+    .unwrap();
+    let _ = app.update(Message::ConfigReloaded(Arc::new(config)));
+    let _ = app.conceal();
+    assert_eq!(app.query, "", "on: the next summon starts empty");
+}
+
+#[test]
+fn an_item_the_search_lists_is_not_offered_again_as_a_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    app.fallbacks = vec![compass_core::commands::SEARCH_FILES_FALLBACK_ID.to_owned()];
+    let _ = app.update(Message::QueryChanged("docs".into()));
+    let search_files = app
+        .results
+        .iter()
+        .filter(|row| match row {
+            crate::app::RootRow::Command(command) => command.entrypoint == "search-files",
+            crate::app::RootRow::Fallback(crate::app::Fallback::Command(command)) => {
+                command.entrypoint == "search-files"
+            }
+            _ => false,
+        })
+        .count();
+    assert_eq!(search_files, 1, "{}", app.state_line());
+
+    // A query that does not find it still offers it as the fallback.
+    let _ = app.update(Message::QueryChanged("quarterly".into()));
+    assert!(
+        app.results
+            .iter()
+            .any(|row| matches!(row, crate::app::RootRow::Fallback(_)))
+    );
+}
+
+#[test]
+fn hibernate_does_not_answer_store() {
+    let hibernate = compass_core::power_commands::command("hibernate").unwrap();
+    assert!(!hibernate.description.to_lowercase().contains("store"));
+}
+
+#[test]
+fn the_hotkey_guidance_names_the_compositor_line_and_the_flatpak_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    assert!(
+        app.open_hint()
+            .starts_with("Press Super+Space to open Compass"),
+        "{}",
+        app.open_hint()
+    );
+    app.hotkey_compositor = Some(compass_core::hotkey_guide::Compositor::Sway);
+    app.flatpak = true;
+    assert!(
+        app.open_hint()
+            .contains("`bindsym $mod+space exec flatpak run org.tunaos.compass toggle`"),
+        "{}",
+        app.open_hint()
+    );
+    // The settings view draws the row as guidance, not as a recorder.
+    let _ = app.open_settings(None);
+    let _ = app.view();
+}

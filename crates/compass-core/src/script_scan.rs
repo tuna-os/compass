@@ -200,7 +200,8 @@ impl ScriptCommandFile {
     ///
     /// An inline script shows its last line of output instead of a package
     /// name, and `"No data"` until it has run once. Everything else falls back
-    /// to the name of the directory the script sits in.
+    /// to the name of the directory the script sits in, or to `Script` for one
+    /// directly in a `scripts` directory, whose name says nothing.
     pub fn package_name(&self, last_run: Option<&str>) -> String {
         if self.data.mode == OutputMode::Inline {
             return match last_run {
@@ -215,7 +216,8 @@ impl ScriptCommandFile {
             .parent()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .filter(|name| name != "scripts")
+            .unwrap_or_else(|| "Script".to_owned())
     }
 
     /// The argument vector the script is run with.
@@ -487,6 +489,11 @@ pub fn scan(dirs: &[PathBuf]) -> Vec<ScriptCommandFile> {
                 is_dir: path.is_dir(),
                 path,
             };
+            // Rhai scripts share the scripts directory: a folder with a
+            // `script.toml` is one, and its files are not script commands.
+            if is_rhai_script(&info) {
+                continue;
+            }
             let is_text = |path: &Path| {
                 use std::io::Read as _;
                 let mut head = Vec::with_capacity(SNIFF_BYTES);
@@ -505,8 +512,11 @@ pub fn scan(dirs: &[PathBuf]) -> Vec<ScriptCommandFile> {
                             ids_seen.insert(id);
                             scripts.push(script);
                         }
-                        Err(error) => {
+                        Err(error) if first_report(&info.path, &error) => {
                             tracing::warn!(path = %info.path.display(), %error, "failed to parse script");
+                        }
+                        Err(error) => {
+                            tracing::debug!(path = %info.path.display(), %error, "failed to parse script");
                         }
                     }
                 }
@@ -515,6 +525,31 @@ pub fn scan(dirs: &[PathBuf]) -> Vec<ScriptCommandFile> {
         }
     }
     scripts
+}
+
+/// Whether `entry` is a Rhai script (a folder with a `script.toml`) or one
+/// of its files, which the script-command scan leaves to the Rhai tier.
+fn is_rhai_script(entry: &DirEntryInfo) -> bool {
+    if entry.is_dir {
+        return entry.path.join("script.toml").is_file();
+    }
+    entry.name == "script.toml"
+        || entry
+            .path
+            .extension()
+            .is_some_and(|extension| extension == "rhai")
+}
+
+/// Whether this is the first time this process sees `error` for `path`: a
+/// broken script is said once, not at every rescan (every summon).
+fn first_report(path: &Path, error: &str) -> bool {
+    static SEEN: std::sync::Mutex<Option<HashSet<(PathBuf, String)>>> = std::sync::Mutex::new(None);
+    SEEN.lock()
+        .map(|mut seen| {
+            seen.get_or_insert_with(HashSet::new)
+                .insert((path.to_path_buf(), error.to_owned()))
+        })
+        .unwrap_or(true)
 }
 
 /// The directories a scan walks: the caller's custom paths first, then the

@@ -223,6 +223,20 @@ impl Palette {
             ..self
         }
     }
+
+    /// Text that reports a failure: Adwaita's `@error_color`, #c01c28 on a
+    /// light card and #ff7b63 on a dark one, chosen by the card's lightness
+    /// so a curated theme gets the variant it can be read on.
+    #[must_use]
+    pub fn error(&self) -> Rgb {
+        let Rgb { r, g, b } = self.surface;
+        let light = u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114 > 128_000;
+        if light {
+            Rgb::new(0xc0, 0x1c, 0x28)
+        } else {
+            Rgb::new(0xff, 0x7b, 0x63)
+        }
+    }
 }
 
 /// Adwaita light.

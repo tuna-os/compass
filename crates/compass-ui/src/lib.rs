@@ -21,6 +21,7 @@ pub mod backend;
 pub mod calculator_page;
 pub mod clipboard_page;
 pub mod compass_pages;
+pub mod config_link;
 pub mod design;
 pub mod developer_page;
 pub mod dmenu_page;

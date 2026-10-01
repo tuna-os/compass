@@ -358,9 +358,10 @@ sidebar page, so a control is audited without anyone naming it.
 | General › SidebarSelected(6) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › Changed("launcher.close_on_focus_loss", Bool(true)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(7) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| General › Changed("launcher.quick_launch", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| General › Changed("launcher.pop_to_root_on_close", Bool(true)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(8) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(9) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| General › Changed("launcher.quick_launch", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(10) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(12) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › Changed("launcher.check_for_updates", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
@@ -407,13 +408,11 @@ sidebar page, so a control is audited without anyone naming it.
 | Commands › Record(Item("commands:manage-shortcuts")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:create-snippet")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:manage-shortcuts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:create-snippet", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:manage-snippets")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.snippets.preferences.enabled", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.commands.entrypoints.run-program.preferences.default-action", String("run-in-terminal")) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:create-extension")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:create-extension", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:raycast-store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:raycast-store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:power-off")) | changes Settings | `every_control_in_the_settings_view_does_something` |

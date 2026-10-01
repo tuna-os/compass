@@ -5,9 +5,11 @@
 //! extensions" step before the last, which installs through the same backend
 //! call as the store's detail page.
 //!
-//! Finishing records the flow in `onboarding.json` and hides, as
-//! `OnboardingWindow::finish`; closing does not record it, so the next start
-//! shows it again, as closing the C++'s window does.
+//! Finishing records the flow in `onboarding.json` and leaves the launcher
+//! open at its search. Closing it, with Escape or the hotkey, records it too:
+//! unlike Vicinae, which asks again at the next start, Compass does not show
+//! it at every login to someone who has already dismissed it. Started with
+//! `--hidden`, the flow waits for the first summon.
 
 use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::widget::{Space, button, column, container, pick_list, row, text};
@@ -40,7 +42,36 @@ const NEEDS_ENGINE: &str = "Installing extensions needs the Compass engine";
 /// Why a link did not open, as `open_link` says it.
 const OPEN_NEEDS_ENGINE: &str = "Opening a link needs the Compass engine";
 
+/// Records the flow as seen, now. A file that cannot be written is logged:
+/// the cost is seeing the flow again, not losing anything.
+pub(super) fn record_completed(path: &std::path::Path) {
+    let completed_at = jiff::Timestamp::now()
+        .round(jiff::Unit::Second)
+        .unwrap_or_else(|_| jiff::Timestamp::now())
+        .to_string();
+    if let Err(error) = onboarding::mark_completed(path, &completed_at) {
+        tracing::warn!(%error, path = %path.display(), "could not write the onboarding state file");
+    }
+}
+
 impl LauncherApp {
+    /// How to open the launcher from anywhere on this desktop: the
+    /// compositor's own line on Sway, Hyprland and niri, the hotkey
+    /// elsewhere, and in the Flatpak the command the Flatpak needs.
+    pub(super) fn open_hint(&self) -> String {
+        let command = compass_core::hotkey_guide::toggle_command(self.flatpak);
+        if let Some(compositor) = self.hotkey_compositor {
+            return compositor.instruction(&command);
+        }
+        let key = compass_core::key_combo::KeyCombo::parse(&self.launcher_hotkey).map_or_else(
+            || self.launcher_hotkey.clone(),
+            |combo| combo.display_tokens().join("+"),
+        );
+        format!(
+            "Press {key} to open Compass from anywhere. If it does nothing, bind a key to `{command}` in your desktop's keyboard settings."
+        )
+    }
+
     /// Opens the flow at its first step, recording to `state_path`.
     pub fn open_onboarding(&mut self, state_path: std::path::PathBuf) {
         let files = crate::theme::load_user_themes(&self.theme_dirs);
@@ -164,16 +195,11 @@ impl LauncherApp {
                     Task::none()
                 }
                 Advance::Finish => {
-                    let completed_at = jiff::Timestamp::now()
-                        .round(jiff::Unit::Second)
-                        .unwrap_or_else(|_| jiff::Timestamp::now())
-                        .to_string();
-                    if let Err(error) = onboarding::mark_completed(&page.state_path, &completed_at)
-                    {
-                        tracing::warn!(%error, path = %page.state_path.display(),
-                            "could not write the onboarding state file");
-                    }
-                    self.conceal()
+                    // Finish leaves the launcher open at its search, so the
+                    // first thing after setting it up is using it.
+                    record_completed(&page.state_path);
+                    self.page = Page::Root;
+                    super::focus_search()
                 }
             },
             Message::OnboardingBack => {
@@ -391,7 +417,10 @@ impl LauncherApp {
                 let hotkey_row = row![
                     column![
                         text("Global hotkey").font(self.font()).size(14),
-                        small("Bind a key to \"compass toggle\""),
+                        text(self.open_hint())
+                            .font(self.font())
+                            .size(12)
+                            .color(palette.muted.to_iced()),
                     ]
                     .width(Length::Fill),
                     ring(
@@ -462,6 +491,16 @@ impl LauncherApp {
             }
             Step::Complete => {
                 content = content
+                    .push(
+                        container(
+                            text(self.open_hint())
+                                .font(self.font())
+                                .size(13)
+                                .color(palette.text.to_iced())
+                                .align_x(Alignment::Center),
+                        )
+                        .max_width(480.0),
+                    )
                     .push(Space::new().height(16))
                     .push(small("Compass is open source software."))
                     .push(

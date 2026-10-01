@@ -17,6 +17,7 @@ pub mod cli;
 pub mod cli_commands;
 pub mod clipboard_service;
 pub mod config_cmd;
+pub mod config_watch;
 pub mod conformance;
 pub mod developer;
 pub mod dmenu;
@@ -94,6 +95,16 @@ pub fn main() -> ExitCode {
     // engine migrates: every other command talks to one that already has.
     // Its log lines are replayed once tracing is up.
     let migrated = serving.then(compass_xdg::brand::migrate_legacy_install);
+    // A `vicinae.json` moved to `compass.json` still holds Vicinae's keys,
+    // which nothing here reads: they are translated as `settings.json` is.
+    let translated = serving
+        .then(|| {
+            let path = compass_core::config::default_config_path().ok()?;
+            Some(compass_core::config_migration::translate_file_in_place(
+                &path,
+            ))
+        })
+        .flatten();
     // The engine also writes its log to a file, for `compass logs`.
     let log_file = serving.then(logs::log_path).flatten().map(|path| {
         let log = logs::LogFile::pending(&path);
@@ -103,6 +114,17 @@ pub fn main() -> ExitCode {
     init_tracing(cli.verbose, log_file);
     for (base, migration) in migrated.iter().flatten() {
         compass_xdg::brand::log_migration(base, migration);
+    }
+    match translated {
+        Some(Ok(Some(migration))) => tracing::info!(
+            translated = migration.mapped.len(),
+            left_behind = ?migration.unmapped(),
+            "compass.json held Vicinae settings; translated them, and kept the original as compass.json.vicinae.bak"
+        ),
+        Some(Err(error)) => {
+            tracing::warn!(%error, "compass.json holds Vicinae settings that could not be translated");
+        }
+        _ => {}
     }
 
     match run(cli) {
@@ -277,9 +299,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     emoji_skin_tone(&config),
                     emoji_default_action(&config),
                     clock(&config),
-                    compass_core::favicon::Service::from_config(
-                        config.unknown_fields().get("favicon_service"),
-                    ),
+                    compass_core::favicon::Service::from_config(config.favicon_service()),
                     config.launcher().close_on_focus_loss(),
                     config.launcher().hotkey().to_owned(),
                 )
@@ -356,7 +376,32 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             .map(|d| d as std::sync::Arc<dyn compass_ui::backend::ClipboardBackend>);
         let windows = daemon.map(|d| d as std::sync::Arc<dyn compass_ui::backend::WindowBackend>);
 
+        // Hand edits and `compass theme set` reach the window without a
+        // restart. A file that does not parse is skipped: the window keeps
+        // what it has, and the engine's log says why.
+        let config_path = compass_core::config::default_config_path().ok();
+        let (config_link, _config_watch) = match &config_path {
+            Some(path) => {
+                let (link, sender) = compass_ui::config_link::ConfigLink::new();
+                let watched = path.clone();
+                match config_watch::watch(path, move || {
+                    let _ = compass_ui::theme::load_default_user_themes();
+                    if let Ok(config) = compass_core::Config::load_from(&watched) {
+                        let _ = sender.send(std::sync::Arc::new(config));
+                    }
+                }) {
+                    Ok(watch) => (Some(link), Some(watch)),
+                    Err(error) => {
+                        tracing::warn!(%error, "cannot watch compass.json; changes to it apply at the next start");
+                        (None, None)
+                    }
+                }
+            }
+            None => (None, None),
+        };
+
         let flags = compass_ui::AppFlags {
+            config_link,
             theme: theme_choice,
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             backend,
@@ -370,7 +415,12 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             wrap_navigation,
             quick_launch,
             close_on_focus_loss,
+            pop_to_root_on_close: compass_core::Config::load()
+                .map(|config| config.launcher().pop_to_root_on_close())
+                .unwrap_or(compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE),
             launcher_hotkey,
+            hotkey_compositor: compass_core::hotkey_guide::Compositor::from_env(),
+            flatpak: compass_core::hotkey_guide::in_flatpak(),
             icons: appearance_preset.icons,
             appearance_preset,
             started_at: Some(started_at),
@@ -436,7 +486,15 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
 fn onboarding_due() -> Option<std::path::PathBuf> {
     use compass_core::onboarding;
     let disabled = onboarding::disabled_by(std::env::var_os(onboarding::DISABLE_ENV).as_deref());
-    onboarding::default_path().filter(|path| onboarding::should_show(path, disabled))
+    let path = onboarding::default_path().filter(|path| onboarding::should_show(path, disabled))?;
+    let migrated = compass_core::xdg_dirs::config_home()
+        .is_some_and(|home| onboarding::came_from_vicinae(&home));
+    if migrated {
+        tracing::info!("settings carried over from Vicinae; skipping the first-run setup");
+        let _ = onboarding::mark_completed(&path, &jiff::Timestamp::now().to_string());
+        return None;
+    }
+    Some(path)
 }
 
 /// Whether each power command asks first, from its `confirm` preference
@@ -767,7 +825,8 @@ async fn handle_input_server(
             // No engine: the setting still belongs in compass.json, and the
             // next engine reads it.
             tracing::debug!(%error, "no engine to apply input_server.enabled to");
-            let mut config = compass_core::Config::load().unwrap_or_default();
+            let mut config = compass_core::Config::load()
+                .context("compass.json cannot be read, so it was left unchanged")?;
             config.input_server_mut().set_enabled(Some(enable));
             config.save_to(compass_core::config::default_config_path()?)?;
             println!(
@@ -830,7 +889,8 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
             let parsed = compass_ui::theme::Theme::from_name(&theme).ok_or_else(|| {
                 anyhow::anyhow!("unknown theme {theme:?}; try `compass theme list`")
             })?;
-            let mut config = compass_core::Config::load().unwrap_or_default();
+            let mut config = compass_core::Config::load()
+                .context("compass.json cannot be read, so it was left unchanged")?;
             config
                 .launcher_mut()
                 .appearance_mut()
@@ -840,7 +900,8 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
             Ok(ExitCode::from(EXIT_OK))
         }
         ThemeCommand::Reset => {
-            let mut config = compass_core::Config::load().unwrap_or_default();
+            let mut config = compass_core::Config::load()
+                .context("compass.json cannot be read, so it was left unchanged")?;
             config.launcher_mut().appearance_mut().set_theme(None);
             config.save_to(compass_core::config::default_config_path()?)?;
             println!("theme reset to system");

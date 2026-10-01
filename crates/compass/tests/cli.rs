@@ -356,7 +356,9 @@ async fn doctor_detects_absence_in_a_bare_container() {
     assert_eq!(by_name["session.type"], "fail", "no display server here");
     assert_eq!(by_name["dbus.session"], "fail", "no session bus here");
     assert_eq!(by_name["portal.desktop"], "fail", "no portal here");
-    assert_eq!(by_name["portal.global-shortcuts"], "fail");
+    // No desktop is named, so a missing portal is a warning (bind the key by
+    // hand) rather than a failure, as it is on GNOME and KDE.
+    assert_eq!(by_name["portal.global-shortcuts"], "warn");
     assert_eq!(value["summary"]["status"], "fail");
     assert!(value["summary"]["fail"].as_u64().unwrap() >= 4);
 }
@@ -454,7 +456,7 @@ async fn doctor_check_only_json_still_emits_the_full_report() {
     .await;
     assert_eq!(output.status.code(), Some(1));
     let value: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("json");
-    assert_eq!(value["checks"].as_array().expect("checks").len(), 15);
+    assert_eq!(value["checks"].as_array().expect("checks").len(), 18);
 }
 
 #[tokio::test]

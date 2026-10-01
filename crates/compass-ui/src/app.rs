@@ -317,9 +317,17 @@ pub struct AppFlags {
     /// Whether the window hides when it loses focus, from
     /// `launcher.close_on_focus_loss`.
     pub close_on_focus_loss: bool,
+    /// `launcher.pop_to_root_on_close`: hiding clears the search.
+    pub pop_to_root_on_close: bool,
     /// The launcher hotkey as stored (`launcher.hotkey`), for the shortcut
     /// recorder's conflict check.
     pub launcher_hotkey: String,
+    /// The compositor that binds the launcher's key in its own configuration
+    /// (Sway, Hyprland, niri), when this is one; there the hotkey setting
+    /// does nothing and the guidance names the compositor's line instead.
+    pub hotkey_compositor: Option<compass_core::hotkey_guide::Compositor>,
+    /// Whether this is the Flatpak, whose toggle command is longer.
+    pub flatpak: bool,
     /// Whether each power command asks first, by id, as its `confirm`
     /// preference resolves (`compass_core::power_commands::should_confirm`).
     /// A command missing here asks by its own default.
@@ -423,6 +431,9 @@ pub struct AppFlags {
     /// Mirrors `appearance_link`: `None` is a test or a desktop without a
     /// Settings portal.
     pub typography_link: Option<crate::typography::TypographyLink>,
+    /// `compass.json` as it is read again after each change on disk, when
+    /// something is watching it. `None` in tests.
+    pub config_link: Option<crate::config_link::ConfigLink>,
 }
 
 impl Default for AppFlags {
@@ -455,7 +466,10 @@ impl Default for AppFlags {
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+            pop_to_root_on_close: compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE,
             launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
+            hotkey_compositor: None,
+            flatpak: false,
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
             config_path: None,
@@ -493,6 +507,7 @@ impl Default for AppFlags {
             appearance_link: None,
             font_family: None,
             typography_link: None,
+            config_link: None,
         }
     }
 }
@@ -1036,6 +1051,9 @@ pub struct LauncherApp {
     known_files: std::collections::HashSet<std::path::PathBuf>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
+    /// The first-run flow, when it is due but the launcher started hidden:
+    /// it opens with the first summon rather than at login.
+    pending_onboarding: Option<std::path::PathBuf>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
     appearance: Appearance,
     /// Where later appearance changes arrive. See [`AppFlags::appearance_link`].
@@ -1048,6 +1066,8 @@ pub struct LauncherApp {
     font_family: Option<String>,
     /// Where later font changes arrive. See [`AppFlags::typography_link`].
     typography_link: Option<crate::typography::TypographyLink>,
+    /// Where `compass.json` arrives after a change. See [`AppFlags::config_link`].
+    config_link: Option<crate::config_link::ConfigLink>,
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
@@ -1055,11 +1075,17 @@ pub struct LauncherApp {
     quick_launch: bool,
     /// See [`AppFlags::close_on_focus_loss`].
     close_on_focus_loss: bool,
+    /// See [`AppFlags::pop_to_root_on_close`].
+    pop_to_root_on_close: bool,
     /// Whether the window has had the focus since it was last shown: losing
     /// it hides the window only after it had it (`setWindowActivated`).
     window_focused: bool,
     /// See [`AppFlags::launcher_hotkey`].
     launcher_hotkey: String,
+    /// See [`AppFlags::hotkey_compositor`].
+    hotkey_compositor: Option<compass_core::hotkey_guide::Compositor>,
+    /// See [`AppFlags::flatpak`].
+    flatpak: bool,
     /// Whether the engine was last told the recorder is capturing.
     capture_reported: bool,
     /// Whether an extension's file chooser is open, which takes the focus
@@ -1374,7 +1400,10 @@ impl LauncherApp {
         app.wrap_navigation = flags.wrap_navigation;
         app.quick_launch = flags.quick_launch;
         app.close_on_focus_loss = flags.close_on_focus_loss;
+        app.pop_to_root_on_close = flags.pop_to_root_on_close;
         app.launcher_hotkey = flags.launcher_hotkey;
+        app.hotkey_compositor = flags.hotkey_compositor;
+        app.flatpak = flags.flatpak;
         app.power_asks = flags.power_asks;
         app.browse_apps = flags.browse_apps;
         app.config_path = flags.config_path;
@@ -1402,6 +1431,7 @@ impl LauncherApp {
         app.appearance_link = flags.appearance_link;
         app.font_family = flags.font_family;
         app.typography_link = flags.typography_link;
+        app.config_link = flags.config_link;
     }
 
     /// Builds the state and opens the first window, for [`crate::run_resident`].
@@ -1411,13 +1441,16 @@ impl LauncherApp {
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
         let onboarding = flags.onboarding.clone();
-        let hidden = flags.start_hidden && flags.link.is_some() && onboarding.is_none();
+        let hidden = flags.start_hidden && flags.link.is_some();
         let (mut app, task) = Self::new(flags);
+        if hidden {
+            // `compass start --hidden` runs at login: the flow waits for the
+            // first time someone opens the launcher.
+            app.pending_onboarding = onboarding;
+            return (app, task);
+        }
         if let Some(path) = onboarding {
             app.open_onboarding(path);
-        }
-        if hidden {
-            return (app, task);
         }
         let opened = app.open_window();
         (app, Task::batch([task, opened]))
@@ -1476,16 +1509,21 @@ impl LauncherApp {
             masked: crate::icons::MaskedCache::default(),
             known_files: std::collections::HashSet::new(),
             theme_preview: None,
+            pending_onboarding: None,
             appearance: Appearance::Light,
             appearance_link: None,
             font_family: None,
             typography_link: None,
+            config_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+            pop_to_root_on_close: compass_core::config::DEFAULT_POP_TO_ROOT_ON_CLOSE,
             window_focused: false,
             launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
+            hotkey_compositor: None,
+            flatpak: false,
             capture_reported: false,
             choosing_files: false,
             power_asks: std::collections::BTreeMap::new(),
@@ -1605,6 +1643,11 @@ impl LauncherApp {
     /// stayed on screen after launching is a bug report waiting to happen; a
     /// launcher that vanished with no way back is a worse one.
     fn conceal(&mut self) -> Task<Message> {
+        // Dismissing the first-run flow, by Escape or the hotkey, counts as
+        // having seen it: it is not shown again at every login.
+        if let Page::Onboarding(page) = &self.page {
+            onboarding::record_completed(&page.state_path);
+        }
         self.cancel_search();
         self.panel = None;
         // Leaving Set Theme without choosing puts the theme back, as
@@ -1620,8 +1663,13 @@ impl LauncherApp {
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
         self.page = Page::Root;
+        let cleared = if self.pop_to_root_on_close && !self.query.is_empty() {
+            self.update(Message::QueryChanged(String::new()))
+        } else {
+            Task::none()
+        };
         let hidden = self.hide_window();
-        Task::batch([closing, hidden])
+        Task::batch([closing, cleared, hidden])
     }
 
     /// Hides or exits after [`Self::conceal`] has reset the view.
@@ -2057,6 +2105,9 @@ impl LauncherApp {
         if let Some(link) = &self.typography_link {
             streams.push(link.subscription().map(Message::TypographyChanged));
         }
+        if let Some(link) = &self.config_link {
+            streams.push(link.subscription().map(Message::ConfigReloaded));
+        }
         // Each second while the clock shows; `clock_tick` redraws it only
         // when its interval comes round.
         if self.clock.is_some() && matches!(self.page, Page::Root) {
@@ -2152,6 +2203,12 @@ impl LauncherApp {
         if !show {
             self.summoned_at = None;
             return self.conceal();
+        }
+
+        if matches!(command, UiCommand::Show | UiCommand::Toggle)
+            && let Some(path) = self.pending_onboarding.take()
+        {
+            self.open_onboarding(path);
         }
 
         // A toplevel left behind another window comes back as a new one.
@@ -2441,6 +2498,7 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::ConfigReloaded(config) => self.apply_reloaded_config(&config),
             Message::ThemePreview(theme) => {
                 if self.theme_preview.is_none() {
                     self.theme_preview = Some(self.theme_choice);
@@ -6999,10 +7057,23 @@ impl LauncherApp {
         if self.query.trim().is_empty() || self.provider_scope.is_some() {
             return;
         }
+        // An item the search already lists is not offered a second time
+        // under the fallbacks ("docs" finds Search Files by its keywords).
+        let listed = |fallback: &Fallback| {
+            self.results.iter().any(|row| match (row, fallback) {
+                (RootRow::Command(listed), Fallback::Command(offered)) => {
+                    listed.entrypoint == offered.entrypoint
+                }
+                (RootRow::Extension(listed), Fallback::Extension(offered))
+                | (RootRow::Shortcut(listed), Fallback::Shortcut(offered)) => listed == offered,
+                _ => false,
+            })
+        };
         let fallbacks: Vec<RootRow> = self
             .fallbacks
             .iter()
             .filter_map(|id| self.resolve_fallback(id))
+            .filter(|fallback| !listed(fallback))
             .map(RootRow::Fallback)
             .collect();
         self.results.extend(fallbacks);
@@ -7388,17 +7459,46 @@ mod tests {
     }
 
     #[test]
-    fn a_due_onboarding_opens_the_window_even_when_started_hidden() {
+    fn a_due_onboarding_started_hidden_waits_for_the_first_summon() {
         let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compass/onboarding.json");
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (mut app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            onboarding: Some(path.clone()),
+            ..AppFlags::default()
+        });
+        assert!(app.pending_window.is_none(), "login stays quiet");
+        assert!(!app.showing_onboarding());
+
+        let _ = app.update(Message::Command(UiCommand::Toggle));
+        assert!(app.pending_window.is_some(), "the first summon opens it");
+        assert_eq!(
+            app.onboarding_step(),
+            Some(compass_core::onboarding::Step::Welcome)
+        );
+
+        // Dismissed with the hotkey: seen, and not shown at the next login.
+        let _ = app.update(Message::Command(UiCommand::Toggle));
+        assert!(!app.showing_onboarding());
+        assert!(!compass_core::onboarding::should_show(&path, false));
+        let _ = app.update(Message::Command(UiCommand::Toggle));
+        assert!(!app.showing_onboarding(), "once is enough");
+
         let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
         let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
         let (app, _) = LauncherApp::boot(AppFlags {
-            start_hidden: true,
+            start_hidden: false,
             link: Some(EngineLink::new(receiver, sender)),
-            onboarding: Some(dir.path().join("compass/onboarding.json")),
+            onboarding: Some(dir.path().join("other/onboarding.json")),
             ..AppFlags::default()
         });
-        assert!(app.pending_window.is_some(), "the flow is put on screen");
+        assert!(
+            app.pending_window.is_some(),
+            "started shown, it opens at once"
+        );
         assert_eq!(
             app.onboarding_step(),
             Some(compass_core::onboarding::Step::Welcome)
@@ -7451,7 +7551,11 @@ mod tests {
         assert_eq!(app.onboarding_step(), Some(Step::Complete));
         assert!(onboarding::should_show(&path, false), "not before Finish");
         let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
-        assert!(!app.showing_onboarding(), "Finish hides the flow");
+        assert!(!app.showing_onboarding(), "Finish closes the flow");
+        assert!(
+            matches!(app.page, Page::Root),
+            "and leaves the launcher open at its search"
+        );
         assert!(!onboarding::should_show(&path, false), "and records it");
     }
 
@@ -7469,7 +7573,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_closes_the_onboarding_without_recording_it() {
+    fn escape_closes_the_onboarding_and_records_it_as_seen() {
         use compass_core::onboarding;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(onboarding::FILE_NAME);
@@ -7493,7 +7597,10 @@ mod tests {
         assert_eq!(app.onboarding_step(), Some(onboarding::Step::Welcome));
         let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
         assert!(!app.showing_onboarding(), "and closes from the first");
-        assert!(!path.exists(), "the next start asks again");
+        assert!(
+            !onboarding::should_show(&path, false),
+            "not asked again at every login"
+        );
     }
 
     #[test]
@@ -8331,7 +8438,7 @@ mod tests {
         let Page::StoreDetail(detail) = &app.page else {
             panic!("the click did not open the row: {}", app.state_line());
         };
-        assert_eq!(detail.title, "Extension Store - Timer");
+        assert_eq!(detail.title, "Vicinae Store - Timer");
     }
 
     /// Hovering sends nothing and selects nothing: the C++ list moves its
@@ -14653,10 +14760,10 @@ mod tests {
         let Page::StoreDetail(detail) = &app.page else {
             panic!("no detail page: {}", app.state_line());
         };
-        assert_eq!(detail.title, "Extension Store - Clock");
+        assert_eq!(detail.title, "Vicinae Store - Clock");
         {
             let mut ui = iced_test::simulator(app.view());
-            assert!(ui.find("Extension Store - Clock").is_ok());
+            assert!(ui.find("Vicinae Store - Clock").is_ok());
         }
 
         assert!(app.app_index.extensions().is_empty());

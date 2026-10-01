@@ -111,19 +111,27 @@ fn an_empty_bus_reports_the_portal_as_absent_not_as_a_bus_error() {
         return;
     };
 
+    // Where xdg-desktop-portal is installed, D-Bus starts it on the private
+    // bus when asked, and the doctor says so; where it is not, it is absent.
     let by_name = statuses(&report);
-    assert_eq!(by_name["portal.desktop"], "fail");
     let portal = detail(&report, "portal.desktop");
-    assert!(
-        portal.contains("not installed or not running"),
-        "should be diagnosed as absence, got: {portal}"
-    );
+    if by_name["portal.desktop"] == "ok" {
+        assert!(portal.contains("started when asked"), "{portal}");
+    } else {
+        assert_eq!(by_name["portal.desktop"], "fail");
+        assert!(
+            portal.contains("not installed or not running"),
+            "should be diagnosed as absence, got: {portal}"
+        );
+    }
     assert!(
         !portal.contains("could not ask") && !portal.contains("could not query"),
         "a reachable bus must not be reported as unqueryable: {portal}"
     );
 
-    assert_eq!(by_name["portal.global-shortcuts"], "fail");
+    // No desktop is named here, so its absence is a warning: bind the key by
+    // hand. On GNOME and KDE it fails (the doctor unit tests).
+    assert_eq!(by_name["portal.global-shortcuts"], "warn");
     let shortcuts = detail(&report, "portal.global-shortcuts");
     assert!(
         shortcuts.contains("not implemented by the running portal backend"),
@@ -162,8 +170,13 @@ fn the_private_bus_is_never_the_developers_own_bus() {
         return;
     };
 
-    // If this ever picked up a real desktop session, a portal would answer.
-    assert_eq!(statuses(&report)["portal.desktop"], "fail");
+    // If this ever picked up a real desktop session, a portal would already be
+    // running; on the private bus it is at most started on demand.
+    assert!(
+        !detail(&report, "portal.desktop").contains("is owned on the session bus"),
+        "{}",
+        detail(&report, "portal.desktop")
+    );
     assert!(
         report["socket"]
             .as_str()

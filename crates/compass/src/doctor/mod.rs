@@ -67,6 +67,8 @@ pub struct Inputs<'a, B: BusProbe, F: FsProbe> {
     /// What probing the Wayland compositor found; `None` with no display or
     /// when the probe failed.
     pub wayland: Option<checks::WaylandFindings>,
+    /// What reading `compass.json` found.
+    pub config: &'a checks::ConfigFacts,
 }
 
 /// Runs every check, in report order.
@@ -81,20 +83,29 @@ pub async fn run<B: BusProbe, F: FsProbe>(inputs: &Inputs<'_, B, F>) -> Report {
         engine,
         input_server,
         ref wayland,
+        config,
     } = *inputs;
 
     let checks = vec![
         checks::engine(engine),
+        checks::config_file(config),
         checks::session_type(env),
         checks::desktop_environment(env, bus).await,
         checks::runtime_dir(env, socket),
         checks::ipc_socket(socket, socket_exists, daemon_listening),
         checks::session_bus(env, bus).await,
         checks::desktop_portal(bus).await,
-        checks::global_shortcuts(bus).await,
+        checks::global_shortcuts(
+            env,
+            fs.exists(std::path::Path::new(checks::FLATPAK_INFO_PATH)),
+            bus,
+        )
+        .await,
         checks::shell_extension(env, bus).await,
         checks::kwin(env, bus).await,
         checks::wlroots(env, wayland.as_ref(), bus).await,
+        checks::clipboard_history(env, wayland.as_ref()),
+        checks::keyring(env, bus).await,
         checks::flatpak(fs),
         checks::input_server(fs, input_server),
         checks::application_dirs(env, fs),
@@ -130,6 +141,9 @@ pub async fn run_on_this_machine(socket: &SocketPath, engine: Engine) -> Report 
         .await
         .unwrap_or_default();
 
+    let config = tokio::task::spawn_blocking(gather_config)
+        .await
+        .unwrap_or_default();
     let inputs = Inputs {
         env: &env,
         fs: &fs,
@@ -139,6 +153,7 @@ pub async fn run_on_this_machine(socket: &SocketPath, engine: Engine) -> Report 
         daemon_listening,
         engine,
         input_server: &input_server,
+        config: &config,
         wayland: tokio::task::spawn_blocking(probe_wayland)
             .await
             .ok()
@@ -146,6 +161,26 @@ pub async fn run_on_this_machine(socket: &SocketPath, engine: Engine) -> Report 
     };
 
     run(&inputs).await
+}
+
+/// Reads `compass.json` and checks it, as the engine does when it starts.
+#[must_use]
+pub fn gather_config() -> checks::ConfigFacts {
+    let path = compass_core::config::default_config_path().ok();
+    let exists = path.as_ref().is_some_and(|path| path.exists());
+    let _ = compass_ui::theme::load_default_user_themes();
+    let problems = match compass_core::Config::load_with_issues() {
+        Ok((config, issues)) => Ok(crate::config_watch::check(&config, issues)
+            .iter()
+            .map(ToString::to_string)
+            .collect()),
+        Err(error) => Err(error.to_string()),
+    };
+    checks::ConfigFacts {
+        path,
+        exists,
+        problems,
+    }
 }
 
 /// Reads the facts on this machine. The engine's status is the caller's.
@@ -251,6 +286,13 @@ mod tests {
                 "51.0",
             )
             .with_property(
+                checks::SECRET_SERVICE_BUS_NAME,
+                checks::DEFAULT_COLLECTION_PATH,
+                checks::COLLECTION_INTERFACE,
+                "Locked",
+                "false",
+            )
+            .with_property(
                 checks::GNOME_SHELL_BUS_NAME,
                 checks::EXTENSION_OBJECT_PATH,
                 checks::EXTENSION_INTERFACE,
@@ -259,6 +301,13 @@ mod tests {
             );
         (env, fs, bus, SocketPath::in_dir("/run/user/1000"))
     }
+
+    static CLEAN_CONFIG: std::sync::LazyLock<checks::ConfigFacts> =
+        std::sync::LazyLock::new(|| checks::ConfigFacts {
+            path: Some("/home/tester/.config/compass/compass.json".into()),
+            exists: true,
+            problems: Ok(Vec::new()),
+        });
 
     static HEALTHY_INPUT_SERVER: std::sync::LazyLock<checks::InputServerFacts> =
         std::sync::LazyLock::new(|| checks::InputServerFacts {
@@ -284,6 +333,7 @@ mod tests {
             daemon_listening: listening,
             engine: Engine::Rust,
             input_server: &HEALTHY_INPUT_SERVER,
+            config: &CLEAN_CONFIG,
             // The healthy machine is GNOME; the barren one has no display.
             wayland: env.get("WAYLAND_DISPLAY").map(|_| checks::WaylandFindings {
                 family: compass_wayland::compositor::Family::Gnome,
@@ -307,6 +357,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_correctly_set_up_sway_has_no_failures_so_check_only_exits_zero() {
+        // Sway as it ships: a portal (xdg-desktop-portal-wlr) with no
+        // GlobalShortcuts, the key bound in Sway's config, no Hyprland or niri
+        // socket, every wlroots protocol, and a keyring.
+        let env = Env::from_pairs([
+            ("WAYLAND_DISPLAY", "wayland-1"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ("XDG_CURRENT_DESKTOP", "sway"),
+            ("SWAYSOCK", "/run/user/1000/sway-ipc.1000.42.sock"),
+            ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
+            ("HOME", "/home/tester"),
+        ]);
+        let fs = FakeFs::new().with_dir("/usr/share/applications", ["a.desktop"]);
+        let bus = FakeBus::new()
+            .with_name(checks::PORTAL_BUS_NAME)
+            .with_property(
+                checks::SECRET_SERVICE_BUS_NAME,
+                checks::DEFAULT_COLLECTION_PATH,
+                checks::COLLECTION_INTERFACE,
+                "Locked",
+                "false",
+            );
+        let socket = SocketPath::in_dir("/run/user/1000");
+        let mut inputs = inputs(&env, &fs, &bus, &socket, true);
+        inputs.wayland = Some(checks::WaylandFindings {
+            family: compass_wayland::compositor::Family::Wlroots,
+            capabilities: compass_wayland::compositor::Capabilities {
+                layer_shell: true,
+                toplevel_management: true,
+                toplevel_list: true,
+                data_control: true,
+                hotkey: false,
+                virtual_keyboard: true,
+                shortcuts_inhibit: true,
+            },
+            compositor_ipc: None,
+        });
+        let report = run(&inputs).await;
+        let failures: Vec<_> = report
+            .checks
+            .iter()
+            .filter(|c| c.status == DoctorStatus::Fail)
+            .collect();
+        assert!(failures.is_empty(), "{failures:#?}");
+        assert!(!report.has_failures(), "--check-only exits 0");
+        let shortcuts = report
+            .checks
+            .iter()
+            .find(|c| c.name == "portal.global-shortcuts")
+            .unwrap();
+        assert_eq!(shortcuts.status, DoctorStatus::Ok);
+        let text = format!("{report:?}");
+        for jargon in ["Phase 5", "C++", "PLAN.md", "#118", "#153", "--engine"] {
+            assert!(!text.contains(jargon), "{jargon} in the report");
+        }
+    }
+
+    #[tokio::test]
     async fn a_barren_machine_reports_failures_not_a_clean_bill() {
         let (env, fs, bus, socket) = barren();
         let report = run(&inputs(&env, &fs, &bus, &socket, false)).await;
@@ -326,7 +434,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), count, "duplicate check names");
-        assert_eq!(count, 15);
+        assert_eq!(count, 18);
         assert!(
             report
                 .checks

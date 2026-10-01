@@ -34,7 +34,7 @@ pub struct InputServerFacts {
 /// The remedy for a helper without the capability.
 fn setcap(helper: &Path) -> String {
     format!(
-        "grant it the capability the C++ helper gets at install: \
+        "grant it the capability a package normally gives it at install: \
          `sudo setcap cap_dac_override+ep {}` (NixOS: the compass input-server module's \
          security.wrappers, then point COMPASS_INPUT_SERVER_BIN at /run/wrappers/bin/compass-input-server)",
         helper.display()

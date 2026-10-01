@@ -1,8 +1,8 @@
 {
   "$defs": {
     "AppearanceConfig": {
-      "additionalProperties": true,
-      "description": "The `launcher.appearance` section: colour mode and row presentation, not behavior.",
+      "additionalProperties": false,
+      "description": "The `launcher.appearance` section: the color scheme, the theme and how results look.",
       "properties": {
         "color_scheme": {
           "default": "system",
@@ -68,7 +68,8 @@
       "type": "object"
     },
     "ClockConfig": {
-      "description": "The `launcher.clock` section (the C++ `launcher_window.clock`).",
+      "additionalProperties": false,
+      "description": "The `launcher.clock` section: the clock in the search's status bar.",
       "properties": {
         "enabled": {
           "default": true,
@@ -79,7 +80,7 @@
           ]
         },
         "format": {
-          "description": "A Qt date-time format, e.g. `hh:mm:ss`; `hh:mm` when unset.",
+          "description": "How the time is written: `hh:mm` (the default), `hh:mm:ss`, or `h:mm ap` for a 12-hour\nclock.",
           "examples": [
             "hh:mm:ss",
             "ddd hh:mm"
@@ -103,7 +104,7 @@
       "type": "object"
     },
     "ExtensionsConfig": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "description": "The `extensions` section.",
       "properties": {
         "auto_update": {
@@ -128,8 +129,8 @@
       "type": "object"
     },
     "GlobalShortcutsConfig": {
-      "additionalProperties": true,
-      "description": "The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose\n`toggle` is [`LauncherConfig::hotkey`] here).",
+      "additionalProperties": false,
+      "description": "The `global_shortcuts` section. The launcher's own key is `launcher.hotkey`.",
       "properties": {
         "inhibit_apps": {
           "default": [],
@@ -151,7 +152,7 @@
       "type": "object"
     },
     "InputServerConfig": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "description": "The `input_server` section: the keyboard helper behind snippet keyword\nexpansion (`compass-input-server`).",
       "properties": {
         "enabled": {
@@ -166,12 +167,12 @@
       "type": "object"
     },
     "LauncherConfig": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "description": "The `launcher` section.",
       "properties": {
         "appearance": {
           "$ref": "#/$defs/AppearanceConfig",
-          "description": "Colour mode and row presentation."
+          "description": "The color scheme, the theme and how results look."
         },
         "check_for_updates": {
           "default": true,
@@ -228,6 +229,14 @@
             "null"
           ]
         },
+        "pop_to_root_on_close": {
+          "default": false,
+          "description": "Whether hiding the launcher clears the search, so it always opens empty.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "quick_launch": {
           "default": true,
           "description": "Whether Ctrl+1..9 launches the first through ninth result.",
@@ -248,7 +257,7 @@
       "type": "object"
     },
     "RootEntrypointSettings": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "description": "Per-entrypoint root search settings, keyed by entrypoint id under its provider.",
       "properties": {
         "alias": {
@@ -265,6 +274,14 @@
             "null"
           ]
         },
+        "preferences": {
+          "additionalProperties": true,
+          "description": "The command's own preferences, by name.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "shortcut": {
           "description": "A hotkey that runs the entrypoint directly, e.g. `ctrl+shift+c`.",
           "type": [
@@ -276,7 +293,7 @@
       "type": "object"
     },
     "RootProviderSettings": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "description": "Per-provider root search settings, keyed by provider id (e.g. `applications`).",
       "properties": {
         "enabled": {
@@ -295,12 +312,20 @@
             "object",
             "null"
           ]
+        },
+        "preferences": {
+          "additionalProperties": true,
+          "description": "The provider's preferences, by name.",
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
       "type": "object"
     },
     "TrayConfig": {
-      "additionalProperties": true,
+      "additionalProperties": false,
       "description": "The `tray` section: Compass's own icon in the desktop's tray\n(`config::Tray`).",
       "properties": {
         "enabled": {
@@ -317,7 +342,7 @@
   },
   "$id": "https://raw.githubusercontent.com/tuna-os/compass/main/packaging/schema/compass.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": true,
+  "additionalProperties": false,
   "description": "A parsed `compass.json`.\n\n[`Config::default`] is the fully-defaulted configuration and is what an empty file produces.",
   "properties": {
     "$schema": {
@@ -341,6 +366,14 @@
         "null"
       ]
     },
+    "favicon_service": {
+      "description": "Where website icons are fetched from: `twenty`, `google` or `none`.",
+      "examples": [
+        "twenty",
+        "google",
+        "none"
+      ]
+    },
     "favorites": {
       "description": "Root items pinned to the top of the empty search, as `provider:entrypoint` ids.",
       "items": {
@@ -349,6 +382,16 @@
       "type": [
         "array",
         "null"
+      ]
+    },
+    "font": {
+      "description": "The interface font: `font.normal.family` names a family, and `auto` or `system` follow\nthe desktop.",
+      "examples": [
+        {
+          "normal": {
+            "family": "Inter"
+          }
+        }
       ]
     },
     "global_shortcuts": {

@@ -875,13 +875,17 @@ Declared differences:
 - **The C++ settings Compass has no reader for are not offered**, each listed with its reason at
   the foot of its page (`settings_catalog::NOT_IN_COMPASS`), rather than written to a file that
   would then look as though it honoured them (the rule `config_migration` follows): Close on
-  Escape, Pop to root on close, Language, usage statistics, Font size, Icon Theme, Window material
+  Escape, Language, usage statistics, Font size, Icon Theme, Window material
   and opacity, Compact mode, Floating status bar, layer shell, client-side decorations and their
   rounding, border and shadow, native font rendering, Pop on backspace, Activate on single click,
   IME handling, Root file search, Favicon fetching, Encrypt sensitive data, and
   rebinding the launcher's keys (the Keybindings page lists the fixed ones).
 - **Settings only Compass has are offered beside them**: quick launch, the result count, the clock,
   the colour scheme, the layout preset, application icons and translucency.
+- **Clear the search on close** (`launcher.pop_to_root_on_close`, Vicinae's `pop_to_root_on_close`,
+  off by default as in v0.29.0) clears the search text when the launcher hides. A view opened from
+  the search closes on hide whatever it says; in Vicinae, with the setting off, the view stays open
+  for the next summon.
 - The launcher hotkey and Close on focus loss are written to `launcher.hotkey` and
   `launcher.close_on_focus_loss`, the schema's keys; the engine binds the hotkey from the file and
   rebinds it when it changes, and the window hides on focus loss when the switch is on ("The gaps
@@ -1012,27 +1016,32 @@ cannot be read, and finishing writes `{"version":1,"completedAt":"…"}` there, 
 so a person who finished it under either engine is not asked again. The steps are the QML's on
 Linux: "Welcome to Vicinae", "Make it your own" (the theme, kept as Set Theme keeps it, and the
 global hotkey row) and "Setup complete" (GitHub and Sponsor), with Back, the step dots (a click
-jumps), Continue and Finish; Enter continues and Escape closes without recording, so the next start
-asks again. **Difference:** Escape goes back a step and closes only from the first, and Tab and
-Shift+Tab walk each step's controls (the theme dropdown, Open Docs, each Install, GitHub, Back,
-Continue) with Space or Enter to press, as in Settings; the QML flow is mouse-first. `compass` passes the state file to the window when the flow is due
-(`AppFlags::onboarding`), and the window opens on it at start even when started hidden, as the C++
-shows its window at server start. `COMPASS_NO_ONBOARDING` is the C++'s `ENABLE_ONBOARDING=OFF`, and
-the VM tier, the sway harness and the session bench set it.
+jumps), Continue and Finish; Enter continues. **Difference:** Escape goes back a step and closes
+only from the first, and Tab and Shift+Tab walk each step's controls (the theme dropdown, Open Docs,
+each Install, GitHub, Back, Continue) with Space or Enter to press, as in Settings; the QML flow is
+mouse-first. `compass` passes the state file to the window when the flow is due
+(`AppFlags::onboarding`). `COMPASS_NO_ONBOARDING` is the C++'s `ENABLE_ONBOARDING=OFF`, and the VM
+tier, the sway harness and the session bench set it.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `ui/qml`, `ui/quick`, `ui/windows` | — (onboarding is closed; the settings window keeps each amber) | `compass_core::onboarding` (`should_show`, `mark_completed`, `Flow`), `compass_ui::onboarding_page`, `compass_ui::app::onboarding`, `compass::onboarding_due` | `it_is_due_until_the_current_version_is_recorded`, `the_cpps_own_file_is_read`, `linux_has_four_steps_and_continue_finishes_on_the_last`, `the_recommendations_are_installable_store_extensions`, `suite_1_shows_every_recommendation_rendering`, `an_unreachable_store_is_reported_and_can_be_retried`, `every_onboarding_button_does_what_it_says`, `every_onboarding_step_paints_its_heading_and_buttons` (paint), `the_permissions_step_is_macos_only`, `the_switch_reads_like_a_boolean_environment_variable`, `a_due_onboarding_opens_the_window_even_when_started_hidden`, `finishing_the_onboarding_records_it_and_hides`, `escape_closes_the_onboarding_without_recording_it`, `every_onboarding_step_draws_its_heading_and_buttons` |
+| `ui/qml`, `ui/quick`, `ui/windows` | — (onboarding is closed; the settings window keeps each amber) | `compass_core::onboarding` (`should_show`, `mark_completed`, `came_from_vicinae`, `Flow`), `compass_ui::onboarding_page`, `compass_ui::app::onboarding`, `compass::onboarding_due` | `it_is_due_until_the_current_version_is_recorded`, `the_cpps_own_file_is_read`, `linux_has_four_steps_and_continue_finishes_on_the_last`, `the_recommendations_are_installable_store_extensions`, `suite_1_shows_every_recommendation_rendering`, `an_unreachable_store_is_reported_and_can_be_retried`, `every_onboarding_button_does_what_it_says`, `every_onboarding_step_paints_its_heading_and_buttons` (paint), `the_permissions_step_is_macos_only`, `the_switch_reads_like_a_boolean_environment_variable`, `a_due_onboarding_started_hidden_waits_for_the_first_summon`, `finishing_the_onboarding_records_it_and_hides`, `escape_closes_the_onboarding_and_records_it_as_seen`, `a_home_carried_over_from_vicinae_is_recognised`, `every_onboarding_step_draws_its_heading_and_buttons` |
 
 Declared differences:
 
+- **Started hidden, the flow waits for the first summon.** The C++ opens its window at server start;
+  `compass start --hidden` runs at login, where a window nobody asked for is in the way.
+- **Closing the flow counts as having seen it.** The C++ records only Finish, so closing its window
+  shows the flow again at every start; here Escape or the hotkey record it too. Finish leaves the
+  launcher open at its search rather than hiding.
+- **A home carried over from Vicinae skips the flow**: its `vicinae` directory (or the symlink the
+  move leaves) or Vicinae's `settings.json` means the launcher is already set up.
 - The flow is drawn in the launcher's card rather than a 700×480 window of its own: the launcher has
-  one surface, and a second toplevel would be a second window for the compositor to place. Finishing
-  hides the card, as finishing hides the C++'s window.
-- The global hotkey row takes the C++'s branch for a platform without global shortcuts ("Bind a key
-  to "compass toggle"" and Open Docs): the window cannot know whether the engine found a backend,
-  and the hotkey is changed from Settings, General (`launcher.hotkey`, bound as it changes since
-  "The gaps pass, global shortcuts"). The last step's sentence follows.
+  one surface, and a second toplevel would be a second window for the compositor to place.
+- The global hotkey row and the last step say how to open the launcher on this desktop: on Sway,
+  Hyprland and niri the line for the compositor's configuration, elsewhere the hotkey with
+  `compass toggle` as the fallback, and inside the Flatpak `flatpak run org.tunaos.compass toggle`
+  (`compass_core::hotkey_guide`).
 - The macOS permissions step and Launch at login are not offered, as on the C++'s Linux build.
 - An "Add extensions" step before the last recommends `compass_core::onboarding::RECOMMENDED_EXTENSIONS`
   (store extensions Suite 1 shows rendering) with an Install button each, through the store's own

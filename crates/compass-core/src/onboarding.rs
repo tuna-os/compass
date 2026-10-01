@@ -62,6 +62,24 @@ pub fn should_show(path: &Path, disabled: bool) -> bool {
     !disabled && completed_version(path) < VERSION
 }
 
+/// Whether `config_home` holds a Vicinae setup that Compass carried over:
+/// the `vicinae` directory (or the symlink the move leaves behind), or
+/// Vicinae's `settings.json` in Compass's directory.
+///
+/// Someone coming from Vicinae already has a launcher set up the way they
+/// like it, so the first-run flow is not shown to them.
+#[must_use]
+pub fn came_from_vicinae(config_home: &Path) -> bool {
+    config_home
+        .join(compass_xdg::brand::LEGACY_DIR_NAME)
+        .symlink_metadata()
+        .is_ok()
+        || config_home
+            .join(compass_xdg::brand::DIR_NAME)
+            .join("settings.json")
+            .is_file()
+}
+
 /// Whether [`DISABLE_ENV`]'s value turns the flow off.
 #[must_use]
 pub fn disabled_by(value: Option<&std::ffi::OsStr>) -> bool {
@@ -127,10 +145,8 @@ impl Step {
             Self::Extensions => {
                 "A few to start with. Find more in the Extension Store at any time."
             }
-            Self::Complete if shortcuts => "Compass is running. Open the launcher with:",
-            Self::Complete => {
-                "Compass is running. Bind a key to \"compass toggle\" to open it from anywhere."
-            }
+            Self::Complete if shortcuts => "Compass is ready. Open the launcher with:",
+            Self::Complete => "Compass is ready. Finish opens the launcher.",
         }
     }
 }
@@ -443,6 +459,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_home_carried_over_from_vicinae_is_recognised() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!came_from_vicinae(dir.path()), "a fresh home");
+        std::fs::create_dir_all(dir.path().join("compass")).unwrap();
+        std::fs::write(dir.path().join("compass/compass.json"), "{}").unwrap();
+        assert!(
+            !came_from_vicinae(dir.path()),
+            "Compass's own file is not Vicinae's"
+        );
+        std::fs::write(dir.path().join("compass/settings.json"), "{}").unwrap();
+        assert!(came_from_vicinae(dir.path()));
+        let other = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(other.path().join("vicinae")).unwrap();
+        assert!(came_from_vicinae(other.path()), "not moved yet");
+    }
+
+    #[test]
     fn it_is_due_until_the_current_version_is_recorded() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("compass").join(FILE_NAME);
@@ -525,11 +558,14 @@ mod tests {
     }
 
     #[test]
-    fn the_last_step_says_how_to_open_the_launcher() {
-        assert!(Step::Complete.subtitle(false).contains("compass toggle"));
+    fn the_last_step_says_what_finish_does() {
+        assert_eq!(
+            Step::Complete.subtitle(false),
+            "Compass is ready. Finish opens the launcher."
+        );
         assert_eq!(
             Step::Complete.subtitle(true),
-            "Compass is running. Open the launcher with:"
+            "Compass is ready. Open the launcher with:"
         );
     }
 

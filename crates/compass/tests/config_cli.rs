@@ -50,7 +50,7 @@ fn migrate_writes_vicinae_json_and_leaves_the_cpp_file_alone() {
     );
     assert!(report.contains("tray.enabled -> tray.enabled"), "{report}");
     assert!(
-        report.contains("pop_to_root_on_close: no compass.json equivalent"),
+        report.contains("pop_to_root_on_close -> launcher.pop_to_root_on_close"),
         "{report}"
     );
 
@@ -200,6 +200,6 @@ fn migrate_without_settings_fails_clearly() {
     assert!(
         String::from_utf8(out.stderr)
             .unwrap()
-            .contains("no settings to migrate")
+            .contains("no Vicinae settings to migrate")
     );
 }

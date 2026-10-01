@@ -302,7 +302,7 @@ pub fn refusal(err: &ShellError, what: &str) -> ProtocolError {
 pub fn no_bus(what: &str) -> ProtocolError {
     ProtocolError::new(
         ErrorKind::Unsupported,
-        format!("{what} needs a session bus, and the engine has none"),
+        format!("{what} needs the D-Bus session bus, which Compass could not reach"),
     )
 }
 

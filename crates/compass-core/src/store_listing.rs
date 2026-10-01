@@ -48,8 +48,8 @@ impl Store {
     #[must_use]
     pub const fn placeholder(self) -> &'static str {
         match self {
-            Self::Vicinae => "Browse Vicinae extensions",
-            Self::Raycast => "Browse Raycast extensions",
+            Self::Vicinae => "Search the Vicinae Store",
+            Self::Raycast => "Search the Raycast Store",
         }
     }
 }

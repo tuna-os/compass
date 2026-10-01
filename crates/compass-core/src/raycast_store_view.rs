@@ -189,7 +189,7 @@ pub fn extension_load_failure(author_handle: &str, extension_name: &str) -> (Str
 /// The detail page's navigation title.
 #[must_use]
 pub fn detail_navigation_title(extension_title: &str) -> String {
-    format!("Extension Store - {extension_title}")
+    format!("Raycast Store - {extension_title}")
 }
 
 /// The navigation title before an extension has loaded.
