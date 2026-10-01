@@ -15061,8 +15061,9 @@ mod tests {
 
         assert_eq!(
             clipboard.changes.lock().unwrap().as_slice(),
-            ["pin 1 true", "pin 2 false", "remove 1"],
-            "the pin flips each entry's own state, and removal follows the reload's selection"
+            ["pin 1 true", "pin 2 false", "remove 2"],
+            "the pin flips each entry's own state, and the selection stays on its entry \
+             through each reload, so Ctrl+X removes the entry the person was on"
         );
         assert_eq!(
             clipboard.queries.lock().unwrap().len(),
