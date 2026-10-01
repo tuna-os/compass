@@ -52,6 +52,14 @@ flatpak run org.tunaos.compass -- doctor --check-only
 must stay committed: Flathub builds have no network access, so every dependency is declared up
 front.
 
+## The store icon
+
+`icons/{64x64,128x128}/org.tunaos.compass.png` are the PNGs `appstreamcli compose` renders from
+the SVG during the build. The TunaOS remote is an OCI remote, and Bazaar cannot find a `cached`
+icon on one, so the publish workflow adds `<icon type="remote">` URLs that point at these files.
+`scripts/flatpak/appstream-icons.py` explains this in more detail. The Flatpak workflow fails when
+the files stop matching the build, and its error says how to update them.
+
 ## Why each permission exists
 
 Flathub review asks for this, and "we needed it" is not a reason a reviewer can check. Do not add a

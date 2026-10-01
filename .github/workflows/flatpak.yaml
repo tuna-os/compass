@@ -276,6 +276,23 @@ jobs:
           flatpak build-bundle /tmp/repo /tmp/org.tunaos.compass.flatpak org.tunaos.compass
           ls -lh /tmp/org.tunaos.compass.flatpak
 
+      # What a software centre on the TunaOS remote is given, made the way
+      # publish-flatpak.yaml makes it: the composed AppStream has cached
+      # 64 and 128 PNGs, they are the PNGs committed under
+      # packaging/flatpak/icons/, the OCI image's icon labels are those PNGs,
+      # and its appdata label carries the remote icon URLs Bazaar needs.
+      # scripts/flatpak/appstream-icons.py says why each of those matters.
+      - name: The icon a software centre sees
+        env:
+          ICON_URL_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/packaging/flatpak/icons
+        run: |
+          python3 scripts/flatpak/appstream-icons.py check-build \
+            "$(flatpak info --user --show-location org.tunaos.compass)/files"
+          flatpak build-bundle --oci /tmp/repo /tmp/oci org.tunaos.compass
+          python3 scripts/flatpak/appstream-icons.py add-remote /tmp/oci --url-base "$ICON_URL_BASE"
+          python3 scripts/flatpak/appstream-icons.py check-oci /tmp/oci --url-base "$ICON_URL_BASE"
+          rm -rf /tmp/oci
+
       - name: Upload the bundle
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

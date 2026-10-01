@@ -60,6 +60,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_RUN: ${{ github.event.workflow_run.id }}
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
           INPUT_RUN: ${{ inputs.run-id }}
         run: |
           run="${EVENT_RUN:-$INPUT_RUN}"
@@ -69,8 +70,11 @@ jobs:
                      --json databaseId --jq '.[0].databaseId')"
           fi
           test -n "$run" || { echo "::error::no successful Flatpak run on main to publish"; exit 1; }
+          sha="${EVENT_SHA:-$(gh run view "$run" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)}"
+          test -n "$sha" || { echo "::error::could not tell which commit run $run built"; exit 1; }
           echo "id=$run" >> "$GITHUB_OUTPUT"
-          echo "publishing the bundle from run $run"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "publishing the bundle from run $run, built from $sha"
 
       # flatpak.yaml builds each architecture on its own native runner and
       # uploads its bundle: flatpak-bundle for x86_64, flatpak-bundle-aarch64
@@ -107,12 +111,23 @@ jobs:
       # Importing a bundle and exporting it again only moves ostree objects, so
       # the aarch64 one is handled on this x86_64 runner like the other: nothing
       # here executes the app.
+      #
+      # Those labels are not enough for Bazaar. It reads a cached icon only from
+      # icons/flatpak/<size>/, which an ostree remote's appstream has and an OCI
+      # remote's does not, so it needs a remote icon URL as well.
+      # scripts/flatpak/appstream-icons.py explains why, adds one that points at
+      # the PNGs committed in the commit that was built, and checks that the URL
+      # serves the same PNG as the label.
       - name: Export the OCI images
+        env:
+          ICON_URL_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ steps.run.outputs.sha }}/packaging/flatpak/icons
         run: |
           ostree --repo=repo init --mode=archive-z2
           for arch in $ARCHS; do
             flatpak build-import-bundle repo "bundle/$arch/$APP_ID.flatpak"
             flatpak build-bundle --oci --arch="$arch" repo "oci-$arch" "$APP_ID"
+            python3 scripts/flatpak/appstream-icons.py add-remote "oci-$arch" --url-base "$ICON_URL_BASE"
+            python3 scripts/flatpak/appstream-icons.py check-oci "oci-$arch" --url-base "$ICON_URL_BASE" --fetch
             python3 - "oci-$arch" "$arch" <<'PY'
           import json, pathlib, sys
           oci, arch = pathlib.Path(sys.argv[1]), sys.argv[2]
