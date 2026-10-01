@@ -3335,7 +3335,7 @@ impl LauncherApp {
                     };
                 }
                 if matches!(self.page, Page::Onboarding(_)) {
-                    return self.onboarding_key(key);
+                    return self.onboarding_key(key, modifiers);
                 }
                 if !panel_key && matches!(self.page, Page::StoreIntro(_)) {
                     return match key.as_ref() {
@@ -6923,8 +6923,86 @@ mod tests {
         let _ = app.update(Message::OnboardingBack);
         assert_eq!(app.onboarding_step(), Some(onboarding::Step::Extensions));
         let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
-        assert!(!app.showing_onboarding());
+        assert_eq!(
+            app.onboarding_step(),
+            Some(onboarding::Step::Personalize),
+            "Escape goes back a step"
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert_eq!(app.onboarding_step(), Some(onboarding::Step::Welcome));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.showing_onboarding(), "and closes from the first");
         assert!(!path.exists(), "the next start asks again");
+    }
+
+    #[test]
+    fn the_onboarding_is_worked_from_the_keyboard() {
+        use crate::onboarding_page::Control;
+        use compass_core::onboarding::Step;
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        let focused = |app: &LauncherApp| match &app.page {
+            Page::Onboarding(page) => page.focused,
+            _ => panic!("not the onboarding"),
+        };
+        let shift_tab = || {
+            Message::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(Named::Tab),
+                modified_key: iced::keyboard::Key::Named(Named::Tab),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::SHIFT,
+                text: None,
+                repeat: false,
+            })
+        };
+        let _ = app.update(pressed(Named::Tab));
+        assert_eq!(focused(&app), Some(Control::Continue));
+        let _ = app.update(pressed(Named::Space));
+        assert_eq!(app.onboarding_step(), Some(Step::Personalize));
+        assert_eq!(focused(&app), None, "a new step starts unfocused");
+
+        // The theme dropdown, from the keyboard.
+        let _ = app.update(pressed(Named::Tab));
+        assert_eq!(focused(&app), Some(Control::Theme));
+        let _ = app.update(pressed(Named::Enter));
+        let Page::Onboarding(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.menu, Some(0), "open at the current theme");
+        let _ = app.update(pressed(Named::ArrowDown));
+        let _ = app.update(pressed(Named::Enter));
+        assert_eq!(app.theme_choice, crate::theme::Theme::ALL[1]);
+        let _ = app.update(shift_tab());
+        assert_eq!(focused(&app), None, "Shift+Tab from the first control");
+
+        // Install is reached and pressed; Back and Continue close the walk.
+        let _ = app.update(pressed(Named::Enter));
+        assert_eq!(app.onboarding_step(), Some(Step::Extensions));
+        let _ = app.update(pressed(Named::Tab));
+        assert_eq!(focused(&app), Some(Control::Install(0)));
+        let _ = app.update(pressed(Named::Space));
+        let Page::Onboarding(page) = &app.page else {
+            unreachable!()
+        };
+        assert_ne!(
+            page.extensions.state(0),
+            Some(compass_core::onboarding::Install::Available),
+            "Install was pressed"
+        );
+        for _ in 0..10 {
+            if focused(&app) == Some(Control::Back) {
+                break;
+            }
+            let _ = app.update(pressed(Named::Tab));
+        }
+        assert_eq!(focused(&app), Some(Control::Back));
+        let _ = app.update(pressed(Named::Enter));
+        assert_eq!(app.onboarding_step(), Some(Step::Personalize));
     }
 
     #[test]

@@ -856,11 +856,34 @@ impl LauncherApp {
         current: &str,
         highlighted: usize,
     ) -> Element<'a, Message> {
+        let options = options
+            .into_iter()
+            .map(|(value, label)| {
+                let ticked = value.eq_ignore_ascii_case(current);
+                let pick = settings(SettingsMessage::Changed(
+                    key.to_owned(),
+                    serde_json::Value::String(value),
+                ));
+                (label, ticked, pick)
+            })
+            .collect();
+        container(self.choice_menu(options, highlighted))
+            .padding(Padding::new(4.0).left(12).right(12).bottom(8))
+            .into()
+    }
+
+    /// A dropdown's options opened from the keyboard, as `(label, whether it
+    /// is the current value, what clicking it sends)`: the highlighted one
+    /// in the selection's colours, and what the page scrolls to.
+    pub(super) fn choice_menu<'a>(
+        &self,
+        options: Vec<(String, bool, Message)>,
+        highlighted: usize,
+    ) -> Element<'a, Message> {
         let palette = self.palette();
         let mut list = column![].spacing(2);
-        for (index, (value, label)) in options.into_iter().enumerate() {
+        for (index, (label, ticked, pick)) in options.into_iter().enumerate() {
             let selected = index == highlighted;
-            let ticked = value.eq_ignore_ascii_case(current);
             let colour = if selected {
                 palette.selection_text
             } else {
@@ -890,19 +913,14 @@ impl LauncherApp {
                     },
                     ..iced::widget::container::Style::default()
                 });
-            let option = mouse_area(option).on_press(settings(SettingsMessage::Changed(
-                key.to_owned(),
-                serde_json::Value::String(value),
-            )));
+            let option = mouse_area(option).on_press(pick);
             list = list.push(if selected {
                 Element::from(container(option).id(crate::scroll::SETTINGS_FOCUS))
             } else {
                 option.into()
             });
         }
-        container(list)
-            .padding(Padding::new(4.0).left(12).right(12).bottom(8))
-            .into()
+        list.into()
     }
 
     /// A row the search matched: tinted with the accent, and the best one is

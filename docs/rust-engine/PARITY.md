@@ -1004,7 +1004,9 @@ so a person who finished it under either engine is not asked again. The steps ar
 Linux: "Welcome to Vicinae", "Make it your own" (the theme, kept as Set Theme keeps it, and the
 global hotkey row) and "Setup complete" (GitHub and Sponsor), with Back, the step dots (a click
 jumps), Continue and Finish; Enter continues and Escape closes without recording, so the next start
-asks again. `compass` passes the state file to the window when the flow is due
+asks again. **Difference:** Escape goes back a step and closes only from the first, and Tab and
+Shift+Tab walk each step's controls (the theme dropdown, Open Docs, each Install, GitHub, Back,
+Continue) with Space or Enter to press, as in Settings; the QML flow is mouse-first. `compass` passes the state file to the window when the flow is due
 (`AppFlags::onboarding`), and the window opens on it at start even when started hidden, as the C++
 shows its window at server start. `COMPASS_NO_ONBOARDING` is the C++'s `ENABLE_ONBOARDING=OFF`, and
 the VM tier, the sway harness and the session bench set it.

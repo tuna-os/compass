@@ -1,6 +1,7 @@
 //! The first-run flow in the launcher: `OnboardingWindow.qml`'s Linux steps
 //! (welcome, "Make it your own", "Setup complete") with Back, Continue and the
-//! step dots, Enter to continue and Escape to close, and Compass's own "Add
+//! step dots, Enter to continue and Escape to go back (closing from the
+//! first step), Tab through each step's controls, and Compass's own "Add
 //! extensions" step before the last, which installs through the same backend
 //! call as the store's detail page.
 //!
@@ -8,12 +9,12 @@
 //! `OnboardingWindow::finish`; closing does not record it, so the next start
 //! shows it again, as closing the C++'s window does.
 
-use iced::keyboard::{Key, key::Named};
+use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::widget::{Space, button, column, container, pick_list, row, text};
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::{LauncherApp, Message, Page, Task};
-use crate::onboarding_page::{OnboardingPage, ThemeOption};
+use crate::onboarding_page::{Control, OnboardingPage, ThemeOption};
 use compass_core::onboarding::{self, Advance, Step};
 
 const COMPASS_LOGO: &[u8] = include_bytes!("../../../../extra/compass.svg");
@@ -52,11 +53,72 @@ impl LauncherApp {
         }
     }
 
-    /// The flow's keys: Enter continues, Escape closes it.
-    pub(super) fn onboarding_key(&mut self, key: &Key) -> Task<Message> {
+    /// The flow's keys, as Settings has them: Tab and Shift+Tab walk the
+    /// step's controls, then Back and Continue; Space or Enter presses the
+    /// one with the keyboard or opens the theme dropdown, whose themes the
+    /// arrows then move through. With no control focused Enter continues.
+    /// Escape closes the dropdown, else goes back a step, and closes the
+    /// flow only from its first step.
+    pub(super) fn onboarding_key(&mut self, key: &Key, modifiers: Modifiers) -> Task<Message> {
+        let Page::Onboarding(page) = &mut self.page else {
+            return Task::none();
+        };
+        let activate = matches!(key.as_ref(), Key::Named(Named::Enter | Named::Space));
+        if let Some(at) = page.menu {
+            return match key.as_ref() {
+                Key::Named(Named::ArrowDown) => {
+                    page.menu = Some(crate::focus::move_highlight(page.themes.len(), at, 1));
+                    Task::none()
+                }
+                Key::Named(Named::ArrowUp) => {
+                    page.menu = Some(crate::focus::move_highlight(page.themes.len(), at, -1));
+                    Task::none()
+                }
+                Key::Named(Named::Escape) => {
+                    page.menu = None;
+                    Task::none()
+                }
+                _ if activate => match page.themes.get(at).copied() {
+                    Some(theme) => self.update(Message::OnboardingTheme(theme)),
+                    None => Task::none(),
+                },
+                _ => Task::none(),
+            };
+        }
         match key.as_ref() {
-            Key::Named(Named::Enter) => self.update(Message::OnboardingContinue),
+            Key::Named(Named::Tab) => {
+                page.move_focus(!modifiers.shift());
+                Task::none()
+            }
+            Key::Named(Named::Escape) if page.flow.can_go_back() => {
+                self.update(Message::OnboardingBack)
+            }
             Key::Named(Named::Escape) => self.conceal(),
+            _ if activate => match page.focused {
+                Some(Control::Theme) => {
+                    let current = ThemeOption(self.theme_choice);
+                    page.menu = Some(
+                        page.themes
+                            .iter()
+                            .position(|theme| *theme == current)
+                            .unwrap_or(0),
+                    );
+                    Task::none()
+                }
+                Some(Control::OpenDocs) => {
+                    self.update(Message::OnboardingOpen(onboarding::HOTKEY_DOCS_URL))
+                }
+                Some(Control::GitHub) => {
+                    self.update(Message::OnboardingOpen(onboarding::GITHUB_URL))
+                }
+                Some(Control::Install(index)) => self.update(Message::OnboardingInstall(index)),
+                Some(Control::Back) => self.update(Message::OnboardingBack),
+                Some(Control::Continue) => self.update(Message::OnboardingContinue),
+                None if key.as_ref() == Key::Named(Named::Enter) => {
+                    self.update(Message::OnboardingContinue)
+                }
+                None => Task::none(),
+            },
             _ => Task::none(),
         }
     }
@@ -66,6 +128,12 @@ impl LauncherApp {
         let Page::Onboarding(page) = &mut self.page else {
             return Task::none();
         };
+        if matches!(
+            message,
+            Message::OnboardingContinue | Message::OnboardingBack | Message::OnboardingJump(_)
+        ) {
+            page.step_changed();
+        }
         match message {
             Message::OnboardingContinue => match page.flow.advance() {
                 Advance::Next => Task::none(),
@@ -92,6 +160,7 @@ impl LauncherApp {
             }
             Message::OnboardingTheme(ThemeOption(theme)) => {
                 page.notice = None;
+                page.menu = None;
                 let preview = self.update(Message::ThemePreview(theme));
                 let Some(backend) = self.backend.clone() else {
                     return preview;
@@ -194,6 +263,15 @@ impl LauncherApp {
                 .padding(crate::adwaita::CONTROL_PADDING)
                 .style(move |_: &Theme, status| crate::adwaita::button(palette, status))
         };
+        let ring = |control: Control, element: Element<'a, Message>| -> Element<'a, Message> {
+            crate::adwaita::ringed(
+                element,
+                palette,
+                page.focused == Some(control),
+                crate::adwaita::CONTROL_RADIUS,
+            )
+            .into()
+        };
 
         let mut content = column![].spacing(8).align_x(Alignment::Center);
         if step == Step::Welcome {
@@ -212,28 +290,58 @@ impl LauncherApp {
                         small("Shared across the entire app."),
                     ]
                     .width(Length::Fill),
-                    pick_list(
-                        page.themes.as_slice(),
-                        Some(current),
-                        Message::OnboardingTheme
-                    )
-                    .text_size(13)
-                    .font(self.font())
-                    .padding(crate::adwaita::CONTROL_PADDING)
-                    .style(move |_: &Theme, status| crate::adwaita::dropdown(palette, status))
-                    .menu_style(move |_: &Theme| crate::design::dropdown_menu(palette))
-                    .width(Length::Fixed(200.0)),
+                    ring(
+                        Control::Theme,
+                        pick_list(
+                            page.themes.as_slice(),
+                            Some(current),
+                            Message::OnboardingTheme
+                        )
+                        .text_size(13)
+                        .font(self.font())
+                        .padding(crate::adwaita::CONTROL_PADDING)
+                        .style(move |_: &Theme, status| crate::adwaita::dropdown(palette, status))
+                        .menu_style(move |_: &Theme| crate::design::dropdown_menu(palette))
+                        .width(Length::Fixed(200.0))
+                        .into()
+                    ),
                 ]
                 .align_y(Alignment::Center);
+                let theme_row: Element<'a, Message> = match page.menu {
+                    Some(highlighted) => {
+                        let options = page
+                            .themes
+                            .iter()
+                            .map(|theme| {
+                                (
+                                    theme.to_string(),
+                                    *theme == current,
+                                    Message::OnboardingTheme(*theme),
+                                )
+                            })
+                            .collect();
+                        column![
+                            theme_row,
+                            container(self.choice_menu(options, highlighted))
+                                .padding(Padding::new(4.0).left(220))
+                        ]
+                        .into()
+                    }
+                    None => theme_row.into(),
+                };
                 let hotkey_row = row![
                     column![
                         text("Global hotkey").font(self.font()).size(14),
                         small("Bind a key to \"compass toggle\""),
                     ]
                     .width(Length::Fill),
-                    action(
-                        "Open Docs",
-                        Message::OnboardingOpen(onboarding::HOTKEY_DOCS_URL)
+                    ring(
+                        Control::OpenDocs,
+                        action(
+                            "Open Docs",
+                            Message::OnboardingOpen(onboarding::HOTKEY_DOCS_URL)
+                        )
+                        .into()
                     ),
                 ]
                 .align_y(Alignment::Center);
@@ -263,7 +371,7 @@ impl LauncherApp {
                                 small(recommendation.description),
                             ]
                             .width(Length::Fill),
-                            install,
+                            ring(Control::Install(index), install.into()),
                         ]
                         .align_y(Alignment::Center),
                     );
@@ -285,9 +393,10 @@ impl LauncherApp {
                     .push(Space::new().height(16))
                     .push(small("Compass is open source software."))
                     .push(
-                        row![action(
-                            "GitHub",
-                            Message::OnboardingOpen(onboarding::GITHUB_URL)
+                        row![ring(
+                            Control::GitHub,
+                            action("GitHub", Message::OnboardingOpen(onboarding::GITHUB_URL))
+                                .into()
                         )]
                         .spacing(8),
                     );
@@ -324,18 +433,24 @@ impl LauncherApp {
             );
         }
         let back: Element<'a, Message> = if page.flow.can_go_back() {
-            action("Back", Message::OnboardingBack).into()
+            ring(
+                Control::Back,
+                action("Back", Message::OnboardingBack).into(),
+            )
         } else {
             Space::new().into()
         };
         let footer = row![
             container(back).width(Length::Fill),
             dots,
-            container(
-                action(page.flow.primary_label(), Message::OnboardingContinue).style(
-                    move |_: &Theme, status| crate::adwaita::suggested_button(palette, status)
-                )
-            )
+            container(ring(
+                Control::Continue,
+                action(page.flow.primary_label(), Message::OnboardingContinue)
+                    .style(move |_: &Theme, status| {
+                        crate::adwaita::suggested_button(palette, status)
+                    })
+                    .into()
+            ))
             .width(Length::Fill)
             .align_x(Alignment::End),
         ]
