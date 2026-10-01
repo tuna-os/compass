@@ -220,8 +220,9 @@ fn on_sway_a_shortcut_expands_the_selected_text() {
     );
     // The holder has handed its source to the compositor, but the selection
     // is only offered once the compositor has processed it: read until it is.
+    // A URL template percent-encodes what it puts in (PARITY, Shortcuts 11).
     let want = Response::Text {
-        text: "https://example.com/?q=selected words&also=selected words".into(),
+        text: "https://example.com/?q=selected%20words&also=selected%20words".into(),
     };
     let deadline = std::time::Instant::now() + WAIT;
     let mut expanded = expand();

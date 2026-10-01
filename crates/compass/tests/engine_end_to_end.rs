@@ -3696,7 +3696,7 @@ fn shortcuts_are_imported_created_searched_opened_edited_and_removed() {
     }) else {
         panic!("not expanded");
     };
-    assert_eq!(text, "https://docs.rs/releases/search?query=serde json");
+    assert_eq!(text, "https://docs.rs/releases/search?query=serde%20json");
 
     assert_eq!(
         daemon.request(Request::OpenShortcut {
