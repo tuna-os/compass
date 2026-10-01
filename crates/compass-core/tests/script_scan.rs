@@ -610,3 +610,25 @@ fn the_stored_key_is_snake_case() {
     assert!(json.contains("inline_runs"), "{json}");
     assert!(json.contains("last_run_at"), "{json}");
 }
+
+#[test]
+fn rhai_scripts_beside_script_commands_are_left_to_the_rhai_tier() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("scripts");
+    std::fs::create_dir_all(root.join("web-search")).unwrap();
+    std::fs::write(root.join("web-search/script.toml"), "id = \"web\"\n").unwrap();
+    std::fs::write(root.join("web-search/main.rhai"), "fn x() {}\n").unwrap();
+    std::fs::write(
+        root.join("hello.sh"),
+        "#!/bin/bash\n# @compass.schemaVersion 1\n# @compass.title Hello\necho hi\n",
+    )
+    .unwrap();
+    let found = compass_core::script_scan::scan(&[root]);
+    assert_eq!(found.len(), 1, "only the script command");
+    assert_eq!(found[0].data.title, "Hello");
+    assert_eq!(
+        found[0].package_name(None),
+        "Script",
+        "not the scripts directory's name"
+    );
+}

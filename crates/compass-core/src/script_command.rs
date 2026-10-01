@@ -10,8 +10,10 @@
 //! # @raycast.mode compact
 //! ```
 //!
-//! Two scopes exist, `@raycast` and `@vicinae`, and a file may use one or the
-//! other but not both. Four comment markers are recognised — `//`, `--`, `#`
+//! Three scopes exist, `@compass`, `@vicinae` and `@raycast`. `@compass` is
+//! Compass's own spelling of `@vicinae` and takes the same keys, so a header
+//! may use those two together, but not either with `@raycast`. Four comment
+//! markers are recognised — `//`, `--`, `#`
 //! and `;` — because the header has to work in whatever language the script is
 //! written in.
 //!
@@ -195,8 +197,17 @@ pub struct ScriptCommand {
 /// checked first so that `--` is not read as one `-`.
 const COMMENT_MARKERS: &[&str] = &["//", "--", "#", ";"];
 
-/// The two scopes a key may be in.
-const SCOPES: &[&str] = &["@vicinae", "@raycast"];
+/// The scopes a key may be in.
+const SCOPES: &[&str] = &["@compass", "@vicinae", "@raycast"];
+
+/// The scope a key counts as for the mixing rule: `@compass` is `@vicinae`.
+fn family(scope: &str) -> &str {
+    if scope == "@compass" {
+        "@vicinae"
+    } else {
+        scope
+    }
+}
 
 /// Trims a single character from both ends, as the C++ `trim` does.
 fn trim_char(text: &str, c: char) -> &str {
@@ -320,18 +331,20 @@ impl ScriptCommand {
             };
 
             match &scope {
-                None => scope = Some(kv_scope.to_owned()),
-                Some(seen) if seen != kv_scope => {
+                None => scope = Some(family(kv_scope).to_owned()),
+                Some(seen) if seen != family(kv_scope) => {
                     return Err("Mixing @vicinae and @raycast keys is not allowed".to_owned());
                 }
                 Some(_) => {}
             }
 
             let vicinae_only = |field: &str| -> Result<(), String> {
-                if kv_scope == "@vicinae" {
+                if family(kv_scope) == "@vicinae" {
                     Ok(())
                 } else {
-                    Err(format!("{field} field is only supported in @vicinae scope"))
+                    Err(format!(
+                        "{field} field is only supported in @compass or @vicinae scope"
+                    ))
                 }
             };
 
@@ -392,6 +405,11 @@ impl ScriptCommand {
             }
         }
 
+        if data.schema_version.is_empty() {
+            return Err(
+                "No script command header: add a `@compass.schemaVersion 1` line".to_owned(),
+            );
+        }
         if data.schema_version != "1" {
             return Err("Invalid schema version, expected 1".to_owned());
         }
@@ -607,7 +625,7 @@ mod tests {
                 format!("# @raycast.schemaVersion 1\n# @raycast.title T\n# @raycast.{field} []\n");
             assert_eq!(
                 ScriptCommand::parse(&source).unwrap_err(),
-                format!("{field} field is only supported in @vicinae scope")
+                format!("{field} field is only supported in @compass or @vicinae scope")
             );
         }
     }
@@ -814,6 +832,35 @@ mod tests {
             OutputMode::default(),
             OutputMode::Full,
             "a script that names no mode gets full output"
+        );
+    }
+}
+
+#[cfg(test)]
+mod compass_scope_tests {
+    use super::*;
+
+    #[test]
+    fn the_compass_scope_is_accepted_with_every_vicinae_key() {
+        let parsed = ScriptCommand::parse(
+            "#!/bin/bash\n# @compass.schemaVersion 1\n# @compass.title Hello\n\
+             # @compass.keywords [\"hi\"]\n# @vicinae.mode compact\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.title, "Hello");
+        assert_eq!(parsed.keywords, ["hi"]);
+        assert_eq!(parsed.mode, OutputMode::Compact);
+    }
+
+    #[test]
+    fn compass_and_raycast_do_not_mix_and_no_header_says_so() {
+        assert_eq!(
+            ScriptCommand::parse("# @compass.schemaVersion 1\n# @raycast.title T\n").unwrap_err(),
+            "Mixing @vicinae and @raycast keys is not allowed"
+        );
+        assert_eq!(
+            ScriptCommand::parse("#!/bin/bash\necho hi\n").unwrap_err(),
+            "No script command header: add a `@compass.schemaVersion 1` line"
         );
     }
 }

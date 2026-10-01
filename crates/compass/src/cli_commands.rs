@@ -238,6 +238,16 @@ pub fn script(command: ScriptCommand) -> Result<ExitCode> {
                 bail!("Invalid output mode: {mode}\n\nSupported modes: {MODES}");
             };
             println!("{}", generate(&title, language, mode));
+            // On stderr, so `compass script template … > file` saves the
+            // script alone.
+            let dir = compass_core::xdg_dirs::data_home().map_or_else(
+                || "~/.local/share/compass/scripts".to_owned(),
+                |home| home.join("compass/scripts").display().to_string(),
+            );
+            eprintln!(
+                "Save this in {dir}, make it executable with `chmod +x`, and Compass lists it \
+                 in the search at once."
+            );
             Ok(ExitCode::from(EXIT_OK))
         }
         ScriptCommand::Check { file } => {
