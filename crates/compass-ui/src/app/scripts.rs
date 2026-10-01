@@ -202,7 +202,7 @@ impl LauncherApp {
             COPY_PATH => match self.selected_row()? {
                 RootRow::Script(index) => {
                     let path = self.app_index.scripts().get(index)?.path.clone();
-                    iced::clipboard::write(path)
+                    super::hud::copy_text(self.backend.clone(), path)
                 }
                 _ => return None,
             },

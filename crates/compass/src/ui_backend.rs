@@ -1292,6 +1292,15 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn copy_text(&self, text: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self.ask(Request::CopyText { text }, "Copying").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn paste_text(&self, text: String) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self.ask(Request::PasteText { text }, "Pasting").await? {

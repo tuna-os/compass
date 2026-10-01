@@ -252,9 +252,13 @@ impl LauncherApp {
             }
             COPY_DEEPLINK => {
                 let link = compass_core::root_items::deeplink(&id)?;
-                Task::batch([iced::clipboard::write(link), focus_search()])
+                self.panel = None;
+                return Some(self.copy_with_hud(link));
             }
-            COPY_ID => Task::batch([iced::clipboard::write(id), focus_search()]),
+            COPY_ID => {
+                self.panel = None;
+                return Some(self.copy_with_hud(id));
+            }
             RESET_RANKING => {
                 self.confirm = Some(Confirm {
                     title: "Are you sure?".to_owned(),

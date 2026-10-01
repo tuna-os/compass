@@ -8,7 +8,43 @@ use iced::{Alignment, Border, Color, Element, Length, Theme};
 use super::{Dismissal, LauncherApp, Message, Task};
 use crate::hud::{Hud, Step, TEXT_MAX_WIDTH};
 
+/// Puts `text` on the clipboard: the engine's, where there is an engine.
+///
+/// Not Iced's clipboard first, because its source lives on the window's
+/// Wayland connection and both iced_layershell and iced_winit drop it with
+/// the last surface: a copy that hides the launcher (most of them) was gone
+/// before anything could paste it. The engine keeps its source for as long
+/// as it runs. Where it cannot copy, [`Message::TextCopied`] falls back to
+/// Iced's, which holds while the window does.
+pub(super) fn copy_text(
+    backend: Option<std::sync::Arc<dyn crate::backend::ApplicationBackend>>,
+    text: String,
+) -> Task<Message> {
+    let Some(backend) = backend else {
+        return iced::clipboard::write(text);
+    };
+    Task::perform(
+        async move {
+            let result = backend.copy_text(text.clone()).await;
+            (text, result)
+        },
+        |(text, result)| Message::TextCopied { text, result },
+    )
+}
+
 impl LauncherApp {
+    /// The engine's answer to [`copy_text`]: nothing more to do, or copy
+    /// through the window where it could not.
+    pub(super) fn text_copied(text: String, result: Result<(), String>) -> Task<Message> {
+        match result {
+            Ok(()) => Task::none(),
+            Err(reason) => {
+                tracing::warn!(%reason, "the engine could not copy; copying through the window");
+                iced::clipboard::write(text)
+            }
+        }
+    }
+
     /// Hides the launcher and shows `hud`, as `showHud`: the window closes
     /// whether or not a HUD can be shown. A launcher that exits on dismissal
     /// has no process left to show one from.
@@ -19,7 +55,10 @@ impl LauncherApp {
 
     /// Clipboard write, then "Copied to clipboard", as `CopyToClipboardAction`.
     pub(super) fn copy_with_hud(&mut self, text: String) -> Task<Message> {
-        Task::batch([iced::clipboard::write(text), self.show_hud(Hud::copied())])
+        Task::batch([
+            copy_text(self.backend.clone(), text),
+            self.show_hud(Hud::copied()),
+        ])
     }
 
     /// The HUD without touching the launcher, for a message the engine sent

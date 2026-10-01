@@ -97,8 +97,10 @@ use serde::{Deserialize, Serialize};
 /// [`Request::ExtensionAlertRemember`]), which the engine's consent to run a
 /// host program for an extension is asked with, and those grants listed and
 /// revoked beside the Rhai scripts' ([`Request::ListScriptGrants`],
-/// [`Request::RevokeScriptGrant`]).
-pub const PROTOCOL_VERSION: u16 = 22;
+/// [`Request::RevokeScriptGrant`]); version 23, copying text on the engine's
+/// long-lived clipboard rather than the window's, which goes when the window
+/// hides ([`Request::CopyText`]).
+pub const PROTOCOL_VERSION: u16 = 23;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1050,6 +1052,17 @@ pub enum Request {
     ExtensionAlertRemember {
         /// From [`Response::ExtensionStarted`].
         session: u64,
+    },
+    /// Put `text` on the clipboard, and keep it there after the window hides
+    /// (`ClipboardService::copyText`). The window's own clipboard source goes
+    /// with its last surface, so a copy that hides the launcher has to be
+    /// owned by the engine: over data-control on wlroots, through the GNOME
+    /// Shell extension elsewhere. Answered with [`Response::Ack`]; refused
+    /// where the engine reaches no clipboard, and the window copies itself.
+    /// (v23.)
+    CopyText {
+        /// What to copy.
+        text: String,
     },
 }
 

@@ -508,7 +508,10 @@ impl LauncherApp {
             }
             Message::ShortcutExpanded(Ok(text)) => {
                 let hud = crate::hud::Hud::new("Copied to clipboard");
-                Task::batch([iced::clipboard::write(text), self.show_hud(hud)])
+                Task::batch([
+                    super::hud::copy_text(self.backend.clone(), text),
+                    self.show_hud(hud),
+                ])
             }
             Message::ShortcutExpanded(Err(reason)) => {
                 self.shortcut_notice(reason);

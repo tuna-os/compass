@@ -280,33 +280,33 @@ fails to compile until it says what it expects.
 |---|---|---|
 | Application › Open | hides; calls launcher.launched | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Private Window | hides; calls launcher.launched | `every_action_in_a_root_rows_panel_does_something` |
-| Application › Copy name | copies | `every_action_in_a_root_rows_panel_does_something` |
-| Application › Copy path | copies | `every_action_in_a_root_rows_panel_does_something` |
-| Application › Copy Deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Application › Copy name | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
+| Application › Copy path | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
+| Application › Copy Deeplink | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Reset ranking | asks to confirm; then calls engine.root_edits | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Add to favorites | calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Set alias | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Set Global Shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Open Preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
-| Application › Copy ID | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Application › Copy ID | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
 | Application › Disable item | asks to confirm; then calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Open command | opens Clipboard | `every_action_in_a_root_rows_panel_does_something` |
-| Builtin command › Copy Deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Builtin command › Copy Deeplink | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Reset ranking | asks to confirm; then calls engine.root_edits | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Remove from favorites | calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Set alias | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Set Global Shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Open Preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
-| Builtin command › Copy ID | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Builtin command › Copy ID | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
 | Builtin command › Disable item | asks to confirm; then calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Open command | hides; calls engine.given; calls engine.ran | `every_action_in_a_root_rows_panel_does_something` |
-| Extension command › Copy Deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Extension command › Copy Deeplink | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Reset ranking | asks to confirm; then calls engine.root_edits | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Add to favorites | calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Set alias | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Set Global Shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Open Preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
-| Extension command › Copy ID | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Extension command › Copy ID | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
 | Extension command › Disable item | asks to confirm; then calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Quicklink › Open shortcut | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
 | Quicklink › Open with... | opens OpenWith | `every_action_in_a_root_rows_panel_does_something` |
@@ -317,13 +317,13 @@ fails to compile until it says what it expects.
 | Script command › Run script | says "count.sh "; calls engine.script_runs | `every_action_in_a_root_rows_panel_does_something` |
 | Script command › Copy path to script | copies | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Open | hides; calls engine.given; calls engine.ran | `every_action_in_a_root_rows_panel_does_something` |
-| Rhai script › Copy Deeplink | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Rhai script › Copy Deeplink | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Reset ranking | asks to confirm; then calls engine.root_edits | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Add to favorites | calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Set alias | opens Preferences | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Set Global Shortcut | changes the panel | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Open Preferences | opens Settings | `every_action_in_a_root_rows_panel_does_something` |
-| Rhai script › Copy ID | copies | `every_action_in_a_root_rows_panel_does_something` |
+| Rhai script › Copy ID | HUD "Copied to clipboard"; hides; copies | `every_action_in_a_root_rows_panel_does_something` |
 | Rhai script › Disable item | asks to confirm; then calls engine.root_edits; changes root settings | `every_action_in_a_root_rows_panel_does_something` |
 | Calculator answer › (Ctrl+B) | no action panel | `every_action_in_a_root_rows_panel_does_something` |
 | Fallback › Open command | opens Files | `every_action_in_a_root_rows_panel_does_something` |

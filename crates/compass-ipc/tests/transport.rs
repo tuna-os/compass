@@ -132,6 +132,7 @@ async fn echo_handler(request: Request) -> Response {
         | Request::SetExtensionPreferences { .. }
         | Request::ExtensionAlertAnswer { .. }
         | Request::ExtensionAlertRemember { .. }
+        | Request::CopyText { .. }
         | Request::CloseExtension { .. }
         | Request::OpenFile { .. }
         | Request::OAuthRedirect { .. }

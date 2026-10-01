@@ -583,6 +583,23 @@ fn on_sway_a_paste_is_copied_and_pressed_into_the_focused_window() {
 }
 
 #[test]
+fn on_sway_the_engine_copies_text_and_keeps_it_without_a_window() {
+    let Some(sway) = Sway::start("on_sway_the_engine_copies_text") else {
+        return;
+    };
+    let _seat = support::seat_keyboard(&sway);
+    let engine = Engine::start(&sway, "sway");
+    assert_eq!(
+        engine.request(Request::CopyText {
+            text: "88.07 zoë".into()
+        }),
+        Response::Ack
+    );
+    // No launcher window ever existed: the source is the engine's own.
+    assert_eq!(clipboard_text(&sway), "88.07 zoë");
+}
+
+#[test]
 fn on_sway_a_terminal_is_pasted_into_with_ctrl_shift_v() {
     use compass_wayland::virtual_keyboard::{CONTROL_MASK, KEY_LEFTSHIFT, KEY_V, SHIFT_MASK};
     let Some(sway) = Sway::start("on_sway_a_terminal_is_pasted_into") else {

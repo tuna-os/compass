@@ -305,6 +305,14 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         })
     }
 
+    /// Puts `text` on a clipboard the engine owns, so it is still there once
+    /// the window hides. An error means the engine reaches no clipboard, and
+    /// the caller copies through the window's own.
+    fn copy_text(&self, text: String) -> BackendFuture<'_, ()> {
+        let _ = text;
+        Box::pin(async { Err("Copying needs the Compass engine".to_owned()) })
+    }
+
     /// Puts `text` on the clipboard and pastes it where the person was. An
     /// error means the engine cannot paste here, and the caller copies.
     fn paste_text(&self, text: String) -> BackendFuture<'_, ()> {

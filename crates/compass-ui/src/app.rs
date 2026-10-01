@@ -2344,7 +2344,7 @@ impl LauncherApp {
                     let copy = self.copy_calculation(
                         answer.question.clone(),
                         answer.answer.clone(),
-                        answer.answer.clone(),
+                        compass_core::calculator::copied_value(&answer.answer),
                     );
                     return Task::batch([copy, self.show_hud(calculator::answer_copied())]);
                 }
@@ -2667,17 +2667,23 @@ impl LauncherApp {
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
-                let task = match action.id.as_deref() {
+                match action.id.as_deref() {
                     Some(APP_OPEN) => {
                         self.panel = None;
-                        return self.update(Message::LaunchSelected);
+                        self.update(Message::LaunchSelected)
                     }
-                    Some(APP_COPY_NAME) => iced::clipboard::write(item.name().to_owned()),
+                    Some(APP_COPY_NAME) => {
+                        let name = item.name().to_owned();
+                        self.panel = None;
+                        self.copy_with_hud(name)
+                    }
                     Some(APP_COPY_PATH) => {
                         let Some(path) = item.path() else {
                             return Task::none();
                         };
-                        iced::clipboard::write(path.to_string_lossy().into_owned())
+                        let path = path.to_string_lossy().into_owned();
+                        self.panel = None;
+                        self.copy_with_hud(path)
                     }
                     Some(id) if id.starts_with(APP_DESKTOP_ACTION) => {
                         let action_id = &id[APP_DESKTOP_ACTION.len()..];
@@ -2697,12 +2703,10 @@ impl LauncherApp {
                             item.key().to_owned(),
                         );
                         self.panel = None;
-                        return task;
+                        task
                     }
-                    _ => return Task::none(),
-                };
-                self.panel = None;
-                Task::batch([task, focus_search()])
+                    _ => Task::none(),
+                }
             }
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
@@ -3039,6 +3043,7 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::TextCopied { text, result } => Self::text_copied(text, result),
             Message::ClipboardPasted(Err(reason)) => {
                 tracing::debug!(%reason, "paste refused; copying instead");
                 self.copy_selected_clipboard_entry()
@@ -3051,7 +3056,7 @@ impl LauncherApp {
                     Ok(text) => {
                         // Copy, then get out of the way: the user copied it
                         // to paste it somewhere else.
-                        let copy = iced::clipboard::write(text);
+                        let copy = hud::copy_text(self.backend.clone(), text);
                         let hud = crate::hud::Hud::new("Selection copied to clipboard");
                         Task::batch([copy, self.show_hud(hud)])
                     }
@@ -7214,7 +7219,11 @@ mod tests {
         assert_eq!(app.selected_row(), Some(RootRow::Calculator));
         let task = app.update(Message::LaunchSelected);
         let writes = settle(&mut app, task);
-        assert_eq!(writes, ["1.524 m"]);
+        assert_eq!(
+            writes,
+            ["1.524"],
+            "the value, as the C++ copies answer.text"
+        );
         let kept = backend.calculations.lock().unwrap().clone();
         assert_eq!(kept.len(), 1);
         assert_eq!(
@@ -7443,7 +7452,8 @@ mod tests {
                         Action::Clipboard(clipboard::Action::Write { contents, .. }) => {
                             Some(contents)
                         }
-                        Action::Widget(_) => None,
+                        // A copy that hides the launcher exits one with no engine.
+                        Action::Widget(_) | Action::Exit => None,
                         other => panic!("copy issued an unexpected action: {other:?}"),
                     }
                 })
@@ -7727,6 +7737,9 @@ mod tests {
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
+        /// Whether the engine copies text; what it copied.
+        copies: bool,
+        copied: std::sync::Mutex<Vec<String>>,
         remembered: std::sync::Mutex<Vec<()>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
@@ -8594,6 +8607,16 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened_shortcuts.lock().unwrap().push((id, arguments));
+                Ok(())
+            })
+        }
+
+        fn copy_text(&self, text: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if !self.copies {
+                    return Err("Copying needs a clipboard".to_owned());
+                }
+                self.copied.lock().unwrap().push(text);
                 Ok(())
             })
         }
@@ -15389,6 +15412,34 @@ mod tests {
             app.hud_content().map(|hud| hud.text.as_str()),
             Some("Force quit Files")
         );
+    }
+
+    #[test]
+    fn a_copy_goes_through_the_engine_and_through_the_window_only_where_it_cannot() {
+        let dir = tempfile::tempdir().unwrap();
+        for copies in [true, false] {
+            let backend = Arc::new(TestBackend {
+                copies,
+                ..TestBackend::default()
+            });
+            let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+            app.query = "5 ft to m".into();
+            app.search();
+            assert_eq!(app.selected_row(), Some(RootRow::Calculator));
+            app.backend = Some(backend.clone());
+            let task = app.update(Message::LaunchSelected);
+            let window_writes = settle(&mut app, task);
+            if copies {
+                assert_eq!(
+                    backend.copied.lock().unwrap().as_slice(),
+                    ["1.524"],
+                    "the engine's clipboard outlives the window; the value, not `1.524 m`"
+                );
+                assert!(window_writes.is_empty(), "{window_writes:?}");
+            } else {
+                assert_eq!(window_writes, ["1.524"], "the window's, as a fallback");
+            }
+        }
     }
 
     #[test]

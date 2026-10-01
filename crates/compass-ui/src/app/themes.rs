@@ -78,8 +78,8 @@ impl LauncherApp {
         self.panel = None;
         Some(match id {
             SET => self.keep_selected_theme(),
-            COPY_ID => iced::clipboard::write(theme.name().to_owned()),
-            COPY_PATH => iced::clipboard::write(theme.path()?.to_owned()),
+            COPY_ID => super::hud::copy_text(self.backend.clone(), theme.name().to_owned()),
+            COPY_PATH => super::hud::copy_text(self.backend.clone(), theme.path()?.to_owned()),
             _ => {
                 let path = theme.path()?.to_owned();
                 let backend = self.backend.clone()?;

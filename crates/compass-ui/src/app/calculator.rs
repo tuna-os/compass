@@ -125,7 +125,7 @@ impl LauncherApp {
         answer: String,
         copied: String,
     ) -> Task<Message> {
-        let copy = iced::clipboard::write(copied);
+        let copy = super::hud::copy_text(self.backend.clone(), copied);
         let Some(backend) = self.backend.clone() else {
             return copy;
         };
@@ -164,11 +164,12 @@ impl LauncherApp {
         match page.selected_row() {
             Some(CalcRow::Live(answer)) => {
                 let (question, answer) = (answer.question.clone(), answer.answer.clone());
-                let copy = self.copy_calculation(question, answer.clone(), answer);
+                let copied = compass_core::calculator::copied_value(&answer);
+                let copy = self.copy_calculation(question, answer, copied);
                 Task::batch([copy, self.show_hud(answer_copied())])
             }
             Some(CalcRow::Record(record)) => {
-                let answer = record.answer.clone();
+                let answer = compass_core::calculator::copied_value(&record.answer);
                 self.copy_with_hud(answer)
             }
             None => Task::none(),
