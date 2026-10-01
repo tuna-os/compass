@@ -75,7 +75,8 @@ impl Purpose {
     #[must_use]
     pub fn hint(self) -> &'static str {
         match self {
-            Self::Preferences | Self::Arguments => "Enter: save and run    Esc: back",
+            Self::Preferences => "Enter: save and run    Esc: back",
+            Self::Arguments => "Enter: run    Esc: back",
             Self::CommandPreferences
             | Self::GlyphKeywords
             | Self::ClipboardKeywords
@@ -109,6 +110,34 @@ pub struct PreferencesPage {
     /// Each text area's editor, by field position: it keeps the cursor and
     /// selection, and its text is mirrored into `values`.
     pub editors: std::collections::BTreeMap<usize, iced::widget::text_editor::Content>,
+    /// The field the keyboard is on, by position. Kept here rather than left
+    /// to Iced's focus because a checkbox and a dropdown cannot take Iced's
+    /// focus, and Tab has to reach them too.
+    pub focus: Option<usize>,
+    /// Whether the form has just opened and its first field still has to be
+    /// focused. The launcher focuses it after the update that opened it.
+    pub focus_pending: bool,
+}
+
+/// The widget id of the form's field at `index`, which focusing it targets.
+#[must_use]
+pub fn field_id(index: usize) -> iced::widget::Id {
+    iced::widget::Id::from(format!("form-field-{index}"))
+}
+
+/// An id no widget has: focusing it takes Iced's focus off every text field,
+/// for when the keyboard moves to a checkbox or a dropdown.
+pub const NO_FIELD: &str = "form-no-field";
+
+/// What a key does to the focused field that is not a text field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKey {
+    /// Space: tick or untick a checkbox, or the next dropdown option.
+    Toggle,
+    /// Down: the next dropdown option.
+    Next,
+    /// Up: the previous dropdown option.
+    Previous,
 }
 
 impl PreferencesPage {
@@ -167,7 +196,97 @@ impl PreferencesPage {
             values,
             notice: None,
             editors,
+            focus: None,
+            focus_pending: true,
         }
+    }
+
+    /// Whether the keyboard can stop on the field at `index`: everything the
+    /// form can edit.
+    fn focusable(&self, index: usize) -> bool {
+        self.fields.get(index).is_some_and(|field| {
+            !matches!(field.kind, PreferenceInputKind::Unsupported { .. })
+                && !matches!(self.values.get(index), Some(FieldValue::Kept(_)))
+        })
+    }
+
+    /// Whether the field at `index` is typed into, and so takes Iced's focus.
+    #[must_use]
+    pub fn is_text(&self, index: usize) -> bool {
+        self.fields.get(index).is_some_and(|field| {
+            matches!(
+                field.kind,
+                PreferenceInputKind::Text
+                    | PreferenceInputKind::Password
+                    | PreferenceInputKind::TextArea
+            )
+        })
+    }
+
+    /// Puts the keyboard on the first field it can stop on. Returns the
+    /// field, or `None` when the form has nothing to edit.
+    pub fn focus_first(&mut self) -> Option<usize> {
+        self.focus_pending = false;
+        self.focus = (0..self.fields.len()).find(|&index| self.focusable(index));
+        self.focus
+    }
+
+    /// Moves the keyboard to the next (or previous) field, wrapping round.
+    pub fn step_focus(&mut self, forward: bool) -> Option<usize> {
+        let order: Vec<usize> = (0..self.fields.len())
+            .filter(|&index| self.focusable(index))
+            .collect();
+        if order.is_empty() {
+            return None;
+        }
+        let at = self
+            .focus
+            .and_then(|focus| order.iter().position(|&index| index == focus));
+        let next = match (at, forward) {
+            (None, true) => 0,
+            (None, false) => order.len() - 1,
+            (Some(at), true) => (at + 1) % order.len(),
+            (Some(at), false) => (at + order.len() - 1) % order.len(),
+        };
+        self.focus = Some(order[next]);
+        self.focus
+    }
+
+    /// A key on the focused checkbox or dropdown. Returns whether it changed
+    /// the field; a text field, or a key the field does not take, changes
+    /// nothing.
+    pub fn field_key(&mut self, key: FieldKey) -> bool {
+        let Some(index) = self.focus else {
+            return false;
+        };
+        let (Some(field), Some(value)) = (self.fields.get(index), self.values.get_mut(index))
+        else {
+            return false;
+        };
+        match (&field.kind, value) {
+            (PreferenceInputKind::Checkbox { .. }, FieldValue::Checked(checked))
+                if key == FieldKey::Toggle =>
+            {
+                *checked = !*checked;
+            }
+            (PreferenceInputKind::Dropdown { options }, FieldValue::Choice(choice))
+                if !options.is_empty() =>
+            {
+                let at = choice
+                    .as_ref()
+                    .and_then(|value| options.iter().position(|(_, v)| v == value));
+                let next = match (at, key) {
+                    (None, FieldKey::Previous) => options.len() - 1,
+                    (None, _) => 0,
+                    (Some(at), FieldKey::Previous) => (at + options.len() - 1) % options.len(),
+                    (Some(at), _) => (at + 1) % options.len(),
+                };
+                *choice = Some(options[next].1.clone());
+            }
+            _ => return false,
+        }
+        self.notice = None;
+        true
     }
 
     /// Whether the form has a text area, where Enter is a newline and

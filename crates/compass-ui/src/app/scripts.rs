@@ -59,7 +59,7 @@ impl LauncherApp {
         self.panel = None;
         if let Some(form) = script_page::arguments_form(script) {
             self.page = Page::Preferences(Box::new(form));
-            return iced::widget::operation::focus_next();
+            return Task::none();
         }
         let id = script.id.clone();
         self.send_run_script(id, Vec::new())

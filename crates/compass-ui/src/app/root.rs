@@ -417,7 +417,7 @@ impl LauncherApp {
             root_view::alias_form_title(&title),
             vec![field],
         )));
-        iced::widget::operation::focus_next()
+        Task::none()
     }
 
     /// A root row's title, for the alias form's.

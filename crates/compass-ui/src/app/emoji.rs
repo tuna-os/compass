@@ -196,7 +196,7 @@ impl LauncherApp {
         };
         self.parked_emoji = Some(page);
         self.page = Page::Preferences(Box::new(form));
-        iced::widget::operation::focus_next()
+        Task::none()
     }
 
     /// Saves the keyword form and goes back to the picker. `None` when the

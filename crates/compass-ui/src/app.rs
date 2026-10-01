@@ -99,6 +99,18 @@ fn focus_search() -> Task<Message> {
     iced::widget::operation::focus(SEARCH_INPUT)
 }
 
+/// Gives Iced's focus to the form field the keyboard is on: the text field
+/// itself, or nothing for a checkbox or a dropdown, which the form draws as
+/// focused and drives from the key handler.
+fn form_focus(page: &crate::preferences_page::PreferencesPage) -> Task<Message> {
+    match page.focus {
+        Some(index) if page.is_text(index) => {
+            iced::widget::operation::focus(crate::preferences_page::field_id(index))
+        }
+        _ => iced::widget::operation::focus(crate::preferences_page::NO_FIELD),
+    }
+}
+
 /// Lifts keyboard events out of the runtime's event stream.
 ///
 /// A free function rather than a closure because [`iced::event::listen_with`]
@@ -2058,7 +2070,15 @@ impl LauncherApp {
         if matches!(message, Message::ExtensionFilesChosen { .. }) {
             self.choosing_files = false;
         }
-        let task = self.update_inner(message);
+        let mut task = self.update_inner(message);
+        // A form that has just opened puts the keyboard on its first field,
+        // whichever of the many paths opened it.
+        if let Page::Preferences(page) = &mut self.page
+            && page.focus_pending
+        {
+            page.focus_first();
+            task = Task::batch([task, form_focus(page)]);
+        }
         let recording = self.recording_shortcut();
         if recording != self.shortcuts_inhibited {
             self.shortcuts_inhibited = recording;
@@ -2722,11 +2742,15 @@ impl LauncherApp {
                 {
                     *slot = value;
                     page.notice = None;
+                    page.focus = Some(index);
                 }
                 Task::none()
             }
             Message::PreferenceTextEdited(index, action) => {
                 if let Page::Preferences(page) = &mut self.page {
+                    if action.is_edit() {
+                        page.focus = Some(index);
+                    }
                     page.edit_text_area(index, action);
                 }
                 Task::none()
@@ -3347,10 +3371,28 @@ impl LauncherApp {
                         }
                         Key::Named(Named::Enter) => self.update(Message::PreferencesSubmit),
                         Key::Named(Named::Escape) => self.update(Message::Back),
-                        Key::Named(Named::Tab) if modifiers.shift() => {
-                            iced::widget::operation::focus_previous()
+                        Key::Named(Named::Tab) => {
+                            let Page::Preferences(page) = &mut self.page else {
+                                return Task::none();
+                            };
+                            page.step_focus(!modifiers.shift());
+                            form_focus(page)
                         }
-                        Key::Named(Named::Tab) => iced::widget::operation::focus_next(),
+                        // A checkbox or a dropdown with the keyboard on it:
+                        // Space ticks or steps, the arrows step.
+                        _ if page.focus.is_some_and(|index| !page.is_text(index)) => {
+                            use crate::preferences_page::FieldKey;
+                            let field_key = match key.as_ref() {
+                                Key::Named(Named::Space) => FieldKey::Toggle,
+                                Key::Named(Named::ArrowDown) => FieldKey::Next,
+                                Key::Named(Named::ArrowUp) => FieldKey::Previous,
+                                _ => return Task::none(),
+                            };
+                            if let Page::Preferences(page) = &mut self.page {
+                                page.field_key(field_key);
+                            }
+                            Task::none()
+                        }
                         _ => Task::none(),
                     };
                 }
@@ -5512,6 +5554,27 @@ impl LauncherApp {
         .discard()
     }
 
+    /// A checkbox or dropdown in a form, ringed in the accent colour while the
+    /// keyboard is on it: neither takes Iced's focus, so neither draws one.
+    fn form_focus_ring<'a>(
+        &self,
+        focused: bool,
+        field: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let accent = self.palette().accent.to_iced();
+        container(field)
+            .padding(4)
+            .style(move |_: &Theme| container::Style {
+                border: Border {
+                    color: if focused { accent } else { Color::TRANSPARENT },
+                    width: 2.0,
+                    radius: 6.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     fn preferences_body<'a>(
         &'a self,
         page: &'a crate::preferences_page::PreferencesPage,
@@ -5556,6 +5619,7 @@ impl LauncherApp {
                     PreferenceInputKind::Text | PreferenceInputKind::Password,
                     FieldValue::Text(text),
                 ) => text_input(&field.placeholder, text)
+                    .id(crate::preferences_page::field_id(index))
                     .secure(matches!(field.kind, PreferenceInputKind::Password))
                     .font(self.font())
                     .on_input(move |text| Message::PreferenceEdited(index, FieldValue::Text(text)))
@@ -5565,14 +5629,16 @@ impl LauncherApp {
                     // every Enter submit twice.
                     .padding(8)
                     .into(),
-                (PreferenceInputKind::Checkbox { label }, FieldValue::Checked(checked)) => {
-                    iced::widget::checkbox(*checked)
-                        .label(label.clone())
-                        .on_toggle(move |checked| {
-                            Message::PreferenceEdited(index, FieldValue::Checked(checked))
-                        })
-                        .into()
-                }
+                (PreferenceInputKind::Checkbox { label }, FieldValue::Checked(checked)) => self
+                    .form_focus_ring(
+                        page.focus == Some(index),
+                        iced::widget::checkbox(*checked)
+                            .label(label.clone())
+                            .on_toggle(move |checked| {
+                                Message::PreferenceEdited(index, FieldValue::Checked(checked))
+                            })
+                            .into(),
+                    ),
                 (PreferenceInputKind::Dropdown { options }, FieldValue::Choice(choice)) => {
                     let titles: Vec<String> =
                         options.iter().map(|(title, _)| title.clone()).collect();
@@ -5583,17 +5649,21 @@ impl LauncherApp {
                             .map(|(title, _)| title.clone())
                     });
                     let options = options.clone();
-                    iced::widget::pick_list(titles, selected, move |title: String| {
-                        let value = options
-                            .iter()
-                            .find(|(t, _)| *t == title)
-                            .map(|(_, value)| value.clone());
-                        Message::PreferenceEdited(index, FieldValue::Choice(value))
-                    })
-                    .into()
+                    self.form_focus_ring(
+                        page.focus == Some(index),
+                        iced::widget::pick_list(titles, selected, move |title: String| {
+                            let value = options
+                                .iter()
+                                .find(|(t, _)| *t == title)
+                                .map(|(_, value)| value.clone());
+                            Message::PreferenceEdited(index, FieldValue::Choice(value))
+                        })
+                        .into(),
+                    )
                 }
                 (PreferenceInputKind::TextArea, _) => match page.editors.get(&index) {
                     Some(editor) => iced::widget::text_editor(editor)
+                        .id(crate::preferences_page::field_id(index))
                         .placeholder(field.placeholder.as_str())
                         .font(self.font())
                         .height(Length::Fixed(120.0))
@@ -12342,6 +12412,87 @@ mod tests {
         for task in tasks {
             settle(app, task);
         }
+    }
+
+    #[test]
+    fn a_new_form_puts_the_keyboard_on_its_first_field_and_tab_reaches_the_checkbox() {
+        use crate::preferences_page::FieldValue;
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.query = "create snippet".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        let focusing = task_actions(task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        assert_eq!(page.focus, Some(0), "the name field, as the form opens");
+        assert!(!page.focus_pending);
+        assert!(focusing > 0, "and a focus operation went out with it");
+
+        let word = page
+            .fields
+            .iter()
+            .position(|f| f.name == crate::snippets_page::WORD_FIELD)
+            .unwrap();
+        let before = page.values[word].clone();
+        for _ in 0..word {
+            let _ = app.update(pressed(Named::Tab));
+        }
+        let Page::Preferences(page) = &app.page else {
+            panic!("left the form");
+        };
+        assert_eq!(page.focus, Some(word), "Tab reaches the checkbox");
+        let _ = app.update(pressed(Named::Space));
+        let Page::Preferences(page) = &app.page else {
+            panic!("left the form");
+        };
+        assert_ne!(page.values[word], before, "Space ticks it");
+        assert!(matches!(page.values[word], FieldValue::Checked(_)));
+        let _ = app.update(pressed(Named::Tab));
+        let Page::Preferences(page) = &app.page else {
+            panic!("left the form");
+        };
+        assert_eq!(page.focus, Some(0), "and Tab wraps round to the top");
+    }
+
+    #[test]
+    fn the_alias_and_arguments_forms_focus_their_field_and_say_what_enter_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let _ = app.update(Message::TogglePanel);
+        let alias = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Set alias"))
+            .expect("the panel offers an alias");
+        let _ = app.update(Message::PanelClicked(alias));
+        let Page::Preferences(page) = &app.page else {
+            panic!("no alias form: {}", app.state_line());
+        };
+        assert_eq!(page.focus, Some(0));
+        assert_eq!(
+            crate::preferences_page::Purpose::Arguments.hint(),
+            "Enter: run    Esc: back",
+            "arguments are this run's and are not saved"
+        );
+    }
+
+    /// How many actions other than messages a task carries: the widget
+    /// operations, such as focusing a field.
+    fn task_actions(task: Task<Message>) -> usize {
+        use iced::futures::{StreamExt, executor::block_on};
+        let Some(stream) = iced_winit::runtime::task::into_stream(task) else {
+            return 0;
+        };
+        block_on(stream.collect::<Vec<_>>())
+            .into_iter()
+            .filter(|action| matches!(action, iced_winit::runtime::Action::Widget(_)))
+            .count()
     }
 
     #[test]

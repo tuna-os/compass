@@ -83,7 +83,7 @@ impl LauncherApp {
             command.title.to_owned(),
             vec![field],
         )));
-        iced::widget::operation::focus_next()
+        Task::none()
     }
 
     /// Submits a media command's form. `None` when the form showing is not
