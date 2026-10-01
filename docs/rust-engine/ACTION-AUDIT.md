@@ -354,10 +354,13 @@ sidebar page, so a control is audited without anyone naming it.
 | General › SidebarSelected(9) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(10) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | General › SidebarSelected(12) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| General › Changed("launcher.check_for_updates", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| General › Changed("launcher.clock.enabled", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Appearance › Changed("launcher.appearance.theme", String("system")) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Appearance › Changed("launcher.appearance.color_scheme", String("system")) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Appearance › Changed("launcher.appearance.preset", String("gnome")) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Appearance › Changed("launcher.appearance.icons", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Appearance › Changed("launcher.appearance.tint", Bool(true)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Advanced › Changed("launcher.wrap_navigation", Bool(true)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Advanced › Changed("launcher.keybinding", String("default")) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Advanced › Changed("input_server.enabled", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
@@ -375,61 +378,84 @@ sidebar page, so a control is audited without anyone naming it.
 | Applications › Record(Item("applications:terminal")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Applications › ItemToggled("applications:terminal", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ProviderToggled("commands", false) | changes Settings; calls engine.providers_set; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:clipboard-history")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:clipboard-history", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.clipboard.preferences.monitoring", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.clipboard.preferences.evictionThreshold", String("never")) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.clipboard.preferences.preserveTagged", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.clipboard.preferences.eraseOnStartup", Bool(true)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.clipboard.preferences.ignorePasswords", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:switch-windows")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:switch-windows", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:toggle-fullscreen")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:toggle-floating")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:toggle-fullscreen", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:toggle-floating", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Changed("providers.core.entrypoints.search-emojis.preferences.skinTone", String("default")) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:toggle-overview")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:search-emojis")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:search-emojis", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.files.preferences.autoIndexing", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:manage-shortcuts")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:create-snippet")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Changed("providers.snippets.preferences.undo", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:set-theme")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:manage-shortcuts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:create-snippet", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.snippets.preferences.enabled", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:create-extension")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:set-theme", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:create-extension", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Changed("providers.power.entrypoints.reboot.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:sleep")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:sleep", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:raycast-store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:raycast-store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.power.entrypoints.power-off.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:reboot")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:reboot", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Changed("providers.power.entrypoints.sleep.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:lock")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:lock", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Changed("providers.power.entrypoints.logout.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:suspend")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:suspend", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:hibernate")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Changed("providers.power.entrypoints.hibernate.preferences.confirm", Bool(false)) | changes Settings; calls engine.settings_set | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:soft-reboot")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:soft-reboot", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:calculator-history")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:refresh-rates")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:refresh-rates", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:calculator-history", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:now-playing")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:play-pause")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:next-track")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:now-playing", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:play-pause", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:next-track", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:volume-100")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:previous-track")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:previous-track", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:volume-down")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:volume-75")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:volume-75", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:volume-25")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:volume-0")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:volume-25", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:volume-0", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:browse-apps")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:browse-apps", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:set-default-browser")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:search-tray")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:set-default-browser", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:search-tray", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:settings")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:manage-fallback")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:list-extensions")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:report-bug")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › Record(Item("commands:project-page")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:settings", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:manage-fallback", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:refresh-apps")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:refresh-apps", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:sponsor")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:sponsor", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:open-config-file")) | changes Settings | `every_control_in_the_settings_view_does_something` |
-| Commands › ItemToggled("commands:project-page", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:open-config-file", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:reload-scripts")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:reload-scripts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:search-builtin-icons")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:oauth-token-store")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:search-builtin-icons", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:oauth-token-store", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Commands › Record(Item("commands:inspect-local-storage")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Commands › ItemToggled("commands:inspect-local-storage", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:switch-workspaces")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:switch-workspaces", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
+| Commands › Record(Item("commands:browse-fonts")) | changes Settings | `every_control_in_the_settings_view_does_something` |
+| Commands › ItemToggled("commands:browse-fonts", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › ProviderToggled("shortcuts", false) | changes Settings; calls engine.providers_set; changes root settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › Record(Item("shortcuts:sct-docs")) | changes Settings | `every_control_in_the_settings_view_does_something` |
 | Shortcuts › ItemToggled("shortcuts:sct-docs", false) | changes Settings; calls engine.root_edits; changes root settings | `every_control_in_the_settings_view_does_something` |

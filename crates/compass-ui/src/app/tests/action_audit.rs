@@ -828,18 +828,29 @@ const OPTION_PROBE: f32 = 34.0;
 /// opened a list and is one more grid click when it did not.
 fn clickables(app: &LauncherApp) -> Vec<Message> {
     use iced::mouse::{Event as Mouse, ScrollDelta};
-    let mut ui = iced_test::simulator(app.view());
+    let mut messages = Vec::new();
     for pass in 0..SCROLL_PASSES {
+        let mut ui = iced_test::simulator(app.view());
         if pass > 0 {
             ui.point_at(iced::Point::new(600.0, 300.0));
             let _ = ui.simulate([iced::Event::Mouse(Mouse::WheelScrolled {
                 delta: ScrollDelta::Pixels {
                     x: 0.0,
-                    y: -SCROLL_STEP,
+                    y: -SCROLL_STEP * pass as f32,
                 },
             })]);
         }
         for y in (GRID_Y.0..GRID_Y.1).step_by(usize::from(GRID_Y.2)) {
+            // On the unscrolled pass, which holds every short page whole, each
+            // grid line gets a fresh simulator: state an earlier click left in
+            // a widget (a focused field, a list it opened) otherwise hid
+            // controls further down from the grid, so what the audit found
+            // shifted with the layout. Later passes only sample the long
+            // pages, and rebuilding there costs minutes for little.
+            if pass == 0 {
+                messages.extend(ui.into_messages());
+                ui = iced_test::simulator(app.view());
+            }
             for x in (GRID_X.0..GRID_X.1).step_by(usize::from(GRID_X.2)) {
                 let (x, y) = (f32::from(x), f32::from(y));
                 ui.point_at(iced::Point::new(x, y));
@@ -847,13 +858,21 @@ fn clickables(app: &LauncherApp) -> Vec<Message> {
                 ui.point_at(iced::Point::new(x, y + OPTION_PROBE));
                 let _ = ui.simulate(iced_test::simulator::click());
             }
+            // Close any list a click opened before the next line.
+            ui.point_at(EMPTY_CORNER);
+            let _ = ui.simulate(iced_test::simulator::click());
         }
+        messages.extend(ui.into_messages());
     }
     let mut seen = std::collections::BTreeSet::new();
-    ui.into_messages()
+    messages
+        .into_iter()
         .filter(|message| seen.insert(format!("{message:?}")))
         .collect()
 }
+
+/// A point inside the window but on no control: the card's top-left padding.
+const EMPTY_CORNER: iced::Point = iced::Point::new(4.0, 4.0);
 
 /// A fresh launcher with the settings open at sidebar `row`.
 fn settings_at(row: usize) -> World {
