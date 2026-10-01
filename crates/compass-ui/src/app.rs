@@ -1056,6 +1056,9 @@ pub struct LauncherApp {
     /// Where the up arrow has reached in the history; `None` until it is
     /// pressed, and again once something is typed.
     history_offset: Option<usize>,
+    /// What was typed when the up arrow first reached into history, for the
+    /// down arrow to put back.
+    history_draft: Option<String>,
     /// See [`AppFlags::clock`].
     clock: Option<ClockSettings>,
     /// The time the root search's status bar shows, once the clock ticked.
@@ -1431,6 +1434,7 @@ impl LauncherApp {
             search_history_path: None,
             search_history: compass_core::root_view::SearchHistory::default(),
             history_offset: None,
+            history_draft: None,
             clock: None,
             clock_text: None,
             clock_next_at: 0,
@@ -2241,6 +2245,7 @@ impl LauncherApp {
                 self.error = None;
                 // Typing starts history over from the newest search.
                 self.history_offset = None;
+                self.history_draft = None;
                 self.search_task()
             }
             Message::RootItemEdited(result) => self.root_item_edited(result),
@@ -3793,6 +3798,13 @@ impl LauncherApp {
                     _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                 };
                 if let Some(task) = self.history_up(up) {
+                    return task;
+                }
+                let down = match key.as_ref() {
+                    Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                    _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                };
+                if let Some(task) = self.history_down(down) {
                     return task;
                 }
 
@@ -11299,6 +11311,13 @@ mod tests {
         assert_eq!(app.query, "term");
         let stored = compass_core::root_view::SearchHistory::load_file(&history);
         assert_eq!(stored.queries(), ["term"]);
+
+        // A query being typed is not lost to the up arrow: down brings it back.
+        let _ = app.update(Message::QueryChanged("zzz".into()));
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(app.query, "term");
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(app.query, "zzz", "{}", app.state_line());
     }
 
     const FAVORITES_HEADING_FOR_TESTS: &str = "Favorites";

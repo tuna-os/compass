@@ -4,8 +4,8 @@
 
 use compass_core::root_view::{
     ClockState, SpaceOutcome, alias_form_initial_value, alias_form_title, alias_submit_outcome,
-    clock_state, history_entry_at, next_clock_tick_secs, next_history_offset, on_action_executed,
-    space_outcome, text_change_resets_history, up_cycles_history,
+    clock_state, history_entry_at, newer_history_entry, next_clock_tick_secs, next_history_offset,
+    on_action_executed, space_outcome, text_change_resets_history, up_cycles_history,
 };
 
 fn hist(items: &[&str]) -> Vec<String> {
@@ -194,6 +194,25 @@ fn each_later_press_goes_one_further_back() {
 fn history_returns_the_entry_at_the_offset() {
     let h = hist(&["slack", "figma", "terminal"]);
     assert_eq!(history_entry_at(&h, 1, ""), Some((1, "figma".to_owned())));
+}
+
+#[test]
+fn down_walks_back_towards_the_newest_and_then_past_it() {
+    let h = hist(&["slack", "figma", "figma", "terminal"]);
+    assert_eq!(
+        newer_history_entry(&h, 3, "terminal"),
+        Some((2, "figma".to_owned()))
+    );
+    assert_eq!(
+        newer_history_entry(&h, 2, "figma"),
+        Some((0, "slack".to_owned())),
+        "a run equal to what is shown is skipped"
+    );
+    assert_eq!(
+        newer_history_entry(&h, 0, "slack"),
+        None,
+        "past the newest: what was being typed comes back"
+    );
 }
 
 #[test]

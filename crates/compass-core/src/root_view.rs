@@ -159,6 +159,23 @@ pub fn history_entry_at(
     }
 }
 
+/// Walk forward through history, towards the newest search, from `offset`:
+/// the down arrow undoing the up arrow's steps. Entries equal to what is
+/// already there are skipped, as [`history_entry_at`] skips them. `None`
+/// once past the newest, where the caller puts back what was being typed
+/// before the up arrow first reached into history.
+#[must_use]
+pub fn newer_history_entry(
+    history: &[String],
+    offset: usize,
+    current_text: &str,
+) -> Option<(usize, String)> {
+    (0..offset.min(history.len()))
+        .rev()
+        .find(|&at| history[at] != current_text)
+        .map(|at| (at, history[at].clone()))
+}
+
 /// Whether a change of search text should forget where in history we were.
 ///
 /// Typing starts again from the newest entry; the view writing history into
