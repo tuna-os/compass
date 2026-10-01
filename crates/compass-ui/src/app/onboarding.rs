@@ -13,10 +13,15 @@ use iced::widget::{Space, button, column, container, pick_list, row, text};
 use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use super::{LauncherApp, Message, Page, Task};
+use crate::adwaita;
 use crate::onboarding_page::{OnboardingPage, ThemeOption};
 use compass_core::onboarding::{self, Advance, Step};
 
 const COMPASS_LOGO: &[u8] = include_bytes!("../../../../extra/compass.svg");
+
+/// A recommendation's button: shorter than Adwaita's 34 px, so the whole
+/// list fits the card with room for a failure's notice under it.
+const INSTALL_PADDING: [f32; 2] = [5.0, 12.0];
 
 /// Whether the platform binds the launcher's hotkey itself
 /// (`Platform.supports("globalShortcuts")`). Compass binds only its fixed
@@ -26,6 +31,9 @@ const SHORTCUTS_AVAILABLE: bool = false;
 
 /// Why Install did nothing, as the store pages say it.
 const NEEDS_ENGINE: &str = "Installing extensions needs the Compass engine";
+
+/// Why a link did not open, as `open_link` says it.
+const OPEN_NEEDS_ENGINE: &str = "Opening a link needs the Compass engine";
 
 impl LauncherApp {
     /// Opens the flow at its first step, recording to `state_path`.
@@ -52,6 +60,16 @@ impl LauncherApp {
         }
     }
 
+    /// What the extensions step's last failed install said, while the flow
+    /// is on screen. For tests.
+    #[must_use]
+    pub fn onboarding_install_notice(&self) -> Option<&str> {
+        match &self.page {
+            Page::Onboarding(page) => page.extensions.notice(),
+            _ => None,
+        }
+    }
+
     /// The flow's keys: Enter continues, Escape closes it.
     pub(super) fn onboarding_key(&mut self, key: &Key) -> Task<Message> {
         match key.as_ref() {
@@ -68,7 +86,11 @@ impl LauncherApp {
         };
         match message {
             Message::OnboardingContinue => match page.flow.advance() {
-                Advance::Next => Task::none(),
+                Advance::Next => {
+                    // What a step said belongs to that step.
+                    page.notice = None;
+                    Task::none()
+                }
                 Advance::Finish => {
                     let completed_at = jiff::Timestamp::now()
                         .round(jiff::Unit::Second)
@@ -83,10 +105,12 @@ impl LauncherApp {
                 }
             },
             Message::OnboardingBack => {
+                page.notice = None;
                 page.flow.back();
                 Task::none()
             }
             Message::OnboardingJump(position) => {
+                page.notice = None;
                 page.flow.jump(position);
                 Task::none()
             }
@@ -106,16 +130,24 @@ impl LauncherApp {
                 ])
             }
             Message::OnboardingOpen(url) => {
+                // As `open_link` everywhere else: through the engine, which
+                // starts the default browser, or a reason why not. The flow
+                // stays up, so what happened is said on the card.
                 let Some(backend) = self.backend.clone() else {
+                    page.notice = Some(OPEN_NEEDS_ENGINE.to_owned());
                     return Task::none();
                 };
+                page.notice = None;
                 Task::perform(
                     async move { backend.open_url(url.to_owned()).await },
                     Message::OnboardingLinkOpened,
                 )
             }
-            Message::OnboardingLinkOpened(Err(reason)) => {
-                page.notice = Some(reason);
+            Message::OnboardingLinkOpened(result) => {
+                page.notice = Some(match result {
+                    Ok(()) => super::compass_commands::OPENED_IN_BROWSER.to_owned(),
+                    Err(reason) => reason,
+                });
                 Task::none()
             }
             Message::OnboardingInstall(index) => {
@@ -138,10 +170,12 @@ impl LauncherApp {
                 )
             }
             Message::OnboardingInstalled(index, result) => {
-                let installed = result.is_ok();
+                let installed = result.as_ref().ok().map(|(id, _)| id.clone());
                 page.extensions.finished(index, result.map(|_| ()));
-                if installed {
-                    self.app_index.rescan_extensions();
+                // What the store's detail page does with an install: the
+                // stores and root search learn of it.
+                if let Some(id) = installed {
+                    self.store_changed(&id, true);
                 }
                 Task::none()
             }
@@ -149,21 +183,28 @@ impl LauncherApp {
         }
     }
 
-    /// A step's bordered box of rows.
+    /// A step's box of rows: an Adwaita boxed list.
     fn onboarding_box<'a>(&self, rows: Element<'a, Message>) -> Element<'a, Message> {
-        let border = self.palette().border.to_iced();
+        let palette = self.palette();
         container(rows)
-            .padding(14)
+            .padding(Padding::new(10.0).left(14).right(14))
             .width(Length::Fixed(480.0))
-            .style(move |_: &Theme| container::Style {
-                border: Border {
-                    color: border,
-                    width: 1.0,
-                    radius: 8.0.into(),
-                },
-                ..container::Style::default()
-            })
+            .style(move |_: &Theme| adwaita::boxed_list(palette))
             .into()
+    }
+
+    /// Where a recommendation comes from, as a small pill after its title.
+    fn store_badge<'a>(&self, store: compass_core::store_listing::Store) -> Element<'a, Message> {
+        let palette = self.palette();
+        container(
+            text(store.name())
+                .font(self.font())
+                .size(11)
+                .color(palette.muted.to_iced()),
+        )
+        .padding(Padding::new(1.0).left(6).right(6))
+        .style(move |_: &Theme| adwaita::badge(palette))
+        .into()
     }
 
     /// The flow's card: the step, then Back, the dots and Continue.
@@ -188,10 +229,19 @@ impl LauncherApp {
                 .size(12)
                 .color(palette.muted.to_iced())
         };
+        // Adwaita's buttons: the one the step asks for in the accent, the
+        // rest flat and neutral.
         let action = |label: &'a str, message: Message| {
             button(text(label).font(self.font()).size(13))
                 .on_press(message)
-                .padding(Padding::new(6.0).left(14).right(14))
+                .padding(adwaita::CONTROL_PADDING)
+                .style(move |_: &Theme, status| adwaita::button(palette, status))
+        };
+        let suggested = |label: &'a str, message: Message| {
+            button(text(label).font(self.font()).size(13))
+                .on_press(message)
+                .padding(adwaita::CONTROL_PADDING)
+                .style(move |_: &Theme, status| adwaita::suggested_button(palette, status))
         };
 
         let mut content = column![].spacing(8).align_x(Alignment::Center);
@@ -217,6 +267,8 @@ impl LauncherApp {
                         Message::OnboardingTheme
                     )
                     .text_size(13)
+                    .padding(adwaita::CONTROL_PADDING)
+                    .style(move |_: &Theme, status| adwaita::dropdown(palette, status))
                     .width(Length::Fixed(200.0)),
                 ]
                 .align_y(Alignment::Center);
@@ -236,24 +288,38 @@ impl LauncherApp {
                     .push(self.onboarding_box(column![theme_row, hotkey_row].spacing(14).into()));
             }
             Step::Extensions => {
-                let mut rows = column![].spacing(6);
+                let mut rows = column![].spacing(4);
                 for (index, recommendation) in onboarding::RECOMMENDED_EXTENSIONS.iter().enumerate()
                 {
                     let state = page
                         .extensions
                         .state(index)
                         .unwrap_or(onboarding::Install::Available);
+                    // Install and Try Again are neutral, as every row has one;
+                    // Installing and Installed are flat, with nothing to press.
                     let install = button(text(state.label()).font(self.font()).size(13))
                         .on_press_maybe(
                             state
                                 .can_install()
                                 .then_some(Message::OnboardingInstall(index)),
                         )
-                        .padding(Padding::new(6.0).left(14).right(14));
+                        .padding(INSTALL_PADDING)
+                        .style(move |_: &Theme, status| {
+                            if state.can_install() {
+                                adwaita::button(palette, status)
+                            } else {
+                                adwaita::flat_button(palette, status)
+                            }
+                        });
                     rows = rows.push(
                         row![
                             column![
-                                text(recommendation.title).font(self.font()).size(14),
+                                row![
+                                    text(recommendation.title).font(self.font()).size(14),
+                                    self.store_badge(recommendation.store),
+                                ]
+                                .spacing(6)
+                                .align_y(Alignment::Center),
                                 small(recommendation.description),
                             ]
                             .width(Length::Fill),
@@ -326,7 +392,7 @@ impl LauncherApp {
         let footer = row![
             container(back).width(Length::Fill),
             dots,
-            container(action(
+            container(suggested(
                 page.flow.primary_label(),
                 Message::OnboardingContinue
             ))

@@ -265,9 +265,40 @@ impl Recommendation {
 /// The extensions the extensions step offers.
 ///
 /// Each one is general enough for a new user on any Linux desktop, needs no
-/// account, and Suite 1 (`scripts/suite1/expected.json`) shows its first
-/// command rendering.
+/// account or API key, and Suite 1 (`scripts/suite1/expected.json`) shows its
+/// first command rendering. The Raycast ones come first, because running
+/// Raycast store extensions on Linux is what Compass adds; none of them runs
+/// AppleScript or needs Homebrew, so they work without the runtime's shim
+/// having to stand in for macOS.
 pub const RECOMMENDED_EXTENSIONS: &[Recommendation] = &[
+    Recommendation {
+        store: Store::Raycast,
+        author: "gebeto",
+        name: "translate",
+        title: "Google Translate",
+        description: "Translate text between languages.",
+    },
+    Recommendation {
+        store: Store::Raycast,
+        author: "mblode",
+        name: "google-search",
+        title: "Google Search",
+        description: "Search Google with suggestions as you type.",
+    },
+    Recommendation {
+        store: Store::Raycast,
+        author: "josephschmitt",
+        name: "gif-search",
+        title: "GIF Search",
+        description: "Find animated GIFs and copy them.",
+    },
+    Recommendation {
+        store: Store::Raycast,
+        author: "vimtor",
+        name: "tailwindcss",
+        title: "Tailwind CSS",
+        description: "Search the Tailwind CSS documentation.",
+    },
     Recommendation {
         store: Store::Vicinae,
         author: "gelei",
@@ -284,24 +315,10 @@ pub const RECOMMENDED_EXTENSIONS: &[Recommendation] = &[
     },
     Recommendation {
         store: Store::Vicinae,
-        author: "leonkohli",
-        name: "process-manager",
-        title: "Process Manager",
-        description: "Find running processes and stop them.",
-    },
-    Recommendation {
-        store: Store::Vicinae,
         author: "fbosch",
         name: "flathub-search",
         title: "Flathub",
         description: "Search Flathub for applications.",
-    },
-    Recommendation {
-        store: Store::Raycast,
-        author: "gebeto",
-        name: "translate",
-        title: "Google Translate",
-        description: "Translate text between languages.",
     },
 ];
 
@@ -519,7 +536,7 @@ mod tests {
     #[test]
     fn the_recommendations_are_installable_store_extensions() {
         assert!(
-            (3..=6).contains(&RECOMMENDED_EXTENSIONS.len()),
+            (6..=8).contains(&RECOMMENDED_EXTENSIONS.len()),
             "a short list"
         );
         let mut ids = std::collections::HashSet::new();
@@ -558,6 +575,53 @@ mod tests {
                 .filter_map(|(_, value)| value["verdict"].as_str())
                 .collect();
             assert_eq!(verdicts, ["rendered"], "{id}");
+        }
+    }
+
+    /// Both stores are recommended, each row by the author Suite 1 installed
+    /// it from, so Install fetches the build that was seen rendering.
+    #[test]
+    fn suite_1_installed_every_recommendation_from_its_store_and_author() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/suite1/corpus.json"
+        );
+        let corpus: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        for store in [Store::Raycast, Store::Vicinae] {
+            let recommended: Vec<_> = RECOMMENDED_EXTENSIONS
+                .iter()
+                .filter(|recommendation| recommendation.store == store)
+                .collect();
+            assert!(
+                recommended.len() >= 3,
+                "{} has {} recommendations",
+                store.name(),
+                recommended.len()
+            );
+            let listed = corpus[store.key()].as_array().unwrap();
+            for recommendation in recommended {
+                // A redirected extension installs under another id, and the
+                // step would never see it installed.
+                assert!(
+                    store != Store::Raycast
+                        || crate::raycast_overrides::Manifest::shipped()
+                            .raycast_redirect(recommendation.name)
+                            .is_none(),
+                    "{} is redirected on Linux",
+                    recommendation.name
+                );
+                assert!(
+                    listed.iter().any(|entry| {
+                        entry["name"] == recommendation.name
+                            && entry["author"] == recommendation.author
+                    }),
+                    "{} {}/{} is not in Suite 1's corpus",
+                    store.name(),
+                    recommendation.author,
+                    recommendation.name
+                );
+            }
         }
     }
 

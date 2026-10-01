@@ -77,6 +77,13 @@ mod workspaces;
 const SEARCH_INPUT: &str = "compass-search-input";
 const PANEL_INPUT: &str = "compass-action-filter";
 const APP_OPEN: &str = "app.open";
+
+/// The gap between the floating action panel and the card's edges.
+const PANEL_MARGIN: f32 = 8.0;
+
+/// The tallest the card grows to hold the action panel; a longer panel
+/// scrolls.
+const PANEL_ROOM_CAP: f32 = 360.0;
 const APP_COPY_NAME: &str = "app.copy-name";
 const APP_COPY_PATH: &str = "app.copy-path";
 const APP_DESKTOP_ACTION: &str = "app.desktop:";
@@ -2316,17 +2323,12 @@ impl LauncherApp {
                     return self.open_release_notes();
                 }
                 if let Some(RootRow::Calculator) = self.selected_row()
-                    && let Some(answer) = &self.calculator
+                    && self.calculator.is_some()
                 {
                     // The C++ primary action: copy the answer, remembering it
                     // in the history, then get out of the way so it can be
                     // pasted.
-                    let copy = self.copy_calculation(
-                        answer.question.clone(),
-                        answer.answer.clone(),
-                        answer.answer.clone(),
-                    );
-                    return Task::batch([copy, self.show_hud(calculator::answer_copied())]);
+                    return self.copy_root_answer();
                 }
                 if let Some(RootRow::Command(command)) = self.selected_row() {
                     return self.open_command(command);
@@ -2542,6 +2544,8 @@ impl LauncherApp {
                     return Task::none();
                 } else if let Some(task) = self.open_update_panel() {
                     return task;
+                } else if let Some(task) = self.open_root_calculator_panel() {
+                    return task;
                 } else if let Some(task) = self.open_root_panel() {
                     return task;
                 } else if let Some(item) = self.selected_item() {
@@ -2615,6 +2619,7 @@ impl LauncherApp {
                         .or_else(|| self.emoji_panel_action(&id))
                         .or_else(|| self.clipboard_panel_action(&id))
                         .or_else(|| self.update_panel_action(&id))
+                        .or_else(|| self.root_calculator_panel_action(&id))
                         .or_else(|| self.root_panel_action(&id))
                         .or_else(|| self.windows_panel_action(&id))
                         .or_else(|| self.calculator_panel_action(&id))
@@ -4238,15 +4243,30 @@ impl LauncherApp {
         // comment said an overlay "needs a stacking widget and a backdrop" --
         // `stack!` is that widget, and the backdrop turned out to be
         // unnecessary because the panel is opaque and bounded.
+        //
+        // The card is at least as tall as the panel's unfiltered rows (up to
+        // a cap past which the panel scrolls), so a panel over a short list,
+        // such as a lone calculator answer, is not cut off at the card's
+        // edge.
         let card_body: Element<Message> = match &self.panel {
             Some(panel) => stack![
-                card_content,
+                row![
+                    card_content,
+                    // One pixel wide: a row drops a child with no width at all.
+                    Space::new().width(1).height(if panel.recorder.is_some() {
+                        0.0
+                    } else {
+                        (action_panel::natural_height(&action_panel::flatten(&panel.sections, ""))
+                            + 2.0 * PANEL_MARGIN)
+                            .min(PANEL_ROOM_CAP)
+                    })
+                ],
                 container(self.view_panel(panel))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .align_x(Alignment::End)
                     .align_y(Alignment::End)
-                    .padding(8)
+                    .padding(PANEL_MARGIN)
             ]
             .into(),
             None => card_content.into(),
@@ -7000,7 +7020,18 @@ mod tests {
             backend.opened_urls.lock().unwrap().as_slice(),
             ["https://tunaos.org/docs/compass/getting-started#set-a-keyboard-shortcut"]
         );
+        assert_eq!(
+            onboarding_page(&app).notice.as_deref(),
+            Some("Opened in browser"),
+            "the click is answered on the card"
+        );
+        assert!(app.showing_onboarding(), "and the flow stays up");
         click_onboarding(&mut app, "Back");
+        assert_eq!(
+            onboarding_page(&app).notice,
+            None,
+            "a step's notice stays on it"
+        );
         assert_eq!(app.onboarding_step(), Some(Step::Welcome));
         click_onboarding(&mut app, "Continue");
         click_onboarding(&mut app, "Continue");
@@ -7011,6 +7042,15 @@ mod tests {
             onboarding_page(&app).extensions.state(0),
             Some(Install::Installed),
             "the first Install installs the first recommendation"
+        );
+        assert_eq!(
+            backend.installs.lock().unwrap().first(),
+            Some(&(
+                crate::backend::Store::Raycast,
+                "gebeto".to_owned(),
+                "translate".to_owned()
+            )),
+            "from the Raycast store, by its author and name"
         );
         assert!(
             backend.store_rows.lock().unwrap()[0].installed,
@@ -7063,6 +7103,10 @@ mod tests {
                 .map(String::as_str),
             Some("https://github.com/tuna-os/compass")
         );
+        assert_eq!(
+            onboarding_page(&app).notice.as_deref(),
+            Some("Opened in browser")
+        );
         assert!(
             backend
                 .opened_urls
@@ -7075,6 +7119,76 @@ mod tests {
         click_onboarding(&mut app, "Finish");
         assert!(!app.showing_onboarding());
         assert!(!onboarding::should_show(&path, false), "Finish records it");
+    }
+
+    /// A link that cannot open says why on the card: without the engine, and
+    /// when the engine could not start a browser.
+    #[test]
+    fn an_onboarding_link_that_cannot_open_says_why() {
+        use compass_core::onboarding::Step;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        let _ = app.update(Message::OnboardingJump(3));
+        assert_eq!(app.onboarding_step(), Some(Step::Complete));
+        click_onboarding(&mut app, "GitHub");
+        let notice = onboarding_page(&app).notice.clone();
+        assert_eq!(
+            notice.as_deref(),
+            Some("Opening a link needs the Compass engine")
+        );
+        let mut ui = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(800.0, 600.0),
+            app.view(),
+        );
+        assert!(
+            ui.find(notice.unwrap().as_str()).is_ok(),
+            "shown on the card"
+        );
+        drop(ui);
+
+        let refusing = Arc::new(TestBackend {
+            refuse_opens: Some("No application opens https links".into()),
+            ..TestBackend::default()
+        });
+        app.backend = Some(refusing.clone());
+        click_onboarding(&mut app, "GitHub");
+        assert_eq!(
+            onboarding_page(&app).notice.as_deref(),
+            Some("No application opens https links")
+        );
+        assert_eq!(refusing.opened_urls.lock().unwrap().len(), 1);
+        assert!(app.showing_onboarding());
+    }
+
+    /// The theme picked on "Make it your own" is the one the page is drawn
+    /// in, kept by the engine or not.
+    #[test]
+    fn the_onboarding_theme_picker_shows_the_choice() {
+        use crate::theme::Theme;
+        let dir = tempfile::tempdir().unwrap();
+        for backend in [None, Some(Arc::new(TestBackend::default()))] {
+            let mut app = LauncherApp::with_index(index(dir.path()));
+            app.backend = backend
+                .clone()
+                .map(|b| b as Arc<dyn crate::backend::ApplicationBackend>);
+            app.open_onboarding(dir.path().join("onboarding.json"));
+            let _ = app.update(Message::OnboardingJump(1));
+            let task = app.update(Message::OnboardingTheme(
+                crate::onboarding_page::ThemeOption(Theme::Nord),
+            ));
+            settle(&mut app, task);
+            assert_eq!(app.theme_choice, Theme::Nord);
+            // The pick list draws its value without a text widget a selector
+            // finds; the paint tier checks the card is drawn in the theme.
+            assert_eq!(app.palette(), Theme::Nord.palette(app.appearance));
+            if let Some(backend) = backend {
+                assert_eq!(backend.themes_kept.lock().unwrap().as_slice(), ["nord"]);
+                assert_eq!(app.theme_preview, None, "kept, so nothing to put back");
+            }
+            assert_eq!(onboarding_page(&app).notice, None);
+        }
     }
 
     /// Without the engine, Install says why and the flow goes on.
@@ -7702,6 +7816,8 @@ mod tests {
         /// The store's rows; an install marks one installed and writes its
         /// manifest into `store_dir`, as the engine would.
         store_rows: std::sync::Mutex<Vec<crate::backend::StoreRow>>,
+        /// Each install asked for: the store, the author and the name.
+        installs: std::sync::Mutex<Vec<(crate::backend::Store, String, String)>>,
         /// Where installs land.
         store_dir: Option<std::path::PathBuf>,
         /// The store browses asked, in order.
@@ -7728,7 +7844,7 @@ mod tests {
         providers_set: std::sync::Mutex<Vec<(String, bool)>>,
         /// The commands whose preferences were asked for.
         preferences_asked: std::sync::Mutex<Vec<String>>,
-        /// Why opening a file fails, when it does.
+        /// Why opening a file or a link fails, when it does.
         refuse_opens: Option<String>,
     }
 
@@ -8214,11 +8330,15 @@ mod tests {
 
         fn store_install(
             &self,
-            _store: crate::backend::Store,
-            _author: String,
+            store: crate::backend::Store,
+            author: String,
             name: String,
         ) -> crate::backend::BackendFuture<'_, (String, String)> {
             Box::pin(async move {
+                self.installs
+                    .lock()
+                    .unwrap()
+                    .push((store, author, name.clone()));
                 let mut rows = self.store_rows.lock().unwrap();
                 let row = rows
                     .iter_mut()
@@ -8259,7 +8379,7 @@ mod tests {
         fn open_url(&self, url: String) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened_urls.lock().unwrap().push(url);
-                Ok(())
+                self.refuse_opens.clone().map_or(Ok(()), Err)
             })
         }
 
@@ -15058,6 +15178,77 @@ mod tests {
             shown_at + crate::hud::DURATION + std::time::Duration::from_millis(100),
         ));
         assert!(app.hud_content().is_none(), "gone after 1.5 s");
+    }
+
+    /// Ctrl+B over the answer offers upstream's panel, and each action does
+    /// what it says: the copies copy and remember, the search bar takes the
+    /// answer, and the history opens.
+    #[test]
+    fn the_calculator_answers_panel_copies_types_and_opens_the_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let answer = |app: &mut LauncherApp| {
+            app.page = Page::Root;
+            app.query = "6*7".into();
+            app.search();
+            assert_eq!(app.selected_row(), Some(RootRow::Calculator));
+            let _ = app.update(Message::TogglePanel);
+        };
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        answer(&mut app);
+        let titles: Vec<String> = app
+            .panel
+            .as_ref()
+            .expect("a panel over the answer")
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|a| a.title.clone()))
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Copy Result",
+                "Copy Question And Answer",
+                "Put answer in search bar",
+                "Open Calculator History",
+            ]
+        );
+
+        let task = choose(&mut app, "Copy Result");
+        assert_eq!(settle(&mut app, task), ["42"]);
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Answer copied to clipboard")
+        );
+
+        answer(&mut app);
+        let task = choose(&mut app, "Copy Question And Answer");
+        assert_eq!(settle(&mut app, task), ["6*7 = 42"]);
+        let remembered: Vec<(String, String)> = backend
+            .calculations
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|row| (row.question.clone(), row.answer.clone()))
+            .collect();
+        assert_eq!(
+            remembered,
+            [("6*7".into(), "42".into()), ("6*7".into(), "42".into())],
+            "both copies are remembered, as CopyCalculatorAnswerAction's are"
+        );
+
+        answer(&mut app);
+        let task = choose(&mut app, "Put answer in search bar");
+        settle(&mut app, task);
+        assert_eq!(app.query, "42");
+        assert!(app.panel.is_none());
+        assert!(matches!(app.page, Page::Root));
+
+        answer(&mut app);
+        let task = choose(&mut app, "Open Calculator History");
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Calculator(_)));
     }
 
     #[test]
