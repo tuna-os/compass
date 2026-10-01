@@ -5559,7 +5559,10 @@ impl LauncherApp {
                     .secure(matches!(field.kind, PreferenceInputKind::Password))
                     .font(self.font())
                     .on_input(move |text| Message::PreferenceEdited(index, FieldValue::Text(text)))
-                    .on_submit(Message::PreferencesSubmit)
+                    // No `on_submit`: the key handler submits the form on
+                    // Enter, and `listen_with` delivers it whether or not the
+                    // field captured it, so a field that also submitted made
+                    // every Enter submit twice.
                     .padding(8)
                     .into(),
                 (PreferenceInputKind::Checkbox { label }, FieldValue::Checked(checked)) => {
@@ -12308,6 +12311,205 @@ mod tests {
         assert_eq!(command.id(), id);
         let task = app.update(Message::LaunchSelected);
         settle(app, task);
+    }
+
+    /// One Enter in the form's text field holding `field_text`, delivered as
+    /// the runtime delivers it: whatever the field publishes for the press,
+    /// then the `KeyPressed` that `listen_with` hands the key handler whether
+    /// or not the field captured it.
+    fn enter_once_in_form(app: &mut LauncherApp, field_text: &str) {
+        let mut messages: Vec<Message> = {
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            ui.click(field_text)
+                .unwrap_or_else(|_| panic!("no field holds {field_text:?}: {}", app.state_line()));
+            ui.tap_key(iced::keyboard::Key::Named(
+                iced::keyboard::key::Named::Enter,
+            ));
+            ui.into_messages().collect()
+        };
+        messages.push(pressed(iced::keyboard::key::Named::Enter));
+        // Both reach `update` before the engine answers the first: the
+        // runtime queues them from the same event, and a save or a run is a
+        // round trip to the engine.
+        let tasks: Vec<_> = messages
+            .into_iter()
+            .map(|message| app.update(message))
+            .collect();
+        for task in tasks {
+            settle(app, task);
+        }
+    }
+
+    #[test]
+    fn one_enter_saves_a_new_shortcut_once() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        open_builtin(&mut app, "create shortcut", "commands:create-shortcut");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        let position = |name: &str| page.fields.iter().position(|f| f.name == name).unwrap();
+        let (name, link) = (position("name"), position("link"));
+        let _ = app.update(Message::PreferenceEdited(
+            name,
+            FieldValue::Text("Wiki".into()),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            link,
+            FieldValue::Text("https://en.wikipedia.org/wiki/{page}".into()),
+        ));
+        enter_once_in_form(&mut app, "Wiki");
+        assert_eq!(
+            backend.drafts.lock().unwrap().len(),
+            1,
+            "{}",
+            app.state_line()
+        );
+    }
+
+    #[test]
+    fn one_enter_opens_a_quicklink_with_arguments_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.query = "crate docs".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("serde".into()),
+        ));
+        enter_once_in_form(&mut app, "serde");
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().as_slice(),
+            [("sct-docs".to_owned(), vec!["serde".to_owned()])]
+        );
+    }
+
+    #[test]
+    fn one_enter_runs_a_script_with_arguments_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "disk report".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("/home".into()),
+        ));
+        enter_once_in_form(&mut app, "/home");
+        assert_eq!(
+            backend.script_runs.lock().unwrap().as_slice(),
+            [("report.sh".to_owned(), vec!["/home".to_owned()])]
+        );
+    }
+
+    #[test]
+    fn one_enter_runs_an_extension_command_with_its_arguments_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            wants: vec![crate::backend::PreferenceInput {
+                name: "name".into(),
+                title: "Name".into(),
+                description: String::new(),
+                placeholder: "Name".into(),
+                required: true,
+                kind: crate::backend::PreferenceInputKind::Text,
+                value: None,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let task = app.update(Message::QueryChanged("greeting".into()));
+        settle(&mut app, task);
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("Ada".into()),
+        ));
+        enter_once_in_form(&mut app, "Ada");
+        assert_eq!(
+            backend.given.lock().unwrap().len(),
+            2,
+            "the first try, which asked for the argument, and one run with it"
+        );
+    }
+
+    #[test]
+    fn one_enter_in_the_alias_form_saves_it_and_launches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = Arc::new(LaunchedEntries::default());
+        let mut app = app(dir.path()).with_launcher(launcher.clone());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let firefox = app.selected_row().expect("a row");
+        let id = app.root_id(firefox).expect("a root item");
+        let _ = app.update(Message::TogglePanel);
+        let alias = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Set alias"))
+            .expect("the panel offers an alias");
+        let task = app.update(Message::PanelClicked(alias));
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("ff".into()),
+        ));
+        enter_once_in_form(&mut app, "ff");
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        assert_eq!(
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.alias.as_deref()),
+            Some("ff")
+        );
+        assert!(
+            launcher.0.lock().unwrap().is_empty(),
+            "saving the alias launched the selected row too"
+        );
+    }
+
+    #[test]
+    fn one_ctrl_enter_saves_a_snippet_once_and_a_plain_enter_none() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "create snippet", "commands:create-snippet");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no snippet form: {}", app.state_line());
+        };
+        let position = |name: &str| page.fields.iter().position(|f| f.name == name).unwrap();
+        let (name, content) = (position("name"), position("content"));
+        let _ = app.update(Message::PreferenceEdited(
+            name,
+            FieldValue::Text("Thanks".into()),
+        ));
+        let _ = app.update(Message::PreferenceTextEdited(
+            content,
+            iced::widget::text_editor::Action::Edit(iced::widget::text_editor::Edit::Paste(
+                Arc::new("Thank you!".into()),
+            )),
+        ));
+        let before = backend.snippet_drafts.lock().unwrap().len();
+        enter_once_in_form(&mut app, "Thanks");
+        assert_eq!(
+            backend.snippet_drafts.lock().unwrap().len(),
+            before,
+            "Enter is a newline in a form with a text area"
+        );
+        let task = app.update(ctrl_enter());
+        settle(&mut app, task);
+        assert_eq!(backend.snippet_drafts.lock().unwrap().len(), before + 1);
     }
 
     fn opener(id: &str, name: &str, default: bool) -> crate::backend::OpenerRow {
