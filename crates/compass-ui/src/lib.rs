@@ -13,6 +13,7 @@
 pub const APP_ID: &str = "org.tunaos.compass";
 
 pub mod action_panel;
+pub mod adwaita;
 pub mod app;
 pub mod appearance;
 pub mod apps_page;

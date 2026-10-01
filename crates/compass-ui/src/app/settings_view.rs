@@ -11,6 +11,7 @@ use super::{
     Direction, Element, LauncherApp, Length, Message, Padding, Page, Task, chord_direction, column,
     container, focus_search, mouse_area, row, scrollable, text, text_input,
 };
+use crate::adwaita;
 use crate::settings::SidebarKind;
 use crate::settings_page::{
     DOCS_URL, HINT, ItemEntry, ProviderEntry, RecordTarget, SettingsMessage, SettingsPage, Shown,
@@ -496,20 +497,22 @@ impl LauncherApp {
         let mut list = column![].spacing(2);
         for (position, entry) in page.sidebar.rows().iter().enumerate() {
             if entry.kind == SidebarKind::Divider {
-                list = list
-                    .push(container(iced::widget::rule::horizontal(1)).padding(Padding::new(4.0)));
+                list = list.push(
+                    container(
+                        iced::widget::rule::horizontal(1)
+                            .style(move |_: &iced::Theme| adwaita::separator(palette)),
+                    )
+                    .padding(Padding::new(6.0)),
+                );
                 continue;
             }
             let selected = position as isize == page.selected;
-            let colour = if selected {
-                palette.selection_text
-            } else if entry.enabled {
+            let colour = if entry.enabled {
                 palette.text
             } else {
                 palette.muted
             }
             .to_iced();
-            let background = selected.then(|| palette.selection.to_iced());
             let label = container(
                 text(entry.label.clone())
                     .font(self.font())
@@ -517,15 +520,8 @@ impl LauncherApp {
                     .color(colour),
             )
             .width(Length::Fill)
-            .padding(Padding::new(6.0).left(10))
-            .style(move |_: &iced::Theme| container::Style {
-                background: background.map(Into::into),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..iced::Border::default()
-                },
-                ..container::Style::default()
-            });
+            .padding(Padding::new(8.0).left(12))
+            .style(move |_: &iced::Theme| adwaita::sidebar_row(palette, selected));
             list = list.push(
                 mouse_area(label).on_press(settings(SettingsMessage::SidebarSelected(position))),
             );
@@ -546,8 +542,56 @@ impl LauncherApp {
             .into()
     }
 
-    /// One labelled row: the label and its description, the control on the
-    /// right.
+    /// A preferences group's title (`AdwPreferencesGroup:title`): bold, in
+    /// the text colour, over its boxed list.
+    fn settings_group_title(&self, label: String) -> Element<'_, Message> {
+        container(
+            text(label)
+                .font(iced::Font {
+                    weight: iced::font::Weight::Bold,
+                    ..self.font()
+                })
+                .size(13),
+        )
+        .padding(Padding::new(0.0).left(2))
+        .into()
+    }
+
+    /// Rows in a boxed list (`.boxed-list`): one card, 12 px corners, a
+    /// hairline between rows.
+    fn settings_boxed<'a>(&self, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+        let palette = self.palette();
+        let mut list = column![];
+        for (index, entry) in rows.into_iter().enumerate() {
+            if index > 0 {
+                list = list.push(
+                    iced::widget::rule::horizontal(1)
+                        .style(move |_: &iced::Theme| adwaita::separator(palette)),
+                );
+            }
+            list = list.push(entry);
+        }
+        container(list)
+            .width(Length::Fill)
+            .style(move |_: &iced::Theme| adwaita::boxed_list(palette))
+            .into()
+    }
+
+    /// A group: its title, if it has one, over its rows in a boxed list.
+    fn settings_group<'a>(
+        &'a self,
+        title: Option<String>,
+        rows: Vec<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
+        let mut group = column![].spacing(adwaita::SPACING / 2.0);
+        if let Some(title) = title {
+            group = group.push(self.settings_group_title(title));
+        }
+        group.push(self.settings_boxed(rows)).into()
+    }
+
+    /// One labelled row (`AdwActionRow`): the label and its description,
+    /// the control on the right, at least 50 px tall.
     fn settings_row<'a>(
         &'a self,
         label: String,
@@ -563,10 +607,25 @@ impl LauncherApp {
                     .color(self.palette().muted.to_iced()),
             );
         }
-        row![container(words).width(Length::Fill), control]
-            .spacing(12)
-            .align_y(iced::Alignment::Center)
-            .into()
+        container(
+            row![
+                iced::widget::Space::new().height(adwaita::ROW_MIN_CONTENT),
+                row![container(words).width(Length::Fill), control]
+                    .spacing(adwaita::SPACING)
+                    .align_y(iced::Alignment::Center),
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(adwaita::ROW_PADDING)
+        .into()
+    }
+
+    /// A flat, Adwaita-style button.
+    fn settings_button<'a>(&self, label: String, size: f32) -> iced::widget::Button<'a, Message> {
+        let palette = self.palette();
+        button(text(label).font(self.font()).size(size))
+            .padding(adwaita::CONTROL_PADDING)
+            .style(move |_: &iced::Theme, status| adwaita::button(palette, status))
     }
 
     /// A setting's control, by its kind.
@@ -575,12 +634,15 @@ impl LauncherApp {
         page: &'a SettingsPage,
         setting: &Setting,
     ) -> Element<'a, Message> {
+        let palette = self.palette();
         let key = setting.key.clone();
         let value = page.value(setting);
         match &setting.kind {
             Kind::Toggle => {
                 let on = value.as_bool().unwrap_or(false);
                 toggler(on)
+                    .size(adwaita::SWITCH_SIZE)
+                    .style(move |_: &iced::Theme, status| adwaita::switch(palette, status))
                     .on_toggle(move |on| {
                         settings(SettingsMessage::Changed(
                             key.clone(),
@@ -609,6 +671,10 @@ impl LauncherApp {
                     ))
                 })
                 .text_size(13)
+                .font(self.font())
+                .padding(adwaita::CONTROL_PADDING)
+                .style(move |_: &iced::Theme, status| adwaita::dropdown(palette, status))
+                .menu_style(move |_: &iced::Theme| crate::design::dropdown_menu(palette))
                 .into()
             }
             Kind::Theme => {
@@ -631,6 +697,10 @@ impl LauncherApp {
                     ))
                 })
                 .text_size(13)
+                .font(self.font())
+                .padding(adwaita::CONTROL_PADDING)
+                .style(move |_: &iced::Theme, status| adwaita::dropdown(palette, status))
+                .menu_style(move |_: &iced::Theme| crate::design::dropdown_menu(palette))
                 .into()
             }
             Kind::Shortcut => {
@@ -641,7 +711,7 @@ impl LauncherApp {
                         || "Record Shortcut".to_owned(),
                         |combo| combo.display_tokens().join(" "),
                     );
-                button(text(current).font(self.font()).size(13))
+                self.settings_button(current, 13.0)
                     .on_press(settings(SettingsMessage::Record(RecordTarget::Setting(
                         key,
                     ))))
@@ -661,8 +731,9 @@ impl LauncherApp {
                 text_input(placeholder, &page.text_of(setting))
                     .font(self.font())
                     .size(13)
-                    .padding(6)
+                    .padding(adwaita::ENTRY_PADDING)
                     .width(Length::Fixed(220.0))
+                    .style(move |_: &iced::Theme, status| adwaita::entry(palette, status))
                     .on_input(move |draft| {
                         settings(SettingsMessage::DraftEdited(key.clone(), draft))
                     })
@@ -672,24 +743,44 @@ impl LauncherApp {
         }
     }
 
-    /// Settings grouped under their section headings.
+    /// Each setting's row, in order, with the section it is listed under.
+    fn settings_rows<'a>(
+        &'a self,
+        page: &'a SettingsPage,
+        settings_shown: &[Setting],
+    ) -> Vec<(&'static str, Element<'a, Message>)> {
+        settings_shown
+            .iter()
+            .map(|setting| {
+                (
+                    setting.section,
+                    self.settings_row(
+                        setting.label.to_owned(),
+                        setting.description.to_owned(),
+                        self.settings_control(page, setting),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// Settings grouped under their section titles, one boxed list each.
     fn settings_list<'a>(
         &'a self,
         page: &'a SettingsPage,
         settings_shown: &[Setting],
     ) -> Element<'a, Message> {
-        let mut list = column![].spacing(10);
-        let mut section = "";
-        for setting in settings_shown {
-            if setting.section != section {
-                section = setting.section;
-                list = list.push(self.section_heading(section.to_owned()));
+        let mut groups: Vec<(&'static str, Vec<Element<'a, Message>>)> = Vec::new();
+        for (section, entry) in self.settings_rows(page, settings_shown) {
+            match groups.last_mut() {
+                Some((current, rows)) if *current == section => rows.push(entry),
+                _ => groups.push((section, vec![entry])),
             }
-            list = list.push(self.settings_row(
-                setting.label.to_owned(),
-                setting.description.to_owned(),
-                self.settings_control(page, setting),
-            ));
+        }
+        let mut list = column![].spacing(adwaita::SPACING * 1.5);
+        for (section, rows) in groups {
+            let title = (!section.is_empty()).then(|| section.to_owned());
+            list = list.push(self.settings_group(title, rows));
         }
         list.into()
     }
@@ -699,10 +790,12 @@ impl LauncherApp {
         page: &'a SettingsPage,
         core: CorePage,
     ) -> Element<'a, Message> {
-        let mut body = column![self.settings_heading(core.title().to_owned())].spacing(12);
+        let palette = self.palette();
+        let mut body =
+            column![self.settings_heading(core.title().to_owned())].spacing(adwaita::SPACING);
         match core {
             CorePage::About => {
-                let muted = self.palette().muted.to_iced();
+                let muted = palette.muted.to_iced();
                 body = body
                     .push(
                         text(format!("Compass {}", env!("CARGO_PKG_VERSION")))
@@ -721,35 +814,42 @@ impl LauncherApp {
                             text(super::release_check::title(offer))
                                 .font(self.font())
                                 .size(13),
-                            button(text("View Release Notes").font(self.font()).size(13)).on_press(
-                                settings(SettingsMessage::OpenUrl(offer.release_url.clone()))
-                            ),
+                            self.settings_button("View Release Notes".to_owned(), 13.0)
+                                .style(move |_: &iced::Theme, status| {
+                                    adwaita::suggested_button(palette, status)
+                                })
+                                .on_press(settings(SettingsMessage::OpenUrl(
+                                    offer.release_url.clone()
+                                ))),
                         ]
-                        .spacing(8)
+                        .spacing(adwaita::SPACING)
                         .align_y(iced::Alignment::Center),
                     );
                 }
                 body = body.push(
                     row![
-                        button(text("Documentation").font(self.font()).size(13))
+                        self.settings_button("Documentation".to_owned(), 13.0)
                             .on_press(settings(SettingsMessage::OpenUrl(DOCS_URL.to_owned()))),
-                        button(text("Report a Bug").font(self.font()).size(13)).on_press(settings(
-                            SettingsMessage::OpenUrl(
+                        self.settings_button("Report a Bug".to_owned(), 13.0)
+                            .on_press(settings(SettingsMessage::OpenUrl(
                                 compass_core::bug_report::CREATE_ISSUE_URL.to_owned()
-                            )
-                        )),
+                            ))),
                     ]
-                    .spacing(8),
+                    .spacing(adwaita::SPACING),
                 );
             }
             CorePage::Keybindings => {
-                for (name, description, keys) in settings_catalog::KEYBINDINGS {
-                    body = body.push(self.settings_row(
-                        (*name).to_owned(),
-                        (*description).to_owned(),
-                        text(*keys).font(self.font()).size(13).into(),
-                    ));
-                }
+                let rows = settings_catalog::KEYBINDINGS
+                    .iter()
+                    .map(|(name, description, keys)| {
+                        self.settings_row(
+                            (*name).to_owned(),
+                            (*description).to_owned(),
+                            text(*keys).font(self.font()).size(13).into(),
+                        )
+                    })
+                    .collect();
+                body = body.push(self.settings_boxed(rows));
             }
             CorePage::General | CorePage::Appearance | CorePage::Advanced => {
                 body = body.push(self.settings_list(page, &SettingsPage::core_settings(core)));
@@ -757,8 +857,9 @@ impl LauncherApp {
         }
         let missing = SettingsPage::not_in_compass(core);
         if !missing.is_empty() {
-            let muted = self.palette().muted.to_iced();
-            let mut notes = column![self.section_heading("Not in Compass".to_owned())].spacing(4);
+            let muted = palette.muted.to_iced();
+            let mut notes =
+                column![self.settings_group_title("Not in Compass".to_owned())].spacing(4);
             for item in missing {
                 notes = notes.push(
                     text(format!("{}: {}", item.label, item.reason))
@@ -777,32 +878,41 @@ impl LauncherApp {
         page: &'a SettingsPage,
         provider: &'a ProviderEntry,
     ) -> Element<'a, Message> {
+        let palette = self.palette();
         let id = provider.id.clone();
         let header = self.settings_row(
             provider.title.clone(),
             format!("{} · {} items", provider.provenance, provider.items.len()),
             toggler(provider.enabled)
+                .size(adwaita::SWITCH_SIZE)
+                .style(move |_: &iced::Theme, status| adwaita::switch(palette, status))
                 .on_toggle(move |on| settings(SettingsMessage::ProviderToggled(id.clone(), on)))
                 .into(),
         );
-        let mut body = column![header].spacing(12);
+        let mut body = column![self.settings_boxed(vec![header])].spacing(adwaita::SPACING * 1.5);
         let own = SettingsPage::provider_settings(&provider.id);
         if !own.is_empty() {
             body = body.push(self.settings_list(page, &own));
         }
-        for item in &provider.items {
-            body = body.push(self.settings_item(page, item));
+        if !provider.items.is_empty() {
+            let rows = provider
+                .items
+                .iter()
+                .flat_map(|item| self.settings_item(page, item))
+                .collect();
+            body = body.push(self.settings_boxed(rows));
         }
         body.into()
     }
 
-    /// One root item: its switch, alias, shortcut, preferences button, and
-    /// the settings that belong to it.
+    /// One root item's rows: its switch, alias, shortcut and preferences
+    /// button, then the settings that belong to it, indented under it.
     fn settings_item<'a>(
         &'a self,
         page: &'a SettingsPage,
         item: &'a ItemEntry,
-    ) -> Element<'a, Message> {
+    ) -> Vec<Element<'a, Message>> {
+        let palette = self.palette();
         let id = item.id.clone();
         let toggle_id = id.clone();
         let alias = alias_key(&id);
@@ -824,36 +934,38 @@ impl LauncherApp {
             text_input("Alias", &alias_text)
                 .font(self.font())
                 .size(12)
-                .padding(4)
+                .padding(adwaita::ENTRY_PADDING)
                 .width(Length::Fixed(90.0))
+                .style(move |_: &iced::Theme, status| adwaita::entry(palette, status))
                 .on_input(move |draft| settings(SettingsMessage::DraftEdited(alias.clone(), draft)))
                 .on_submit(settings(SettingsMessage::DraftSubmitted(submit))),
-            button(text(shortcut).font(self.font()).size(12)).on_press(settings(
-                SettingsMessage::Record(RecordTarget::Item(id.clone()))
-            )),
+            self.settings_button(shortcut, 12.0)
+                .on_press(settings(SettingsMessage::Record(RecordTarget::Item(
+                    id.clone()
+                )))),
         ]
-        .spacing(6)
+        .spacing(adwaita::SPACING / 2.0)
         .align_y(iced::Alignment::Center);
         if item.has_preferences {
             controls = controls.push(
-                button(text("Preferences").font(self.font()).size(12))
+                self.settings_button("Preferences".to_owned(), 12.0)
                     .on_press(settings(SettingsMessage::OpenPreferences(id.clone()))),
             );
         }
-        controls = controls
-            .push(toggler(item.enabled).on_toggle(move |on| {
-                settings(SettingsMessage::ItemToggled(toggle_id.clone(), on))
-            }));
-        let mut entry =
-            column![self.settings_row(item.title.clone(), String::new(), controls.into())]
-                .spacing(8);
+        controls = controls.push(
+            toggler(item.enabled)
+                .size(adwaita::SWITCH_SIZE)
+                .style(move |_: &iced::Theme, status| adwaita::switch(palette, status))
+                .on_toggle(move |on| settings(SettingsMessage::ItemToggled(toggle_id.clone(), on))),
+        );
+        let mut rows = vec![self.settings_row(item.title.clone(), String::new(), controls.into())];
         let own = SettingsPage::item_settings(&item.id);
-        if !own.is_empty() {
-            entry = entry.push(
-                container(self.settings_list(page, &own)).padding(Padding::new(0.0).left(16)),
-            );
-        }
-        entry.into()
+        rows.extend(
+            self.settings_rows(page, &own)
+                .into_iter()
+                .map(|(_, entry)| container(entry).padding(Padding::new(0.0).left(16)).into()),
+        );
+        rows
     }
 
     fn settings_recorder<'a>(&'a self, recorder: &'a ShortcutRecorder) -> Element<'a, Message> {
