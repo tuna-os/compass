@@ -306,7 +306,7 @@ impl SettingsPage {
                     ],
                     &query,
                 );
-                found.accepted().then(|| (row, setting.key, found.score))
+                found.accepted().then_some((row, setting.key, found.score))
             })
             .collect();
         matched.sort_by(|left, right| right.2.cmp(&left.2));
