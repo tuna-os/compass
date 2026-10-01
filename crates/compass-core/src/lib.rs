@@ -72,6 +72,7 @@ pub mod frecency;
 pub mod global_shortcuts;
 pub mod glyph;
 pub mod glyph_service;
+pub mod hotkey_guide;
 pub mod image_url;
 pub mod incremental_scan;
 pub mod index_reconcile;

@@ -82,23 +82,33 @@ pub async fn wlroots<B: BusProbe>(
     } else {
         "none"
     };
-    let ipc = match &wayland.compositor_ipc {
-        Some((name, true)) => format!("{name} (answering: workspaces, pids, geometry)"),
-        Some((name, false)) => format!("{name} (named by the environment but not answering)"),
-        None => "none (no Hyprland or niri socket; no workspaces)".to_owned(),
+    let ipc = match (
+        &wayland.compositor_ipc,
+        super::desktop::wlroots_compositor(env),
+    ) {
+        (Some((name, true)), _) => format!("{name} (answering: workspaces, pids, geometry)"),
+        (Some((name, false)), _) => {
+            format!("{name} (named by the environment but not answering)")
+        }
+        (None, Some(compositor)) => format!(
+            "{} (Compass does not read its IPC, so there is no workspace list)",
+            compositor.name()
+        ),
+        (None, None) => "none found, so there is no workspace list".to_owned(),
+    };
+    let hotkey = if caps.hotkey || portal_shortcuts.is_some() {
+        "bound by Compass".to_owned()
+    } else {
+        "bound in the compositor's configuration (see portal.global-shortcuts)".to_owned()
     };
     let mut detail = format!(
         "layer-shell: {}; foreign-toplevel: {toplevel}; data-control: {}; \
-         hotkey protocol: {}; virtual-keyboard: {}; shortcuts-inhibit: {}; \
-         portal GlobalShortcuts: {}; compositor IPC: {ipc}",
+         virtual-keyboard: {}; shortcuts-inhibit: {}; hotkey: {hotkey}; \
+         compositor IPC: {ipc}",
         yes_no(caps.layer_shell),
         yes_no(caps.data_control),
-        yes_no(caps.hotkey),
         yes_no(caps.virtual_keyboard),
         yes_no(caps.shortcuts_inhibit),
-        portal_shortcuts
-            .as_deref()
-            .map_or_else(|| "no".to_owned(), |v| format!("v{v}")),
     );
 
     let mut missing = Vec::new();
@@ -112,9 +122,6 @@ pub async fn wlroots<B: BusProbe>(
     }
     if !caps.data_control {
         missing.push("clipboard history and the selection need the launcher focused");
-    }
-    if !caps.hotkey && portal_shortcuts.is_none() {
-        missing.push("no global hotkey: bind `compass toggle` in the compositor's config");
     }
     if matches!(&wayland.compositor_ipc, Some((_, false))) {
         missing.push("the compositor's socket does not answer, so there are no workspaces");
@@ -164,10 +171,9 @@ mod tests {
             "layer-shell: yes",
             "zwlr_foreign_toplevel_manager_v1",
             "data-control: yes",
-            "hotkey protocol: yes",
+            "hotkey: bound by Compass",
             "virtual-keyboard: yes",
             "shortcuts-inhibit: yes",
-            "portal GlobalShortcuts: no",
             "Hyprland (answering",
         ] {
             assert!(d.contains(part), "{part} missing from {d}");
@@ -175,14 +181,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_hotkey_path_at_all_is_named_and_the_portal_counts_as_one() {
+    async fn a_sway_set_up_as_sway_is_meant_to_be_passes() {
+        // Sway binds keys in its own config, has no hotkey protocol and no
+        // portal for one, and Compass does not read its IPC: none of that is
+        // a fault.
         let caps = Capabilities {
             hotkey: false,
             ..everything()
         };
-        let c = wlroots(&Env::empty(), Some(&sway(caps)), &FakeBus::new()).await;
-        assert_eq!(c.status, DoctorStatus::Warn);
-        assert!(detail(&c).contains("no global hotkey"), "{}", detail(&c));
+        let env = Env::from_pairs([("SWAYSOCK", "/run/user/1000/sway-ipc.sock")]);
+        let c = wlroots(&env, Some(&sway(caps)), &FakeBus::new()).await;
+        assert_eq!(c.status, DoctorStatus::Ok, "{}", detail(&c));
+        assert!(
+            detail(&c).contains("hotkey: bound in the compositor's configuration"),
+            "{}",
+            detail(&c)
+        );
+        assert!(
+            detail(&c).contains("compositor IPC: Sway"),
+            "{}",
+            detail(&c)
+        );
 
         let portal = FakeBus::new().with_property(
             PORTAL_BUS_NAME,
@@ -193,7 +212,7 @@ mod tests {
         );
         let c = wlroots(&Env::empty(), Some(&sway(caps)), &portal).await;
         assert_eq!(c.status, DoctorStatus::Ok, "{}", detail(&c));
-        assert!(detail(&c).contains("portal GlobalShortcuts: v1"));
+        assert!(detail(&c).contains("hotkey: bound by Compass"));
     }
 
     #[tokio::test]

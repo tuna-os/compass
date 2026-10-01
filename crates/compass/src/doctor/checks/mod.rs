@@ -25,12 +25,15 @@
 //! * [`input`] — the input server behind snippet keyword expansion.
 //! * [`a11y`] — whether a screen reader is on, given the launcher has no tree.
 //! * [`wlroots`](mod@wlroots) — the wlroots protocols and compositor IPC this session has.
+//! * [`clipboard`] — clipboard history and the keyring its key is kept in.
+//! * [`config`](mod@config) — whether `compass.json` reads as its author meant.
 //!
 //! Every check is re-exported here, so a caller says `checks::session_type`
 //! without knowing or caring which file it is in. `doctor::mod` assembles the
 //! report from those flat paths and is unchanged by this layout.
 
 pub mod a11y;
+pub mod clipboard;
 pub mod config;
 pub mod desktop;
 pub mod input;
@@ -40,6 +43,10 @@ pub mod session;
 pub mod wlroots;
 
 pub use a11y::{A11Y_BUS_NAME, A11Y_OBJECT_PATH, A11Y_STATUS_INTERFACE, screen_reader};
+pub use clipboard::{
+    COLLECTION_INTERFACE, DEFAULT_COLLECTION_PATH, SECRET_SERVICE_BUS_NAME, clipboard_history,
+    keyring,
+};
 pub use config::{ConfigFacts, config_file};
 pub use desktop::{
     EXTENSION_CONTRACT_VERSION, EXTENSION_DEGRADATION, EXTENSION_INTERFACE, EXTENSION_OBJECT_PATH,
@@ -74,15 +81,14 @@ pub fn engine(selected: Engine) -> DoctorCheck {
         Engine::Rust => check(
             "engine.selected",
             DoctorStatus::Ok,
-            "rust — served by this binary",
+            "the engine built into this program",
         ),
         Engine::Cpp => check(
             "engine.selected",
             DoctorStatus::Warn,
-            "cpp — this binary is the Rust engine and cannot dispatch to the C++ one \
-             (PLAN.md §5; the dispatching front-end lands with the Phase 7 cutover). \
-             Commands that need the engine will refuse; run the C++ `vicinae` directly, \
-             or pass --engine rust / COMPASS_ENGINE=rust",
+            "COMPASS_ENGINE asks for the old Vicinae engine, which Compass no longer \
+             includes, so commands that need the engine refuse to run. Unset \
+             COMPASS_ENGINE to use the engine built into this program",
         ),
     }
 }
@@ -103,7 +109,7 @@ mod tests {
         let c = engine(Engine::Rust);
         assert_eq!(c.name, "engine.selected");
         assert_eq!(c.status, DoctorStatus::Ok);
-        assert!(detail(&c).contains("rust"));
+        assert!(detail(&c).contains("built into"));
     }
 
     #[test]
@@ -111,7 +117,7 @@ mod tests {
         let c = engine(Engine::Cpp);
         assert_eq!(c.status, DoctorStatus::Warn);
         let d = detail(&c);
-        assert!(d.contains("cannot dispatch"));
-        assert!(d.contains("--engine rust"));
+        assert!(d.contains("Unset COMPASS_ENGINE"));
+        assert!(!d.contains("C++"));
     }
 }

@@ -35,14 +35,13 @@ Exit codes:
     after_long_help = EXIT_CODE_HELP,
 )]
 pub struct Cli {
-    /// Engine implementation to talk to.
-    ///
-    /// This binary is the Rust engine and cannot dispatch to the C++ one; see
-    /// `PLAN.md` §5. `--engine cpp` parses, is reported by `doctor`, and makes
-    /// engine-dependent commands refuse rather than quietly do the Rust thing.
+    /// Which engine to use. Only the built-in one is left; kept so an old
+    /// `COMPASS_ENGINE` setting is reported by `compass doctor` rather than
+    /// rejected, and hidden from the help.
     #[arg(
         long,
         global = true,
+        hide = true,
         value_enum,
         env = "COMPASS_ENGINE",
         default_value_t = Engine::Rust,

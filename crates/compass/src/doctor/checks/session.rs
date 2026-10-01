@@ -29,9 +29,9 @@ pub fn session_type(env: &Env) -> DoctorCheck {
             NAME,
             DoctorStatus::Warn,
             format!(
-                "X11 only (DISPLAY={x11}, WAYLAND_DISPLAY unset). The Rust engine targets \
-                 Wayland; the X11 hotkey backend is Phase 5 work, so the global hotkey will \
-                 not bind here"
+                "X11 only (DISPLAY={x11}, WAYLAND_DISPLAY unset). Compass is made for \
+                 Wayland and does not bind its hotkey on X11: bind a key to `compass toggle` \
+                 in your window manager instead"
             ),
         ),
         (None, None) => check(

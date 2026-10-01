@@ -35,20 +35,19 @@ pub async fn screen_reader<B: BusProbe>(bus: &B) -> DoctorCheck {
             NAME,
             DoctorStatus::Warn,
             "a screen reader is enabled, and this launcher exposes no accessibility tree: it \
-             cannot read the query, the results or which one is selected (ADR-0016, #118). \
-             The C++ engine is accessible through Qt",
+             cannot read the query, the results or which one is selected",
         ),
         Ok(Some(_)) => check(
             NAME,
             DoctorStatus::Ok,
-            "no screen reader enabled. This launcher has no accessibility tree yet (#118)",
+            "no screen reader enabled. Compass cannot be read by a screen reader yet",
         ),
         Ok(None) => check(
             NAME,
             DoctorStatus::Ok,
             format!(
                 "{A11Y_BUS_NAME} does not report a screen-reader switch, so none is running. \
-                 This launcher has no accessibility tree yet (#118)"
+                 Compass cannot be read by a screen reader yet"
             ),
         ),
         Err(err) => check(
@@ -56,7 +55,7 @@ pub async fn screen_reader<B: BusProbe>(bus: &B) -> DoctorCheck {
             DoctorStatus::Warn,
             format!(
                 "could not ask {A11Y_BUS_NAME} whether a screen reader is enabled: {err}. If \
-                 one is, it cannot read this launcher (#118)"
+                 one is, it cannot read Compass yet"
             ),
         ),
     }
@@ -82,7 +81,7 @@ mod tests {
         let result = screen_reader(&reader("true")).await;
         assert_eq!(result.status, DoctorStatus::Warn);
         let detail = result.detail.expect("detail");
-        assert!(detail.contains("#118"), "{detail}");
+        assert!(!detail.contains("#118"), "{detail}");
         assert!(detail.contains("cannot read"), "{detail}");
     }
 

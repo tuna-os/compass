@@ -3718,9 +3718,18 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
         tokio::spawn(async move {
             match compass_shell::ShellClient::connect_session().await {
                 Ok(client) => state.write().await.set_shell(Arc::new(client)),
-                Err(err) => {
-                    tracing::warn!(error = %err, "no session bus; window switching unavailable")
+                // Only GNOME switches windows through the Shell extension; the
+                // wlroots compositors and KWin list them without the bus.
+                Err(err)
+                    if compass_wayland::compositor::desktop_is_gnome(
+                        std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+                    ) =>
+                {
+                    tracing::warn!(error = %err,
+                        "no session bus, so the GNOME Shell extension cannot be reached; window switching is unavailable")
                 }
+                Err(err) => tracing::info!(error = %err,
+                    "no session bus; the GNOME Shell extension is not used on this desktop"),
             }
         });
     }
