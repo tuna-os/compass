@@ -22,6 +22,9 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 jsonc-parser.workspace = true
+serde_path_to_error.workspace = true
+# "Did you mean" for a mistyped `compass.json` key; already in the tree for compass-search.
+strsim = "0.11"
 getrandom.workspace = true
 thiserror.workspace = true
 dirs.workspace = true

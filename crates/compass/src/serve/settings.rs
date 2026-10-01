@@ -131,6 +131,27 @@ async fn apply_live(state: &Arc<RwLock<EngineState>>, config: &Config, key: &str
     }
 }
 
+/// `compass.json` changed on disk (a hand edit, `compass theme set`, another
+/// window's settings): everything the engine holds of it is brought in line,
+/// as [`apply_live`] does for one key.
+pub async fn apply_all(state: &Arc<RwLock<EngineState>>, config: &Config) {
+    for key in [
+        "launcher.max_results",
+        "providers.clipboard.",
+        &format!(".{}.", crate::programs::ENTRYPOINT),
+        "tray.enabled",
+        "input_server.enabled",
+    ] {
+        apply_live(state, config, key).await;
+    }
+    state.read().await.global_shortcuts().reload();
+    state
+        .write()
+        .await
+        .index
+        .apply_root_config(&config.root_config());
+}
+
 async fn set_provider_enabled(
     state: &Arc<RwLock<EngineState>>,
     provider: String,

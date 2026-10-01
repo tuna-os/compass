@@ -477,3 +477,78 @@ fn with_an_engine_the_engine_writes_and_a_theme_is_kept_or_put_back() {
         );
     }
 }
+
+#[test]
+fn a_refused_write_puts_the_switch_back_and_says_why_in_the_error_colour() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    // Nothing can be written under a path whose parent is a file.
+    std::fs::write(dir.path().join("blocker"), "").unwrap();
+    app.config_path = Some(dir.path().join("blocker").join("compass.json"));
+    let _ = app.open_settings(None);
+    let setting = settings_catalog::find("launcher.close_on_focus_loss").unwrap();
+    assert_eq!(page(&app).value(&setting), json!(false));
+
+    send(
+        &mut app,
+        SettingsMessage::Changed("launcher.close_on_focus_loss".into(), json!(true)),
+    );
+    assert_eq!(
+        page(&app).value(&setting),
+        json!(false),
+        "the switch shows what the file still says"
+    );
+    assert!(
+        page(&app)
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("could not save")),
+        "{:?}",
+        page(&app).notice
+    );
+    let palette = app.palette();
+    assert_ne!(palette.error(), palette.accent, "not drawn as a link");
+}
+
+#[test]
+fn a_file_with_a_typo_opens_with_the_problem_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    std::fs::write(
+        dir.path().join("compass.json"),
+        r#"{"launcher": {"close_on_focus_los": true, "max_results": 7}}"#,
+    )
+    .unwrap();
+    let _ = app.open_settings(None);
+    let notice = page(&app).notice.clone().unwrap_or_default();
+    assert!(
+        notice.contains("Did you mean launcher.close_on_focus_loss?"),
+        "{notice}"
+    );
+    let max = settings_catalog::find("launcher.max_results").unwrap();
+    assert_eq!(
+        page(&app).value(&max),
+        json!(7),
+        "the rest of the file is read"
+    );
+}
+
+#[test]
+fn a_reloaded_file_reaches_the_window_and_an_open_settings_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app(dir.path());
+    let _ = app.open_settings(None);
+    let config = compass_core::Config::parse(
+        r#"{"launcher": {"wrap_navigation": true, "keybinding": "emacs",
+            "appearance": {"theme": "dracula", "preset": "rofi"}}}"#,
+        std::path::Path::new("compass.json"),
+    )
+    .unwrap();
+    let task = app.update(Message::ConfigReloaded(Arc::new(config)));
+    settle(&mut app, task);
+    assert!(app.wrap_navigation);
+    assert_eq!(app.keybinding, compass_core::keybinding::Scheme::Emacs);
+    assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+    let wrap = settings_catalog::find("launcher.wrap_navigation").unwrap();
+    assert_eq!(page(&app).value(&wrap), json!(true));
+}

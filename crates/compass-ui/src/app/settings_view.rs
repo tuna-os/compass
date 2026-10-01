@@ -36,11 +36,21 @@ impl LauncherApp {
     /// `openExtensionPreferences`), reading the configuration file afresh.
     pub(super) fn open_settings(&mut self, tab: Option<&str>) -> Task<Message> {
         let (config, notice) = match &self.config_path {
-            Some(path) => match compass_core::Config::load_from(path) {
-                Ok(config) => (config, None),
+            Some(path) => match compass_core::Config::load_checked(path) {
+                Ok((config, issues)) => {
+                    let notice = match issues.as_slice() {
+                        [] => None,
+                        [issue] => Some(format!("compass.json: {issue}.")),
+                        [issue, rest @ ..] => Some(format!(
+                            "compass.json: {issue}. {} more problems are listed by compass doctor.",
+                            rest.len()
+                        )),
+                    };
+                    (config, notice)
+                }
                 Err(err) => (
                     compass_core::Config::default(),
-                    Some(format!("{err}; fix it before changing settings here")),
+                    Some(format!("{err}. Fix it before changing settings here.")),
                 ),
             },
             None => (compass_core::Config::default(), None),
@@ -208,7 +218,11 @@ impl LauncherApp {
                     }
                 }
             }
-            SettingsMessage::Saved { key, result } => match result {
+            SettingsMessage::Saved {
+                key,
+                result,
+                previous,
+            } => match result {
                 Ok(()) => {
                     self.apply_setting_live(&key);
                     Task::none()
@@ -218,6 +232,10 @@ impl LauncherApp {
                         let _ = self.update(Message::ThemeCancel);
                     }
                     if let Page::Settings(page) = &mut self.page {
+                        // The write was refused, so the switch goes back to
+                        // what the file still says.
+                        page.config = *previous;
+                        page.drafts.remove(&key);
                         page.notice = Some(reason);
                     }
                     Task::none()
@@ -327,6 +345,7 @@ impl LauncherApp {
         let Some(setting) = settings_catalog::find(&key) else {
             return Task::none();
         };
+        let previous = Box::new(page.config.clone());
         if let Err(reason) = page.apply(&key, value.clone()) {
             page.notice = Some(reason);
             return Task::none();
@@ -349,13 +368,18 @@ impl LauncherApp {
                         settings(SettingsMessage::Saved {
                             key: answer.clone(),
                             result,
+                            previous: previous.clone(),
                         })
                     },
                 )
             }
             None => {
                 let result = self.write_settings_file();
-                self.settings_message(SettingsMessage::Saved { key, result })
+                self.settings_message(SettingsMessage::Saved {
+                    key,
+                    result,
+                    previous,
+                })
             }
         };
         Task::batch([preview, saved])
@@ -395,6 +419,47 @@ impl LauncherApp {
             return;
         };
         let config = page.config.clone();
+        self.apply_config_key(&config, key);
+    }
+
+    /// `compass.json` changed on disk: everything this window holds of it is
+    /// brought in line, as a change in the settings view would, and an open
+    /// settings view shows the file as it now is.
+    pub(super) fn apply_reloaded_config(&mut self, config: &compass_core::Config) -> Task<Message> {
+        for key in [
+            "launcher.wrap_navigation",
+            "launcher.keybinding",
+            "launcher.quick_launch",
+            "launcher.close_on_focus_loss",
+            "launcher.hotkey",
+            "launcher.clock.enabled",
+            "launcher.appearance.preset",
+            "launcher.appearance.color_scheme",
+            "font.normal.family",
+            "providers.power.entrypoints.",
+            "providers.core.entrypoints.search-emojis.",
+        ] {
+            self.apply_config_key(config, key);
+        }
+        let theme = crate::theme::Theme::from_name(config.launcher().appearance().theme())
+            .unwrap_or_default();
+        if self.theme_preview.is_none() {
+            self.theme_choice = theme;
+        }
+        self.root_config = config.root_config();
+        self.app_index.apply_root_config(&self.root_config);
+        self.fallbacks = config.fallback_ids();
+        if let Page::Settings(page) = &mut self.page
+            && page.recorder.is_none()
+        {
+            page.config = config.clone();
+            page.drafts.clear();
+        }
+        Task::none()
+    }
+
+    /// Applies what `config` says about `key` to this window.
+    fn apply_config_key(&mut self, config: &compass_core::Config, key: &str) {
         let launcher = config.launcher();
         match key {
             "launcher.wrap_navigation" => self.wrap_navigation = launcher.wrap_navigation(),
@@ -475,7 +540,7 @@ impl LauncherApp {
             .font(self.font())
             .size(12)
             .color(if page.notice.is_some() {
-                palette.accent.to_iced()
+                palette.error().to_iced()
             } else {
                 palette.muted.to_iced()
             });

@@ -93,10 +93,23 @@ fn absent_root_settings_stay_absent_and_malformed_settings_are_rejected() {
         r#"{"favorites": [42]}"#,
         r#"{"fallbacks": false}"#,
     ] {
+        // A malformed setting no longer costs the file: it is reported, its
+        // default used, and the value kept as written.
+        let (config, issues) = Config::parse_checked(value, Path::new("config.json")).unwrap();
         assert!(
-            Config::parse(value, Path::new("config.json")).is_err(),
+            issues.iter().any(|issue| issue.is_invalid_value()),
             "{value}"
         );
+        assert!(
+            config
+                .root_config()
+                .favorites
+                .iter()
+                .all(|id| !id.is_empty())
+        );
+        let written = serde_json::to_value(&config).unwrap();
+        let original: serde_json::Value = serde_json::from_str(value).unwrap();
+        assert_eq!(written, original, "kept as written: {value}");
     }
 }
 
@@ -424,19 +437,21 @@ fn malformed_json_names_the_problem_and_where_it_is() {
 }
 
 #[test]
-fn a_wrongly_typed_field_is_a_clear_error() {
-    let err = Config::parse(
-        r#"{"launcher": {"max_results": "lots"}}"#,
+fn a_wrongly_typed_field_is_reported_and_the_rest_is_kept() {
+    let (config, issues) = Config::parse_checked(
+        r#"{"launcher": {"max_results": "lots", "hotkey": "alt+space"}}"#,
         Path::new("/test/compass.json"),
     )
-    .unwrap_err();
-
-    let rendered = err.to_string();
-    assert!(rendered.contains("invalid configuration"), "{rendered}");
+    .unwrap();
+    assert_eq!(config.launcher().hotkey(), "alt+space");
+    assert_eq!(config.launcher().max_results(), DEFAULT_MAX_RESULTS);
+    assert_eq!(issues.len(), 1);
+    let rendered = issues[0].to_string();
     assert!(
-        rendered.contains("invalid type") || rendered.contains("expected"),
+        rendered.starts_with("launcher.max_results has a value of the wrong type"),
         "{rendered}"
     );
+    assert!(rendered.contains("invalid type"), "{rendered}");
 }
 
 #[test]

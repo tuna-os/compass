@@ -377,6 +377,9 @@ pub struct AppFlags {
     /// Mirrors `appearance_link`: `None` is a test or a desktop without a
     /// Settings portal.
     pub typography_link: Option<crate::typography::TypographyLink>,
+    /// `compass.json` as it is read again after each change on disk, when
+    /// something is watching it. `None` in tests.
+    pub config_link: Option<crate::config_link::ConfigLink>,
 }
 
 impl Default for AppFlags {
@@ -447,6 +450,7 @@ impl Default for AppFlags {
             appearance_link: None,
             font_family: None,
             typography_link: None,
+            config_link: None,
         }
     }
 }
@@ -961,6 +965,8 @@ pub struct LauncherApp {
     font_family: Option<String>,
     /// Where later font changes arrive. See [`AppFlags::typography_link`].
     typography_link: Option<crate::typography::TypographyLink>,
+    /// Where `compass.json` arrives after a change. See [`AppFlags::config_link`].
+    config_link: Option<crate::config_link::ConfigLink>,
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
@@ -1285,6 +1291,7 @@ impl LauncherApp {
         app.appearance_link = flags.appearance_link;
         app.font_family = flags.font_family;
         app.typography_link = flags.typography_link;
+        app.config_link = flags.config_link;
     }
 
     /// Builds the state and opens the first window, for [`crate::run_resident`].
@@ -1362,6 +1369,7 @@ impl LauncherApp {
             appearance_link: None,
             font_family: None,
             typography_link: None,
+            config_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
@@ -1931,6 +1939,9 @@ impl LauncherApp {
         if let Some(link) = &self.typography_link {
             streams.push(link.subscription().map(Message::TypographyChanged));
         }
+        if let Some(link) = &self.config_link {
+            streams.push(link.subscription().map(Message::ConfigReloaded));
+        }
         // Each second while the clock shows; `clock_tick` redraws it only
         // when its interval comes round.
         if self.clock.is_some() && matches!(self.page, Page::Root) {
@@ -2156,6 +2167,7 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::ConfigReloaded(config) => self.apply_reloaded_config(&config),
             Message::ThemePreview(theme) => {
                 if self.theme_preview.is_none() {
                     self.theme_preview = Some(self.theme_choice);

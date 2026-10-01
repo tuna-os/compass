@@ -51,7 +51,10 @@ serde_json = "1"
 schemars = "1.2"
 # The C++ engine's settings.json is JSONC (comments, trailing commas); the
 # config migration reads it with dprint's parser. See config_migration.rs.
-jsonc-parser = { version = "0.33", features = ["serde"] }
+jsonc-parser = { version = "0.33", features = ["serde", "serde_json", "cst"] }
+# Which key of `compass.json` holds a wrongly typed value, so the rest of the
+# file still loads. See crates/compass-core/src/config_issues.rs.
+serde_path_to_error = "0.1"
 thiserror = "2"
 # niri's own IPC types (Request, Reply, Window, Workspace); the Hyprland socket is
 # hand-rolled. See CRATE-AUDIT "Compositor IPC".

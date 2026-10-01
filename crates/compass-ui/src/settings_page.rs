@@ -60,6 +60,9 @@ pub enum SettingsMessage {
         key: String,
         /// The answer.
         result: Result<(), String>,
+        /// The view's copy of the file before the change, put back when the
+        /// change is refused.
+        previous: Box<compass_core::Config>,
     },
     /// Start recording a shortcut.
     Record(RecordTarget),

@@ -67,6 +67,8 @@ pub struct Inputs<'a, B: BusProbe, F: FsProbe> {
     /// What probing the Wayland compositor found; `None` with no display or
     /// when the probe failed.
     pub wayland: Option<checks::WaylandFindings>,
+    /// What reading `compass.json` found.
+    pub config: &'a checks::ConfigFacts,
 }
 
 /// Runs every check, in report order.
@@ -81,10 +83,12 @@ pub async fn run<B: BusProbe, F: FsProbe>(inputs: &Inputs<'_, B, F>) -> Report {
         engine,
         input_server,
         ref wayland,
+        config,
     } = *inputs;
 
     let checks = vec![
         checks::engine(engine),
+        checks::config_file(config),
         checks::session_type(env),
         checks::desktop_environment(env, bus).await,
         checks::runtime_dir(env, socket),
@@ -130,6 +134,9 @@ pub async fn run_on_this_machine(socket: &SocketPath, engine: Engine) -> Report 
         .await
         .unwrap_or_default();
 
+    let config = tokio::task::spawn_blocking(gather_config)
+        .await
+        .unwrap_or_default();
     let inputs = Inputs {
         env: &env,
         fs: &fs,
@@ -139,6 +146,7 @@ pub async fn run_on_this_machine(socket: &SocketPath, engine: Engine) -> Report 
         daemon_listening,
         engine,
         input_server: &input_server,
+        config: &config,
         wayland: tokio::task::spawn_blocking(probe_wayland)
             .await
             .ok()
@@ -146,6 +154,26 @@ pub async fn run_on_this_machine(socket: &SocketPath, engine: Engine) -> Report 
     };
 
     run(&inputs).await
+}
+
+/// Reads `compass.json` and checks it, as the engine does when it starts.
+#[must_use]
+pub fn gather_config() -> checks::ConfigFacts {
+    let path = compass_core::config::default_config_path().ok();
+    let exists = path.as_ref().is_some_and(|path| path.exists());
+    let _ = compass_ui::theme::load_default_user_themes();
+    let problems = match compass_core::Config::load_with_issues() {
+        Ok((config, issues)) => Ok(crate::config_watch::check(&config, issues)
+            .iter()
+            .map(ToString::to_string)
+            .collect()),
+        Err(error) => Err(error.to_string()),
+    };
+    checks::ConfigFacts {
+        path,
+        exists,
+        problems,
+    }
 }
 
 /// Reads the facts on this machine. The engine's status is the caller's.
@@ -260,6 +288,13 @@ mod tests {
         (env, fs, bus, SocketPath::in_dir("/run/user/1000"))
     }
 
+    static CLEAN_CONFIG: std::sync::LazyLock<checks::ConfigFacts> =
+        std::sync::LazyLock::new(|| checks::ConfigFacts {
+            path: Some("/home/tester/.config/compass/compass.json".into()),
+            exists: true,
+            problems: Ok(Vec::new()),
+        });
+
     static HEALTHY_INPUT_SERVER: std::sync::LazyLock<checks::InputServerFacts> =
         std::sync::LazyLock::new(|| checks::InputServerFacts {
             enabled: true,
@@ -284,6 +319,7 @@ mod tests {
             daemon_listening: listening,
             engine: Engine::Rust,
             input_server: &HEALTHY_INPUT_SERVER,
+            config: &CLEAN_CONFIG,
             // The healthy machine is GNOME; the barren one has no display.
             wayland: env.get("WAYLAND_DISPLAY").map(|_| checks::WaylandFindings {
                 family: compass_wayland::compositor::Family::Gnome,
@@ -326,7 +362,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), count, "duplicate check names");
-        assert_eq!(count, 15);
+        assert_eq!(count, 16);
         assert!(
             report
                 .checks

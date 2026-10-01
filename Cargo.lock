@@ -982,7 +982,9 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "slug",
+ "strsim",
  "tempfile",
  "thiserror 2.0.20",
  "toml",
@@ -3344,6 +3346,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ff5a48f48971be8e762a6ff955725a0802b6e46c441057992da5a673db9fd3a"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5576,6 +5579,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

@@ -120,13 +120,26 @@ fn the_published_example_is_a_config_this_build_fully_understands() {
 }
 
 #[test]
-fn the_schema_admits_keys_it_does_not_know() {
-    // The config preserves unknown keys so a newer build's file survives an older build. A
-    // schema that forbade them would mark those files invalid in every editor.
+fn the_schema_flags_keys_it_does_not_declare_where_the_format_is_closed() {
+    // The types still keep an unknown key (a newer build's file survives an older build), but
+    // in an editor an undeclared key is far more often a typo, so the published schema flags
+    // it. The open objects -- preferences, the font -- stay open.
     let root = json_schema();
-    assert_ne!(root["additionalProperties"], Value::Bool(false));
+    assert_eq!(root["additionalProperties"], Value::Bool(false));
     let launcher = property(&root, &root, &["launcher"]);
-    assert_ne!(launcher["additionalProperties"], Value::Bool(false));
+    assert_eq!(launcher["additionalProperties"], Value::Bool(false));
+    let clock = property(&root, &root, &["launcher", "clock"]);
+    assert_eq!(clock["additionalProperties"], Value::Bool(false));
+    let provider = resolve(&root["$defs"]["RootProviderSettings"], &root);
+    assert_ne!(
+        provider["properties"]["preferences"]["additionalProperties"],
+        Value::Bool(false)
+    );
+    assert!(
+        root["properties"]["font"]
+            .get("additionalProperties")
+            .is_none()
+    );
 }
 
 #[test]

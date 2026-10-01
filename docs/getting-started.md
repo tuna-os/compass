@@ -103,7 +103,12 @@ Settings are stored in `~/.config/compass/compass.json`. The Flatpak keeps its o
 `~/.var/app/org.tunaos.compass/config/compass/compass.json`. Most settings can be changed with the
 **Open Settings** command, and the file has a
 [JSON Schema](https://github.com/tuna-os/compass/blob/main/packaging/schema/compass.schema.json)
-that editors can use for completion.
+that editors can use for completion and to flag misspelled keys.
+
+Changes to the file apply as soon as it is saved, whether you edit it by hand or run a command such
+as `compass theme set dracula`. A key Compass does not know, or a value of the wrong type, does not
+stop the rest of the file from loading: Compass uses the default for that setting and says what is
+wrong in its log, in `compass doctor` and at the bottom of the settings view.
 
 If you used Vicinae before, Compass moves its settings over on first start.
 

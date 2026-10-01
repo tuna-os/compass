@@ -197,6 +197,27 @@ pub fn migrate_value(mut settings: Map<String, Value>) -> Migration {
     }
 }
 
+/// Where Compass keeps what a top-level key of a Vicinae `settings.json`
+/// sets, for a key someone carried into `compass.json` by hand:
+/// `close_on_focus_loss` is `launcher.close_on_focus_loss`, and a section
+/// (`launcher_window`) points at the Compass section its keys moved to.
+#[must_use]
+pub fn compass_key_for(key: &str) -> Option<&'static str> {
+    if key == "theme" {
+        return Some("launcher.appearance.theme");
+    }
+    if let Some((_, to, _)) = DIRECT.iter().find(|(from, _, _)| *from == key) {
+        return Some(to);
+    }
+    DIRECT
+        .iter()
+        .find(|(from, _, _)| {
+            from.strip_prefix(key)
+                .is_some_and(|rest| rest.starts_with('.'))
+        })
+        .map(|(_, to, _)| to.rsplit_once('.').map_or(*to, |(section, _)| section))
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Kind {
     Bool,

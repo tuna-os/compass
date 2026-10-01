@@ -45,7 +45,7 @@ mod calculator;
 mod files;
 mod launch;
 mod openers;
-mod settings;
+pub(crate) mod settings;
 mod storage;
 mod workspaces;
 
@@ -182,8 +182,12 @@ impl EngineState {
         // A bad config is reported and then ignored rather than fatal. Refusing
         // to start because `max_results` is misspelled would be a worse outcome
         // than starting with the default and saying so.
-        let config = match Config::load() {
-            Ok(config) => config,
+        let config = match Config::load_with_issues() {
+            Ok((config, issues)) => {
+                let _ = compass_ui::theme::load_default_user_themes();
+                crate::config_watch::log_issues(&crate::config_watch::check(&config, issues));
+                config
+            }
             Err(err) => {
                 let fallback = Config::default();
                 tracing::warn!(error = %err, "using default configuration");
@@ -1345,7 +1349,7 @@ async fn sync_keywords(state: &Arc<RwLock<EngineState>>) {
 async fn input_server(state: &Arc<RwLock<EngineState>>, enable: Option<bool>) -> Response {
     if let Some(enabled) = enable {
         let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let mut config = Config::load().unwrap_or_default();
+            let mut config = Config::load()?;
             config.input_server_mut().set_enabled(Some(enabled));
             config.save_to(compass_core::config::default_config_path()?)?;
             Ok(())
@@ -3170,7 +3174,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 ));
             }
             let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                let mut config = Config::load().unwrap_or_default();
+                let mut config = Config::load()?;
                 config.set_font_family(&family);
                 config.save_to(compass_core::config::default_config_path()?)?;
                 Ok(())
@@ -3197,7 +3201,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 ));
             };
             let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                let mut config = Config::load().unwrap_or_default();
+                let mut config = Config::load()?;
                 config
                     .launcher_mut()
                     .appearance_mut()
@@ -3691,6 +3695,8 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     tokio::spawn(crate::catalog_watch::watch_applications(Arc::clone(&state)));
     // An extension a developer builds into place.
     tokio::spawn(crate::catalog_watch::watch_extensions(Arc::clone(&state)));
+    // `compass.json` edited by hand or by `compass theme set`.
+    tokio::spawn(crate::config_watch::run(Arc::clone(&state)));
 
     // Snippet keyword expansion: the input server, when `input_server.enabled`.
     {

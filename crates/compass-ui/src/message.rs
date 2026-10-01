@@ -466,6 +466,8 @@ pub enum Message {
     AppearanceChanged(crate::design::Appearance),
     /// The desktop's interface font family changed.
     TypographyChanged(String),
+    /// `compass.json` changed on disk and was read again.
+    ConfigReloaded(std::sync::Arc<compass_core::Config>),
     /// Preview a theme without persisting it (#153 live preview).
     ThemePreview(crate::theme::Theme),
     /// Commit the previewed theme to config.
