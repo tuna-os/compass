@@ -3747,6 +3747,21 @@ impl LauncherApp {
         }
     }
 
+    /// What Enter does to the selected root row, as the first action of its
+    /// panel names it; `None` with nothing selected.
+    fn root_primary_action(&self) -> Option<&'static str> {
+        Some(match self.selected_row()? {
+            RootRow::App(_) | RootRow::RhaiScript(_) => "Open",
+            RootRow::Command(_) | RootRow::Extension(_) => "Open command",
+            RootRow::Calculator => "Copy answer",
+            RootRow::Shortcut(_) => "Open shortcut",
+            RootRow::Script(_) => "Run script",
+            RootRow::Fallback(Fallback::Shortcut(_)) => "Open",
+            RootRow::Fallback(_) => "Open command",
+            RootRow::Update => "View release notes",
+        })
+    }
+
     /// The search field as the page on screen has it: its placeholder, its
     /// text, and the message typing sends (none where it is read-only).
     fn search_field(&self) -> (&str, &str, Option<OnInput>) {
@@ -4239,19 +4254,13 @@ impl LauncherApp {
         } else {
             column![field, body].width(Length::Fill)
         };
-        // The root search's status bar carries the clock as its title, as
-        // `scheduleNextClockTick` sets the navigation title.
-        let card_content = match (&self.page, &self.clock_text) {
-            (Page::Root, Some(clock)) if self.confirm.is_none() => card_content.push(
-                container(
-                    text(clock.as_str())
-                        .font(self.font())
-                        .size(12)
-                        .color(palette.muted.to_iced()),
-                )
-                .width(Length::Fill)
-                .padding(Padding::new(6.0).left(14)),
-            ),
+        // The root search's status bar: the clock as its title, as
+        // `scheduleNextClockTick` sets the navigation title, and on the
+        // right what Enter does and how to reach the other actions, as
+        // dmenu's footer and Raycast's action bar say it.
+        let card_content = match &self.page {
+            Page::Root if self.confirm.is_none() && self.power_confirm.is_none() => card_content
+                .push(self.footer(self.clock_text.as_deref(), self.root_primary_action())),
             _ => card_content,
         };
 
@@ -5341,7 +5350,7 @@ impl LauncherApp {
         if let Some(shortcut) = shortcut {
             line = line.push(Space::new().width(Length::Fill));
             line = line.push(
-                text(shortcut.to_owned())
+                text(compass_core::key_combo::badge(shortcut))
                     .font(self.font())
                     .size(f32::from(geometry.subtitle_size))
                     .color(
@@ -7029,6 +7038,28 @@ mod tests {
         assert_eq!(focused(&app), Some(Control::Back));
         let _ = app.update(pressed(Named::Enter));
         assert_eq!(app.onboarding_step(), Some(Step::Personalize));
+    }
+
+    #[test]
+    fn the_root_footer_names_enter_and_the_action_panel() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        let _ = app.update(Message::QueryChanged("fire".into()));
+        assert_eq!(app.root_primary_action(), Some("Open"));
+        let mut ui = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(800.0, 600.0),
+            app.view(),
+        );
+        for label in ["Open", "Actions", "Ctrl+B"] {
+            assert!(ui.find(label).is_ok(), "the footer has no {label:?}");
+        }
+        drop(ui);
+        let _ = app.update(Message::QueryChanged("zzzzqqq".into()));
+        assert!(
+            app.selected_row().is_none() || app.root_primary_action().is_some(),
+            "a row selected always says what Enter does"
+        );
     }
 
     #[test]
@@ -8917,9 +8948,9 @@ mod tests {
         let _ = app.update(Message::TogglePanel);
         assert_eq!(
             panel_titles(&app),
-            ["Open command", "Manage Fallback Actions"]
+            ["Open command", "Manage fallback actions"]
         );
-        let task = choose(&mut app, "Manage Fallback Actions");
+        let task = choose(&mut app, "Manage fallback actions");
         settle(&mut app, task);
         assert!(matches!(app.page, Page::Fallbacks(_)));
     }
@@ -8940,13 +8971,13 @@ mod tests {
             panel_titles(&app),
             [
                 "Uninstall",
-                "Copy Name",
+                "Copy name",
                 "Copy ID",
-                "Copy Path",
-                "Copy Author"
+                "Copy path",
+                "Copy author"
             ]
         );
-        let task = choose(&mut app, "Copy Author");
+        let task = choose(&mut app, "Copy author");
         assert_eq!(settle(&mut app, task), ["someone"]);
         assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
 
@@ -9072,12 +9103,12 @@ mod tests {
             panel_titles(&app),
             [
                 "Remove token set",
-                "Copy Access Token",
-                "Copy Scopes",
-                "Copy Expiration Date"
+                "Copy access token",
+                "Copy scopes",
+                "Copy expiration date"
             ]
         );
-        let task = choose(&mut app, "Copy Access Token");
+        let task = choose(&mut app, "Copy access token");
         assert_eq!(settle(&mut app, task), ["gho_token"]);
 
         let _ = app.update(Message::Command(UiCommand::Show));
@@ -11104,12 +11135,12 @@ mod tests {
         let skip = app
             .panel
             .as_ref()
-            .and_then(|panel| panel.row_titled("Skip This Version"))
+            .and_then(|panel| panel.row_titled("Skip this version"))
             .expect("the panel offers to skip");
         assert!(
             app.panel
                 .as_ref()
-                .and_then(|panel| panel.row_titled("View Release Notes"))
+                .and_then(|panel| panel.row_titled("View release notes"))
                 .is_some()
         );
         let task = app.update(Message::PanelClicked(skip));
@@ -11350,7 +11381,7 @@ mod tests {
         let row = app
             .panel
             .as_ref()
-            .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+            .and_then(|panel| panel.row_titled("Set global shortcut"))
             .expect("the panel offers a shortcut");
         // Attached from here: the fake engine searches nothing.
         app.backend = Some(backend.clone());
@@ -11401,7 +11432,7 @@ mod tests {
             let row = app
                 .panel
                 .as_ref()
-                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .and_then(|panel| panel.row_titled("Set global shortcut"))
                 .expect("the panel offers a shortcut");
             app.backend = Some(backend);
             let task = app.update(Message::PanelClicked(row));
@@ -11460,7 +11491,7 @@ mod tests {
             let row = app
                 .panel
                 .as_ref()
-                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .and_then(|panel| panel.row_titled("Set global shortcut"))
                 .expect("the panel offers a shortcut");
             let _ = app.update(Message::PanelClicked(row));
             assert!(
@@ -12999,7 +13030,7 @@ mod tests {
         assert_eq!(
             launcher.0.lock().unwrap().last(),
             Some(&None),
-            "Open Application"
+            "Open application"
         );
 
         open_builtin(&mut app, "browse apps", "commands:browse-apps");
@@ -13013,10 +13044,10 @@ mod tests {
         assert_eq!(
             titles,
             [
-                "Open Application",
+                "Open application",
                 "New Window",
-                "Copy App ID",
-                "Copy App Location"
+                "Copy app ID",
+                "Copy app location"
             ],
             "no Open Location without an engine to open it"
         );
@@ -13199,7 +13230,7 @@ mod tests {
             .iter()
             .flat_map(|section| section.actions.iter().map(|a| a.title.clone()))
             .collect();
-        assert_eq!(titles, ["Activate", "Browse Menu", "Secondary Activate"]);
+        assert_eq!(titles, ["Activate", "Browse menu", "Secondary activate"]);
         let _ = app.update(Message::TogglePanel);
 
         let _ = app.update(Message::TrayQueryChanged("network".into()));
@@ -13215,7 +13246,7 @@ mod tests {
         open_builtin(&mut app, "search tray", "commands:search-tray");
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let _ = app.update(Message::PanelFilterChanged("Browse Menu".into()));
+        let _ = app.update(Message::PanelFilterChanged("Browse menu".into()));
         let task = app.update(Message::PanelActivate);
         settle(&mut app, task);
         let Page::Tray(page) = &app.page else {
@@ -14987,18 +15018,18 @@ mod tests {
             panel_titles(&app),
             [
                 "Open",
-                "Focus Window",
-                "Close Window",
+                "Focus window",
+                "Close window",
                 "Copy name",
                 "Copy path",
-                "Quit Application",
-                "Force Quit Application",
-                "Copy Deeplink",
+                "Quit application",
+                "Force quit application",
+                "Copy deeplink",
                 "Reset ranking",
                 "Add to favorites",
                 "Set alias",
-                "Set Global Shortcut",
-                "Open Preferences",
+                "Set global shortcut",
+                "Open preferences",
                 "Copy ID",
                 "Disable item"
             ]
@@ -15018,7 +15049,7 @@ mod tests {
             .unwrap();
         assert_eq!(quit_row.actions[0].shortcut.as_deref(), Some("ctrl+q"));
 
-        let task = choose(&mut app, "Force Quit Application");
+        let task = choose(&mut app, "Force quit application");
         settle(&mut app, task);
         assert_eq!(
             windows.quits.lock().unwrap().as_slice(),
@@ -15027,11 +15058,11 @@ mod tests {
 
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Quit Application");
+        let task = choose(&mut app, "Quit application");
         settle(&mut app, task);
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Focus Window");
+        let task = choose(&mut app, "Focus window");
         settle(&mut app, task);
         assert_eq!(
             windows.quits.lock().unwrap().last(),
@@ -15058,7 +15089,7 @@ mod tests {
         app.search();
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Quit Application");
+        let task = choose(&mut app, "Quit application");
         settle(&mut app, task);
         assert_eq!(app.error.as_deref(), Some("Failed to quit files.desktop"));
     }
@@ -15133,7 +15164,7 @@ mod tests {
         app.search();
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Quit Application");
+        let task = choose(&mut app, "Quit application");
         settle(&mut app, task);
         assert_eq!(app.hud_content(), Some(&crate::hud::Hud::new("Quit Files")));
         assert!(matches!(app.page, Page::Root), "the launcher hid");
@@ -15142,7 +15173,7 @@ mod tests {
         app.search();
         let task = app.update(Message::TogglePanel);
         settle(&mut app, task);
-        let task = choose(&mut app, "Force Quit Application");
+        let task = choose(&mut app, "Force quit application");
         settle(&mut app, task);
         assert_eq!(
             app.hud_content().map(|hud| hud.text.as_str()),
@@ -15298,13 +15329,13 @@ mod tests {
         assert_eq!(
             panel_titles(&app),
             [
-                "Focus Window",
-                "Close Window",
-                "Quit Application",
-                "Force Quit Application"
+                "Focus window",
+                "Close window",
+                "Quit application",
+                "Force quit application"
             ]
         );
-        let task = choose(&mut app, "Force Quit Application");
+        let task = choose(&mut app, "Force quit application");
         settle(&mut app, task);
         assert_eq!(windows.window_quits.lock().unwrap().as_slice(), [(7, true)]);
 
@@ -15314,10 +15345,10 @@ mod tests {
         let _ = app.update(Message::TogglePanel);
         assert_eq!(
             panel_titles(&app),
-            ["Focus Window", "Close Window"],
+            ["Focus window", "Close window"],
             "no application to quit"
         );
-        let task = choose(&mut app, "Close Window");
+        let task = choose(&mut app, "Close window");
         settle(&mut app, task);
         assert_eq!(windows.closed.lock().unwrap().as_slice(), [9]);
     }
@@ -15407,7 +15438,7 @@ mod tests {
             .iter()
             .map(|action| action.title.clone())
             .collect();
-        assert_eq!(titles[..2], ["Focus Window", "Open Application"]);
+        assert_eq!(titles[..2], ["Focus window", "Open application"]);
         let _ = app.update(Message::TogglePanel);
         let task = app.update(pressed(iced::keyboard::key::Named::Enter));
         settle(&mut app, task);
@@ -15420,7 +15451,7 @@ mod tests {
         let _ = app.open_apps_panel().expect("a panel");
         assert_eq!(
             app.panel.as_ref().unwrap().sections[0].actions[0].title,
-            "Open Application"
+            "Open application"
         );
     }
 
@@ -16733,7 +16764,7 @@ mod view_tests {
                     iced::Size::new(288.0, 34.0),
                     app.panel_item("Open", Some("enter"), true),
                 );
-                for label in ["Open", "enter"] {
+                for label in ["Open", "Enter"] {
                     let bounds = row.find(label).unwrap().bounds();
                     assert!(
                         (bounds.y + bounds.height / 2.0 - 17.0).abs() < 0.1,

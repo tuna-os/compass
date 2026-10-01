@@ -134,7 +134,7 @@ fn a_root_rows_open_preferences_opens_the_settings_at_its_provider() {
     let row = app
         .panel
         .as_ref()
-        .and_then(|panel| panel.row_titled("Open Preferences"))
+        .and_then(|panel| panel.row_titled("Open preferences"))
         .expect("the panel offers the preferences");
     let task = app.update(Message::PanelClicked(row));
     settle(&mut app, task);

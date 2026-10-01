@@ -1,6 +1,6 @@
 //! The root search's Update section (`RootUpdateSection`): a newer Compass
 //! release, above everything else for the empty query, with its release notes
-//! and "Skip This Version". Whether there is one is the engine's
+//! and "Skip this version". Whether there is one is the engine's
 //! (`compass::updates`); Compass checks and never installs, so the row's
 //! primary action opens the release page where the C++'s installs.
 
@@ -102,7 +102,7 @@ impl LauncherApp {
         self.open_link(offer.release_url.clone())
     }
 
-    /// "Skip This Version": the engine remembers the tag and the row goes.
+    /// "Skip this version": the engine remembers the tag and the row goes.
     fn skip_update(&mut self) -> Task<Message> {
         let (Some(offer), Some(backend)) = (&self.update, self.backend.clone()) else {
             return Task::none();
@@ -126,10 +126,10 @@ impl LauncherApp {
         self.panel = Some(PanelState::new(vec![PanelSection {
             name: String::new(),
             actions: vec![
-                Action::new("View Release Notes")
+                Action::new("View release notes")
                     .with_id(RELEASE_NOTES)
                     .with_shortcut("enter"),
-                Action::new("Skip This Version")
+                Action::new("Skip this version")
                     .with_id(SKIP)
                     .with_shortcut("ctrl+x"),
             ],

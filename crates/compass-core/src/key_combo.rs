@@ -380,9 +380,55 @@ impl Recorder {
     }
 }
 
+/// How a shortcut reads on a badge: `ctrl+shift+c` is `Ctrl+Shift+C`,
+/// `enter` is `Enter` and `ctrl+shift+down` is `Ctrl+Shift+↓`, whichever
+/// spelling the shortcut was written in. Text that is not a shortcut has each
+/// part capitalised.
+#[must_use]
+pub fn badge(shortcut: &str) -> String {
+    let alias = |part: &str| match part.to_lowercase().as_str() {
+        "enter" => "return".to_owned(),
+        "up" => "arrowup".to_owned(),
+        "down" => "arrowdown".to_owned(),
+        "left" => "arrowleft".to_owned(),
+        "right" => "arrowright".to_owned(),
+        "esc" => "escape".to_owned(),
+        "del" => "delete".to_owned(),
+        _ => part.to_owned(),
+    };
+    let spelled: Vec<String> = shortcut.split('+').map(alias).collect();
+    if let Some(combo) = KeyCombo::parse(&spelled.join("+")) {
+        return combo.display_tokens().join("+");
+    }
+    shortcut
+        .split('+')
+        .map(|part| {
+            let mut chars = part.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<String>>()
+        .join("+")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_badge_reads_the_same_whatever_the_spelling() {
+        assert_eq!(badge("enter"), "Enter");
+        assert_eq!(badge("Enter"), "Enter");
+        assert_eq!(badge("ctrl+shift+c"), "Ctrl+Shift+C");
+        assert_eq!(badge("Ctrl+Shift+C"), "Ctrl+Shift+C");
+        assert_eq!(badge("ctrl+b"), "Ctrl+B");
+        assert_eq!(badge("ctrl+enter"), "Ctrl+Enter");
+        assert_eq!(badge("shift+enter"), "Shift+Enter");
+        assert_eq!(badge("ctrl+shift+down"), "Ctrl+Shift+↓");
+        assert_eq!(badge("ctrl+x"), "Ctrl+X");
+    }
 
     fn named(name: &str) -> Key {
         Key::Named(name.to_owned())

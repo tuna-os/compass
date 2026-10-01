@@ -106,7 +106,7 @@ impl LauncherApp {
     pub(super) fn footer<'a>(
         &'a self,
         title: Option<&'a str>,
-        primary: &'a str,
+        primary: Option<&'a str>,
     ) -> Element<'a, Message> {
         let palette = self.palette();
         let label = |value: &'a str, strong: bool| {
@@ -116,16 +116,18 @@ impl LauncherApp {
                 palette.muted.to_iced()
             })
         };
-        let line = row![
+        let mut line = row![
             label(title.unwrap_or(""), true),
-            Space::new().width(Length::Fill),
-            label(primary, true),
-            label("↵", false),
-            label("Actions", true),
-            label("Ctrl+B", false),
+            Space::new().width(Length::Fill)
         ]
         .spacing(8)
         .align_y(Alignment::Center);
+        if let Some(primary) = primary {
+            line = line.push(label(primary, true)).push(label("↵", false));
+        }
+        let line = line
+            .push(label("Actions", true))
+            .push(label("Ctrl+B", false));
         container(line)
             .width(Length::Fill)
             .padding(Padding::new(6.0).left(14).right(14))

@@ -1192,7 +1192,7 @@ impl LauncherApp {
                             self.settings_ring(
                                 page,
                                 &Control::Link(offer.release_url.clone()),
-                                self.settings_button("View Release Notes".to_owned(), 13.0)
+                                self.settings_button("View release notes".to_owned(), 13.0)
                                     .style(move |_: &iced::Theme, status| {
                                         adwaita::suggested_button(palette, status)
                                     })

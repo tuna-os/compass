@@ -26,13 +26,13 @@ pub const SECTION_TITLE: &str = "Applications ({count})";
 pub const HIDDEN_ACCESSORY: &str = "Hidden";
 
 /// The title of the action that launches the application.
-pub const OPEN_TITLE: &str = "Open Application";
+pub const OPEN_TITLE: &str = "Open application";
 
 /// The title of the action that copies the desktop-entry id.
-pub const COPY_ID_TITLE: &str = "Copy App ID";
+pub const COPY_ID_TITLE: &str = "Copy app ID";
 
 /// The title of the action that copies the path to the desktop file.
-pub const COPY_LOCATION_TITLE: &str = "Copy App Location";
+pub const COPY_LOCATION_TITLE: &str = "Copy app location";
 
 /// The search field's placeholder.
 pub const PLACEHOLDER: &str = "Search apps...";
@@ -281,7 +281,7 @@ pub fn action_panel(app: &BrowseApp, windows: &[String], location_opener: bool) 
             kind: ActionKind::FocusWindow {
                 window: window.clone(),
             },
-            title: "Focus Window".to_owned(),
+            title: "Focus window".to_owned(),
             shortcut: None,
             section: Section::Main,
             clear_search: false,
@@ -316,7 +316,7 @@ pub fn action_panel(app: &BrowseApp, windows: &[String], location_opener: bool) 
     if location_opener {
         actions.push(PanelAction {
             kind: ActionKind::OpenLocation,
-            title: "Open Location".to_owned(),
+            title: "Open location".to_owned(),
             shortcut: Some(Shortcut::Keybind(OPEN_KEYBIND)),
             section: Section::Utils,
             clear_search: false,

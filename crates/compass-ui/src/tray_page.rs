@@ -252,8 +252,8 @@ impl ItemAction {
     pub const fn title(self) -> &'static str {
         match self {
             Self::Activate => "Activate",
-            Self::BrowseMenu => "Browse Menu",
-            Self::SecondaryActivate => "Secondary Activate",
+            Self::BrowseMenu => "Browse menu",
+            Self::SecondaryActivate => "Secondary activate",
         }
     }
 }
