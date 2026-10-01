@@ -2411,7 +2411,9 @@ impl LauncherApp {
             | Message::OnboardingJump(_)
             | Message::OnboardingTheme(_)
             | Message::OnboardingOpen(_)
-            | Message::OnboardingLinkOpened(_) => self.onboarding_message(message),
+            | Message::OnboardingLinkOpened(_)
+            | Message::OnboardingInstall(_)
+            | Message::OnboardingInstalled(..) => self.onboarding_message(message),
             Message::ActionDone(Some(hud), Ok(())) => self.show_hud(hud),
             Message::ActionDone(None, Ok(())) => self.conceal(),
             Message::ActionDone(_, Err(reason)) => {
@@ -6864,6 +6866,8 @@ mod tests {
         );
 
         let _ = app.update(Message::OnboardingContinue);
+        assert_eq!(app.onboarding_step(), Some(Step::Extensions));
+        let _ = app.update(Message::OnboardingContinue);
         assert_eq!(app.onboarding_step(), Some(Step::Complete));
         assert!(onboarding::should_show(&path, false), "not before Finish");
         let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
@@ -6878,14 +6882,14 @@ mod tests {
         let path = dir.path().join(onboarding::FILE_NAME);
         let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
         app.open_onboarding(path.clone());
-        let _ = app.update(Message::OnboardingJump(2));
+        let _ = app.update(Message::OnboardingJump(3));
         assert_eq!(
             app.onboarding_step(),
             Some(onboarding::Step::Complete),
             "a dot goes straight to its step"
         );
         let _ = app.update(Message::OnboardingBack);
-        assert_eq!(app.onboarding_step(), Some(onboarding::Step::Personalize));
+        assert_eq!(app.onboarding_step(), Some(onboarding::Step::Extensions));
         let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
         assert!(!app.showing_onboarding());
         assert!(!path.exists(), "the next start asks again");
@@ -6900,6 +6904,7 @@ mod tests {
         for (step, expected) in [
             (Step::Welcome, ["Welcome to Compass", "Continue"]),
             (Step::Personalize, ["Make it your own", "Open Docs"]),
+            (Step::Extensions, ["Add extensions", "Install"]),
             (Step::Complete, ["Setup complete", "Finish"]),
         ] {
             assert_eq!(app.onboarding_step(), Some(step));
@@ -6914,6 +6919,159 @@ mod tests {
             drop(ui);
             let _ = app.update(Message::OnboardingContinue);
         }
+    }
+
+    /// Clicks `label` on the onboarding card, as a pointer would, and runs
+    /// what the click sends to the end.
+    fn click_onboarding(app: &mut LauncherApp, label: &str) {
+        let messages: Vec<_> = {
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            ui.click(label)
+                .unwrap_or_else(|_| panic!("{label:?} is not on the card"));
+            ui.into_messages().collect()
+        };
+        for message in messages {
+            let task = app.update(message);
+            settle(app, task);
+        }
+    }
+
+    fn onboarding_page(app: &LauncherApp) -> &crate::onboarding_page::OnboardingPage {
+        match &app.page {
+            Page::Onboarding(page) => page,
+            _ => panic!("the flow is not on screen"),
+        }
+    }
+
+    /// Every button of the flow, clicked: each opens its URL or does its
+    /// action, and none leads to upstream Vicinae.
+    #[test]
+    fn every_onboarding_button_does_what_it_says() {
+        use compass_core::onboarding::{self, Install, RECOMMENDED_EXTENSIONS, Step};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compass").join(onboarding::FILE_NAME);
+        let first = &RECOMMENDED_EXTENSIONS[0];
+        let backend = Arc::new(TestBackend {
+            store_rows: std::sync::Mutex::new(vec![crate::backend::StoreRow {
+                id: first.id(),
+                name: first.name.into(),
+                author: first.author.into(),
+                title: first.title.into(),
+                ..crate::backend::StoreRow::default()
+            }]),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        app.open_onboarding(path.clone());
+
+        click_onboarding(&mut app, "Continue");
+        assert_eq!(app.onboarding_step(), Some(Step::Personalize));
+        click_onboarding(&mut app, "Open Docs");
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            ["https://tunaos.org/docs/compass/getting-started#set-a-keyboard-shortcut"]
+        );
+        click_onboarding(&mut app, "Back");
+        assert_eq!(app.onboarding_step(), Some(Step::Welcome));
+        click_onboarding(&mut app, "Continue");
+        click_onboarding(&mut app, "Continue");
+        assert_eq!(app.onboarding_step(), Some(Step::Extensions));
+
+        click_onboarding(&mut app, "Install");
+        assert_eq!(
+            onboarding_page(&app).extensions.state(0),
+            Some(Install::Installed),
+            "the first Install installs the first recommendation"
+        );
+        assert!(
+            backend.store_rows.lock().unwrap()[0].installed,
+            "through the store's own install call"
+        );
+        click_onboarding(&mut app, "Install");
+        let page = onboarding_page(&app);
+        assert_eq!(page.extensions.state(1), Some(Install::Failed));
+        let notice = page.extensions.notice().expect("the failure is said");
+        assert!(
+            notice.starts_with(&format!(
+                "Could not install {}: ",
+                RECOMMENDED_EXTENSIONS[1].title
+            )) && notice.ends_with("install it later from the Extension Store."),
+            "{notice}"
+        );
+        {
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            assert!(ui.find(notice).is_ok(), "and shown on the card");
+            assert!(ui.find("Try Again").is_ok());
+            assert!(ui.find("Installed").is_ok());
+        }
+        click_onboarding(&mut app, "Continue");
+        assert_eq!(
+            app.onboarding_step(),
+            Some(Step::Complete),
+            "a failure never blocks"
+        );
+
+        {
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            assert!(ui.find("Compass is open source software.").is_ok());
+            assert!(ui.find("Sponsor").is_err(), "Compass has no sponsor page");
+        }
+        click_onboarding(&mut app, "GitHub");
+        assert_eq!(
+            backend
+                .opened_urls
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("https://github.com/tuna-os/compass")
+        );
+        assert!(
+            backend
+                .opened_urls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|url| !url.contains("vicinae")),
+            "no button leads upstream"
+        );
+        click_onboarding(&mut app, "Finish");
+        assert!(!app.showing_onboarding());
+        assert!(!onboarding::should_show(&path, false), "Finish records it");
+    }
+
+    /// Without the engine, Install says why and the flow goes on.
+    #[test]
+    fn installing_without_the_engine_says_why_and_goes_on() {
+        use compass_core::onboarding::{Install, Step};
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        let _ = app.update(Message::OnboardingJump(2));
+        assert_eq!(app.onboarding_step(), Some(Step::Extensions));
+        click_onboarding(&mut app, "Install");
+        let page = onboarding_page(&app);
+        assert_eq!(page.extensions.state(0), Some(Install::Failed));
+        assert!(
+            page.extensions
+                .notice()
+                .is_some_and(|notice| notice.contains("needs the Compass engine"))
+        );
+        click_onboarding(&mut app, "Continue");
+        assert_eq!(app.onboarding_step(), Some(Step::Complete));
     }
 
     #[test]

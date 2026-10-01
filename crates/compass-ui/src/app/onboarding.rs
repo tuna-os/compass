@@ -1,6 +1,8 @@
-//! The first-run flow in the launcher: `OnboardingWindow.qml`'s three Linux
-//! steps (welcome, "Make it your own", "Setup complete") with Back, Continue
-//! and the step dots, Enter to continue and Escape to close.
+//! The first-run flow in the launcher: `OnboardingWindow.qml`'s Linux steps
+//! (welcome, "Make it your own", "Setup complete") with Back, Continue and the
+//! step dots, Enter to continue and Escape to close, and Compass's own "Add
+//! extensions" step before the last, which installs through the same backend
+//! call as the store's detail page.
 //!
 //! Finishing records the flow in `onboarding.json` and hides, as
 //! `OnboardingWindow::finish`; closing does not record it, so the next start
@@ -22,11 +24,17 @@ const COMPASS_LOGO: &[u8] = include_bytes!("../../../../extra/compass.svg");
 /// takes the C++'s other branch: bind a key to `compass toggle`.
 const SHORTCUTS_AVAILABLE: bool = false;
 
+/// Why Install did nothing, as the store pages say it.
+const NEEDS_ENGINE: &str = "Installing extensions needs the Compass engine";
+
 impl LauncherApp {
     /// Opens the flow at its first step, recording to `state_path`.
-    pub(super) fn open_onboarding(&mut self, state_path: std::path::PathBuf) {
+    pub fn open_onboarding(&mut self, state_path: std::path::PathBuf) {
         let files = crate::theme::load_user_themes(&self.theme_dirs);
-        self.page = Page::Onboarding(Box::new(OnboardingPage::new(state_path, files)));
+        let extensions = self.app_index.extensions();
+        let installed = |id: &str| extensions.iter().any(|command| command.extension_id == id);
+        let page = OnboardingPage::new(state_path, files, installed);
+        self.page = Page::Onboarding(Box::new(page));
     }
 
     /// Whether the flow is on screen. For tests.
@@ -110,8 +118,52 @@ impl LauncherApp {
                 page.notice = Some(reason);
                 Task::none()
             }
+            Message::OnboardingInstall(index) => {
+                let Some(recommendation) = page.extensions.start(index) else {
+                    return Task::none();
+                };
+                let Some(backend) = self.backend.clone() else {
+                    page.extensions
+                        .finished(index, Err(NEEDS_ENGINE.to_owned()));
+                    return Task::none();
+                };
+                let (store, author, name) = (
+                    recommendation.store,
+                    recommendation.author.to_owned(),
+                    recommendation.name.to_owned(),
+                );
+                Task::perform(
+                    async move { backend.store_install(store, author, name).await },
+                    move |result| Message::OnboardingInstalled(index, result),
+                )
+            }
+            Message::OnboardingInstalled(index, result) => {
+                let installed = result.is_ok();
+                page.extensions.finished(index, result.map(|_| ()));
+                if installed {
+                    self.app_index.rescan_extensions();
+                }
+                Task::none()
+            }
             _ => Task::none(),
         }
+    }
+
+    /// A step's bordered box of rows.
+    fn onboarding_box<'a>(&self, rows: Element<'a, Message>) -> Element<'a, Message> {
+        let border = self.palette().border.to_iced();
+        container(rows)
+            .padding(14)
+            .width(Length::Fixed(480.0))
+            .style(move |_: &Theme| container::Style {
+                border: Border {
+                    color: border,
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
     }
 
     /// The flow's card: the step, then Back, the dots and Continue.
@@ -180,20 +232,47 @@ impl LauncherApp {
                     ),
                 ]
                 .align_y(Alignment::Center);
-                let border = palette.border.to_iced();
-                content = content.push(
-                    container(column![theme_row, hotkey_row].spacing(14))
-                        .padding(14)
-                        .width(Length::Fixed(480.0))
-                        .style(move |_: &Theme| container::Style {
-                            border: Border {
-                                color: border,
-                                width: 1.0,
-                                radius: 8.0.into(),
-                            },
-                            ..container::Style::default()
-                        }),
-                );
+                content = content
+                    .push(self.onboarding_box(column![theme_row, hotkey_row].spacing(14).into()));
+            }
+            Step::Extensions => {
+                let mut rows = column![].spacing(6);
+                for (index, recommendation) in onboarding::RECOMMENDED_EXTENSIONS.iter().enumerate()
+                {
+                    let state = page
+                        .extensions
+                        .state(index)
+                        .unwrap_or(onboarding::Install::Available);
+                    let install = button(text(state.label()).font(self.font()).size(13))
+                        .on_press_maybe(
+                            state
+                                .can_install()
+                                .then_some(Message::OnboardingInstall(index)),
+                        )
+                        .padding(Padding::new(6.0).left(14).right(14));
+                    rows = rows.push(
+                        row![
+                            column![
+                                text(recommendation.title).font(self.font()).size(14),
+                                small(recommendation.description),
+                            ]
+                            .width(Length::Fill),
+                            install,
+                        ]
+                        .align_y(Alignment::Center),
+                    );
+                }
+                // Inside the box and small: a store error can run to three
+                // lines, and the card's height is fixed.
+                if let Some(notice) = page.extensions.notice() {
+                    rows = rows.push(
+                        text(notice)
+                            .font(self.font())
+                            .size(12)
+                            .color(palette.text.to_iced()),
+                    );
+                }
+                content = content.push(self.onboarding_box(rows.into()));
             }
             Step::Complete => {
                 content = content

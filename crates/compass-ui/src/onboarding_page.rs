@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use compass_core::onboarding::Flow;
+use compass_core::onboarding::{Extensions, Flow};
 
 use crate::theme::Theme;
 
@@ -31,13 +31,16 @@ pub struct OnboardingPage {
     pub state_path: PathBuf,
     /// Why something did not happen (a theme not kept, a link not opened).
     pub notice: Option<String>,
+    /// The extensions step's recommendations and their installs.
+    pub extensions: Extensions,
 }
 
 impl OnboardingPage {
     /// The flow from its first step, offering the curated themes and
-    /// `files`; Linux has no permissions step.
+    /// `files`, and recommending the extensions `installed` does not know
+    /// by id; Linux has no permissions step.
     #[must_use]
-    pub fn new(state_path: PathBuf, files: Vec<Theme>) -> Self {
+    pub fn new(state_path: PathBuf, files: Vec<Theme>, installed: impl Fn(&str) -> bool) -> Self {
         let mut themes: Vec<ThemeOption> = Theme::ALL.into_iter().map(ThemeOption).collect();
         themes.extend(files.into_iter().map(ThemeOption));
         Self {
@@ -45,6 +48,7 @@ impl OnboardingPage {
             themes,
             state_path,
             notice: None,
+            extensions: Extensions::new(installed),
         }
     }
 }
@@ -55,9 +59,9 @@ mod tests {
 
     #[test]
     fn the_dropdown_offers_the_curated_themes_by_title() {
-        let page = OnboardingPage::new(PathBuf::from("/nonexistent"), Vec::new());
+        let page = OnboardingPage::new(PathBuf::from("/nonexistent"), Vec::new(), |_| false);
         assert_eq!(page.themes.len(), Theme::ALL.len());
         assert_eq!(page.themes[0].to_string(), Theme::ALL[0].title());
-        assert_eq!(page.flow.count(), 3, "no permissions step on Linux");
+        assert_eq!(page.flow.count(), 4, "no permissions step on Linux");
     }
 }

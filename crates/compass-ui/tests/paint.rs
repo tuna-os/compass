@@ -488,3 +488,107 @@ fn the_card_shadow_fades_out_before_every_edge() {
         }
     }
 }
+
+/// EVERY ONBOARDING STEP PAINTS ITS HEADING AND ITS BUTTONS.
+///
+/// The first-run flow is the first thing a new user sees, and the steps hold
+/// buttons that `iced_test` can find without their being visible. Each
+/// step's heading and primary button must paint glyphs over the surface, in
+/// both appearances. With `COMPASS_UI_SCREENSHOT_DIR` set, every frame is
+/// also written there, for review.
+#[test]
+fn every_onboarding_step_paints_its_heading_and_buttons() {
+    use compass_core::onboarding::{Flow, Step};
+    let steps = Flow::new(false).count();
+    for appearance in [Appearance::Light, Appearance::Dark] {
+        let palette = Theme::System.palette(appearance);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        let _ = app.update(Message::AppearanceChanged(appearance));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        for position in 0..steps {
+            let step = app.onboarding_step().expect("the flow is on screen");
+            let primary = if position + 1 == steps {
+                "Finish"
+            } else {
+                "Continue"
+            };
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            let heading = ui
+                .find(step.heading())
+                .unwrap_or_else(|_| panic!("{step:?}: no heading"))
+                .bounds();
+            let button = ui
+                .find(primary)
+                .unwrap_or_else(|_| panic!("{step:?}: no {primary}"))
+                .bounds();
+            let snapshot = ui.snapshot(&app.theme()).expect("the frame renders");
+            let out = tempfile::tempdir().expect("tempdir");
+            snapshot
+                .matches_image(out.path().join("frame"))
+                .expect("the frame is written");
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                let name = format!("onboarding-{}-{}-{step:?}", position + 1, appearance.name());
+                let _ = snapshot.matches_image(std::path::PathBuf::from(&directory).join(name));
+            }
+            drop(ui);
+            let file = std::fs::read_dir(out.path())
+                .expect("the snapshot directory")
+                .find_map(|entry| {
+                    let path = entry.ok()?.path();
+                    path.extension().is_some_and(|x| x == "png").then_some(path)
+                })
+                .expect("the snapshot wrote a PNG");
+            let image = image::open(&file).expect("the PNG decodes").to_rgba8();
+            let (width, height) = image.dimensions();
+            let frame = Frame {
+                width,
+                height,
+                rgba: image.into_raw(),
+                renderer: String::new(),
+            };
+            let glyph = 1.0 - frame.share(heading, palette.surface);
+            assert!(
+                (0.05..0.7).contains(&glyph),
+                "{appearance:?} {step:?}: {glyph:.3} of the heading box is not surface"
+            );
+            let fill = frame.share(button, palette.surface);
+            assert!(
+                fill < 0.5,
+                "{appearance:?} {step:?}: {primary} is {fill:.3} surface, so it is not drawn"
+            );
+            if step == Step::Extensions {
+                // No engine here, so Install fails as it does offline: the
+                // reason shows and Continue stays on the card.
+                let _ = app.update(Message::OnboardingInstall(0));
+                let mut ui = iced_test::Simulator::with_size(
+                    iced::Settings::default(),
+                    iced::Size::new(800.0, 600.0),
+                    app.view(),
+                );
+                assert!(ui.find("Try Again").is_ok(), "{appearance:?}");
+                let continue_button = ui.find("Continue").expect("Continue").bounds();
+                assert!(
+                    continue_button.y + continue_button.height <= 600.0,
+                    "{appearance:?}: the notice pushed Continue off the card"
+                );
+                if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                    let name = format!(
+                        "onboarding-{}-{}-Extensions-failed",
+                        position + 1,
+                        appearance.name()
+                    );
+                    let snapshot = ui.snapshot(&app.theme()).expect("the frame renders");
+                    let _ = snapshot.matches_image(std::path::PathBuf::from(&directory).join(name));
+                }
+            }
+            if step != Step::Complete {
+                let _ = app.update(Message::OnboardingContinue);
+            }
+        }
+    }
+}

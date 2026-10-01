@@ -553,6 +553,10 @@ pub enum Message {
     OnboardingOpen(&'static str),
     /// The link opened, or why not.
     OnboardingLinkOpened(Result<(), String>),
+    /// Install was pressed on this recommended extension.
+    OnboardingInstall(usize),
+    /// That install finished: the installed id and title, or why not.
+    OnboardingInstalled(usize, Result<(String, String), String>),
     /// Configure Fallback Commands' filter changed.
     FallbacksQueryChanged(String),
     /// A row of Configure Fallback Commands was clicked: its action runs.

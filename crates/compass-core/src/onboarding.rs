@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::store_listing::Store;
+
 /// `ONBOARDING_VERSION`: bumping it shows the flow again to everyone.
 pub const VERSION: u32 = 1;
 
@@ -93,6 +95,8 @@ pub enum Step {
     Permissions,
     /// "Make it your own": the theme and the global hotkey.
     Personalize,
+    /// "Add extensions": [`RECOMMENDED_EXTENSIONS`], each with Install.
+    Extensions,
     /// "Setup complete".
     Complete,
 }
@@ -105,6 +109,7 @@ impl Step {
             Self::Welcome => TITLE,
             Self::Permissions => "Permissions",
             Self::Personalize => "Make it your own",
+            Self::Extensions => "Add extensions",
             Self::Complete => "Setup complete",
         }
     }
@@ -119,6 +124,9 @@ impl Step {
                 "Compass needs additional permissions in order to make the best of your Mac."
             }
             Self::Personalize => "You will be able to change these settings later.",
+            Self::Extensions => {
+                "A few to start with. Find more in the Extension Store at any time."
+            }
             Self::Complete if shortcuts => "Compass is running. Open the launcher with:",
             Self::Complete => {
                 "Compass is running. Bind a key to \"compass toggle\" to open it from anywhere."
@@ -153,10 +161,16 @@ impl Flow {
                 Step::Welcome,
                 Step::Permissions,
                 Step::Personalize,
+                Step::Extensions,
                 Step::Complete,
             ]
         } else {
-            vec![Step::Welcome, Step::Personalize, Step::Complete]
+            vec![
+                Step::Welcome,
+                Step::Personalize,
+                Step::Extensions,
+                Step::Complete,
+            ]
         };
         Self { steps, current: 0 }
     }
@@ -217,11 +231,195 @@ impl Flow {
     }
 }
 
-/// The documentation the hotkey row links to where the platform does not
-/// bind global shortcuts.
-pub const HOTKEY_DOCS_URL: &str = "https://tunaos.org/compass";
+/// The documentation the hotkey row links to: the getting-started guide's
+/// "Set a keyboard shortcut" section, which `docs/getting-started.md` in this
+/// repository becomes on tunaos.org.
+pub const HOTKEY_DOCS_URL: &str =
+    "https://tunaos.org/docs/compass/getting-started#set-a-keyboard-shortcut";
 /// The last step's GitHub button.
 pub const GITHUB_URL: &str = crate::tray::PROJECT_URL;
+
+/// A store extension the extensions step recommends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Recommendation {
+    /// The store it comes from.
+    pub store: Store,
+    /// Its author's handle in that store.
+    pub author: &'static str,
+    /// Its name in that store.
+    pub name: &'static str,
+    /// Its title, as the store lists it.
+    pub title: &'static str,
+    /// One line on what it does.
+    pub description: &'static str,
+}
+
+impl Recommendation {
+    /// The id it installs under, which is how an installed copy is found.
+    #[must_use]
+    pub fn id(&self) -> String {
+        self.store.extension_id(self.name)
+    }
+}
+
+/// The extensions the extensions step offers.
+///
+/// Each one is general enough for a new user on any Linux desktop, needs no
+/// account, and Suite 1 (`scripts/suite1/expected.json`) shows its first
+/// command rendering.
+pub const RECOMMENDED_EXTENSIONS: &[Recommendation] = &[
+    Recommendation {
+        store: Store::Vicinae,
+        author: "gelei",
+        name: "bluetooth",
+        title: "Bluetooth",
+        description: "Connect and manage Bluetooth devices.",
+    },
+    Recommendation {
+        store: Store::Vicinae,
+        author: "dagimg-dot",
+        name: "wifi-commander",
+        title: "Wifi Commander",
+        description: "Connect to Wi-Fi networks and manage saved ones.",
+    },
+    Recommendation {
+        store: Store::Vicinae,
+        author: "leonkohli",
+        name: "process-manager",
+        title: "Process Manager",
+        description: "Find running processes and stop them.",
+    },
+    Recommendation {
+        store: Store::Vicinae,
+        author: "fbosch",
+        name: "flathub-search",
+        title: "Flathub",
+        description: "Search Flathub for applications.",
+    },
+    Recommendation {
+        store: Store::Raycast,
+        author: "gebeto",
+        name: "translate",
+        title: "Google Translate",
+        description: "Translate text between languages.",
+    },
+];
+
+/// Where one recommendation stands on the extensions step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Install {
+    /// Not installed: Install is offered.
+    Available,
+    /// Downloading and installing.
+    Installing,
+    /// Installed, before the flow opened or since.
+    Installed,
+    /// The last attempt failed: Install is offered again.
+    Failed,
+}
+
+impl Install {
+    /// The row's button label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Available => "Install",
+            Self::Installing => "Installing...",
+            Self::Installed => "Installed",
+            Self::Failed => "Try Again",
+        }
+    }
+
+    /// Whether the button does anything.
+    #[must_use]
+    pub const fn can_install(self) -> bool {
+        matches!(self, Self::Available | Self::Failed)
+    }
+}
+
+/// What the extensions step says when an install fails. The store's own
+/// reason says whether it could be reached at all; either way the flow goes
+/// on, and the store is there later.
+#[must_use]
+pub fn install_failed(title: &str, reason: &str) -> String {
+    let reason = reason.trim().trim_end_matches('.');
+    format!(
+        "Could not install {title}: {reason}. You can continue and install it later from the \
+         Extension Store."
+    )
+}
+
+/// The extensions step's state: one [`Install`] per entry of
+/// [`RECOMMENDED_EXTENSIONS`], and what the last failure said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Extensions {
+    states: Vec<Install>,
+    notice: Option<String>,
+}
+
+impl Extensions {
+    /// The step as the flow opens: each recommendation installed or not,
+    /// as `installed` answers for its id.
+    #[must_use]
+    pub fn new(installed: impl Fn(&str) -> bool) -> Self {
+        let states = RECOMMENDED_EXTENSIONS
+            .iter()
+            .map(|recommendation| {
+                if installed(&recommendation.id()) {
+                    Install::Installed
+                } else {
+                    Install::Available
+                }
+            })
+            .collect();
+        Self {
+            states,
+            notice: None,
+        }
+    }
+
+    /// Where recommendation `index` stands.
+    #[must_use]
+    pub fn state(&self, index: usize) -> Option<Install> {
+        self.states.get(index).copied()
+    }
+
+    /// Install was pressed on `index`: the recommendation to install, or
+    /// `None` when there is nothing to do (installed, already installing, no
+    /// such row).
+    pub fn start(&mut self, index: usize) -> Option<&'static Recommendation> {
+        let state = self.states.get_mut(index)?;
+        if !state.can_install() {
+            return None;
+        }
+        *state = Install::Installing;
+        self.notice = None;
+        RECOMMENDED_EXTENSIONS.get(index)
+    }
+
+    /// The install of `index` finished.
+    pub fn finished(&mut self, index: usize, result: Result<(), String>) {
+        let (Some(state), Some(recommendation)) = (
+            self.states.get_mut(index),
+            RECOMMENDED_EXTENSIONS.get(index),
+        ) else {
+            return;
+        };
+        match result {
+            Ok(()) => *state = Install::Installed,
+            Err(reason) => {
+                *state = Install::Failed;
+                self.notice = Some(install_failed(recommendation.title, &reason));
+            }
+        }
+    }
+
+    /// What the last failure said, until the next install starts.
+    #[must_use]
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -266,21 +464,24 @@ mod tests {
     }
 
     #[test]
-    fn linux_has_three_steps_and_continue_finishes_on_the_last() {
+    fn linux_has_four_steps_and_continue_finishes_on_the_last() {
         let mut flow = Flow::new(false);
-        assert_eq!(flow.count(), 3);
+        assert_eq!(flow.count(), 4);
         assert_eq!(flow.step(), Step::Welcome);
         assert!(!flow.can_go_back());
         assert_eq!(flow.primary_label(), "Continue");
         assert_eq!(flow.advance(), Advance::Next);
         assert_eq!(flow.step(), Step::Personalize);
         assert_eq!(flow.advance(), Advance::Next);
+        assert_eq!(flow.step(), Step::Extensions);
+        assert_eq!(flow.primary_label(), "Continue");
+        assert_eq!(flow.advance(), Advance::Next);
         assert_eq!(flow.step(), Step::Complete);
         assert_eq!(flow.primary_label(), "Finish");
         assert_eq!(flow.advance(), Advance::Finish);
         assert_eq!(flow.step(), Step::Complete, "finishing stays put");
         flow.back();
-        assert_eq!(flow.step(), Step::Personalize);
+        assert_eq!(flow.step(), Step::Extensions);
         flow.jump(0);
         assert_eq!(flow.step(), Step::Welcome);
         flow.jump(9);
@@ -292,7 +493,7 @@ mod tests {
     #[test]
     fn the_permissions_step_is_macos_only() {
         let mut flow = Flow::new(true);
-        assert_eq!(flow.count(), 4);
+        assert_eq!(flow.count(), 5);
         flow.advance();
         assert_eq!(flow.step(), Step::Permissions);
     }
@@ -312,6 +513,123 @@ mod tests {
         assert_eq!(
             Step::Complete.subtitle(true),
             "Compass is running. Open the launcher with:"
+        );
+    }
+
+    #[test]
+    fn the_recommendations_are_installable_store_extensions() {
+        assert!(
+            (3..=6).contains(&RECOMMENDED_EXTENSIONS.len()),
+            "a short list"
+        );
+        let mut ids = std::collections::HashSet::new();
+        for recommendation in RECOMMENDED_EXTENSIONS {
+            let id = recommendation.id();
+            assert!(
+                crate::store_bundle::is_safe_id(&id),
+                "{id} is not an id Compass installs"
+            );
+            assert!(ids.insert(id.clone()), "{id} is recommended twice");
+            assert!(!recommendation.author.is_empty() && !recommendation.title.is_empty());
+            assert!(
+                recommendation.description.ends_with('.'),
+                "{id}: a whole sentence"
+            );
+        }
+    }
+
+    /// Suite 1 is the record of what renders on Linux; a recommendation must
+    /// be one it shows rendering, so a new user's first extension works.
+    #[test]
+    fn suite_1_shows_every_recommendation_rendering() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/suite1/expected.json"
+        );
+        let expected: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        for recommendation in RECOMMENDED_EXTENSIONS {
+            let id = recommendation.id();
+            let verdicts: Vec<&str> = expected
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(key, _)| key.split(':').next() == Some(id.as_str()))
+                .filter_map(|(_, value)| value["verdict"].as_str())
+                .collect();
+            assert_eq!(verdicts, ["rendered"], "{id}");
+        }
+    }
+
+    #[test]
+    fn an_installed_recommendation_is_not_offered_again() {
+        let first = RECOMMENDED_EXTENSIONS[0].id();
+        let mut step = Extensions::new(|id| id == first);
+        assert_eq!(step.state(0), Some(Install::Installed));
+        assert_eq!(step.state(1), Some(Install::Available));
+        assert_eq!(step.start(0), None, "already installed");
+        assert_eq!(step.state(RECOMMENDED_EXTENSIONS.len()), None);
+        assert_eq!(step.start(RECOMMENDED_EXTENSIONS.len()), None);
+        assert_eq!(Install::Installed.label(), "Installed");
+        assert!(!Install::Installed.can_install());
+    }
+
+    #[test]
+    fn an_install_runs_once_and_ends_installed() {
+        let mut step = Extensions::new(|_| false);
+        assert_eq!(step.start(1), Some(&RECOMMENDED_EXTENSIONS[1]));
+        assert_eq!(step.state(1), Some(Install::Installing));
+        assert_eq!(step.state(1).map(Install::label), Some("Installing..."));
+        assert_eq!(step.start(1), None, "a second press while it runs");
+        step.finished(1, Ok(()));
+        assert_eq!(step.state(1), Some(Install::Installed));
+        assert_eq!(step.notice(), None);
+    }
+
+    /// Offline, the store cannot be reached: the step says so, offers the
+    /// install again, and nothing stops the flow from going on.
+    #[test]
+    fn an_unreachable_store_is_reported_and_can_be_retried() {
+        let mut step = Extensions::new(|_| false);
+        let title = RECOMMENDED_EXTENSIONS[0].title;
+        step.start(0);
+        step.finished(
+            0,
+            Err("Could not fetch extension data from the store: dns error.".to_owned()),
+        );
+        assert_eq!(step.state(0), Some(Install::Failed));
+        assert_eq!(step.state(0).map(Install::label), Some("Try Again"));
+        let expected = format!(
+            "Could not install {title}: Could not fetch extension data from the store: dns \
+             error. You can continue and install it later from the Extension Store."
+        );
+        assert_eq!(step.notice(), Some(expected.as_str()));
+        assert!(step.start(0).is_some(), "Try Again installs again");
+        assert_eq!(step.notice(), None, "and clears what the failure said");
+
+        let mut flow = Flow::new(false);
+        flow.jump(2);
+        assert_eq!(flow.step(), Step::Extensions);
+        assert_eq!(
+            flow.advance(),
+            Advance::Next,
+            "the step never blocks Continue"
+        );
+    }
+
+    #[test]
+    fn the_hotkey_docs_are_compass_own() {
+        assert_eq!(
+            HOTKEY_DOCS_URL,
+            "https://tunaos.org/docs/compass/getting-started#set-a-keyboard-shortcut"
+        );
+        assert_eq!(GITHUB_URL, "https://github.com/tuna-os/compass");
+        let guide = include_str!("../../../docs/getting-started.md");
+        assert!(
+            guide
+                .lines()
+                .any(|line| line == "## Set a keyboard shortcut"),
+            "the anchor is the heading's slug"
         );
     }
 }

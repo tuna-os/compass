@@ -1011,7 +1011,7 @@ the VM tier, the sway harness and the session bench set it.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `ui/qml`, `ui/quick`, `ui/windows` | — (onboarding is closed; the settings window keeps each amber) | `compass_core::onboarding` (`should_show`, `mark_completed`, `Flow`), `compass_ui::onboarding_page`, `compass_ui::app::onboarding`, `compass::onboarding_due` | `it_is_due_until_the_current_version_is_recorded`, `the_cpps_own_file_is_read`, `linux_has_three_steps_and_continue_finishes_on_the_last`, `the_permissions_step_is_macos_only`, `the_switch_reads_like_a_boolean_environment_variable`, `a_due_onboarding_opens_the_window_even_when_started_hidden`, `finishing_the_onboarding_records_it_and_hides`, `escape_closes_the_onboarding_without_recording_it`, `every_onboarding_step_draws_its_heading_and_buttons` |
+| `ui/qml`, `ui/quick`, `ui/windows` | — (onboarding is closed; the settings window keeps each amber) | `compass_core::onboarding` (`should_show`, `mark_completed`, `Flow`), `compass_ui::onboarding_page`, `compass_ui::app::onboarding`, `compass::onboarding_due` | `it_is_due_until_the_current_version_is_recorded`, `the_cpps_own_file_is_read`, `linux_has_four_steps_and_continue_finishes_on_the_last`, `the_recommendations_are_installable_store_extensions`, `suite_1_shows_every_recommendation_rendering`, `an_unreachable_store_is_reported_and_can_be_retried`, `every_onboarding_button_does_what_it_says`, `every_onboarding_step_paints_its_heading_and_buttons` (paint), `the_permissions_step_is_macos_only`, `the_switch_reads_like_a_boolean_environment_variable`, `a_due_onboarding_opens_the_window_even_when_started_hidden`, `finishing_the_onboarding_records_it_and_hides`, `escape_closes_the_onboarding_without_recording_it`, `every_onboarding_step_draws_its_heading_and_buttons` |
 
 Declared differences:
 
@@ -1023,6 +1023,14 @@ Declared differences:
   and the hotkey is changed from Settings, General (`launcher.hotkey`, bound as it changes since
   "The gaps pass, global shortcuts"). The last step's sentence follows.
 - The macOS permissions step and Launch at login are not offered, as on the C++'s Linux build.
+- An "Add extensions" step before the last recommends `compass_core::onboarding::RECOMMENDED_EXTENSIONS`
+  (store extensions Suite 1 shows rendering) with an Install button each, through the store's own
+  `store_install`. The C++ flow never mentions extensions (#250). A failed install, offline
+  included, says why and leaves Continue working.
+- Open Docs goes to Compass's guide (`docs/getting-started.md`, "Set a keyboard shortcut", on
+  tunaos.org) rather than Vicinae's FAQ, and the last step names Compass and links tuna-os/compass
+  with no Sponsor button: Compass has no sponsor page, and asking a new user to fund another project
+  at setup reads as Compass's own request (#248, #249). The tray keeps "Sponsor Upstream Vicinae".
 
 **`src/builtins/vicinae`'s remaining views** (`VicinaeExtension`). Each command is a builtin under
 its C++ id (`commands:<id>`, and `core:<id>` names it too), as `CommandKind::Vicinae`, dispatched by
