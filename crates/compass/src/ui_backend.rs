@@ -19,6 +19,10 @@ const UPDATE_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a store listing or detail page may take: it is fetched from the
 /// network, where two seconds is not enough.
 const STORE_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long opening a file may take: the engine waits to hear that the
+/// application started, and the `OpenURI` portal it falls back to may ask
+/// the person which application to use.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(35);
 
 /// How long an install may take: a download of up to the bundle cap, then
 /// the unpack.
@@ -796,7 +800,11 @@ impl ApplicationBackend for DaemonBackend {
     fn open_file(&self, path: String, reveal: bool) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self
-                .ask(Request::OpenFile { path, reveal }, "Opening the file")
+                .ask_within(
+                    Request::OpenFile { path, reveal },
+                    "Opening the file",
+                    OPEN_TIMEOUT,
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

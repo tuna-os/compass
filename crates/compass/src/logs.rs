@@ -26,17 +26,14 @@ pub const MAX_LOG_SIZE: u64 = 5 * 1024 * 1024;
 pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// The log's file name under the state directory.
-pub const FILE_NAME: &str = "compass.log";
+pub const FILE_NAME: &str = compass_core::xdg_dirs::LOG_FILE_NAME;
 
 /// `$XDG_STATE_HOME/compass/compass.log`, falling back to
-/// `~/.local/state/compass/compass.log`, as the C++ `stateDir`.
+/// `~/.local/state/compass/compass.log`, as the C++ `stateDir`: the file
+/// [`compass_core::xdg_dirs::log_file`] names, which Show Log File shows.
 #[must_use]
 pub fn log_path() -> Option<PathBuf> {
-    let state = match std::env::var_os("XDG_STATE_HOME") {
-        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => compass_core::xdg_dirs::home_dir()?.join(".local/state"),
-    };
-    Some(state.join("compass").join(FILE_NAME))
+    compass_core::xdg_dirs::log_file()
 }
 
 #[derive(Debug)]

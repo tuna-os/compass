@@ -364,6 +364,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             browse_apps,
             config_path: compass_core::config::default_config_path().ok(),
             glyph_path: compass_core::glyph_service::default_path(),
+            log_path: compass_core::xdg_dirs::log_file(),
+            default_config_dir: compass_core::xdg_dirs::cache_home().map(|dir| dir.join("compass")),
             builtin_icons: compass_core::builtin_icon::directory(),
             emoji_skin_tone,
             emoji_default_action,

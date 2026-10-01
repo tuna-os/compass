@@ -34,6 +34,63 @@ fn file_uri(path: &std::path::Path) -> String {
     )
 }
 
+/// How long [`EngineApps::launch_checked`] waits to hear that a launch failed.
+const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// Text files whose extensions name no MIME type of their own: Open Default
+/// Config File's `default-config.jsonc` among them.
+const TEXT_EXTENSIONS: [&str; 6] = ["jsonc", "json5", "conf", "cfg", "ini", "log"];
+
+/// Whether `path` is text a text editor can open, by its type ([`is_text`])
+/// or its extension.
+fn is_text_file(path: &std::path::Path) -> bool {
+    is_text(&compass_xdg::mimeapps::file_mime(path))
+        || path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| TEXT_EXTENSIONS.contains(&extension))
+}
+
+/// Whether a file of `mime` is text a text editor can open: `text/*`, and the
+/// structured-text types shared-mime-info makes subclasses of `text/plain`.
+fn is_text(mime: &str) -> bool {
+    mime.starts_with("text/")
+        || mime.ends_with("+json")
+        || mime.ends_with("+xml")
+        || matches!(
+            mime,
+            "application/json"
+                | "application/xml"
+                | "application/toml"
+                | "application/x-yaml"
+                | "application/yaml"
+                | "application/javascript"
+                | "application/x-sh"
+                | "application/x-shellscript"
+        )
+}
+
+/// Hands `path` to the desktop's `OpenURI` portal by descriptor (`OpenFile`,
+/// or `OpenDirectory` to show it in its folder when `reveal`), so it works
+/// from inside a sandbox whose paths the handler cannot see.
+async fn portal_open(path: &std::path::Path, reveal: bool) -> Result<(), String> {
+    let portals = compass_portals::Portals::connect(compass_portals::PortalConfig::default())
+        .await
+        .map_err(|error| error.to_string())?;
+    let open_uri = portals.open_uri().map_err(|error| error.to_string())?;
+    let outcome = if reveal {
+        open_uri.open_directory(path).await
+    } else {
+        open_uri.open_path(path, true, false).await
+    }
+    .map_err(|error| error.to_string())?;
+    match outcome {
+        compass_portals::OpenOutcome::Dismissed => Ok(()),
+        outcome if outcome.is_opened() => Ok(()),
+        _ => Err("the portal refused".to_owned()),
+    }
+}
+
 /// The types `setWebBrowser` makes the browser the default for.
 pub const WEB_BROWSER_MIMES: [&str; 4] = [
     "x-scheme-handler/http",
@@ -114,6 +171,114 @@ impl EngineApps {
         };
         self.launch(&opener, &path);
         true
+    }
+
+    /// What opens `path`: the default for its MIME type, else, for a text
+    /// file, the text editor. A JSON or Markdown file on a desktop whose
+    /// editor claims only `text/plain` would otherwise have no opener at all,
+    /// and Open Config File did nothing on GNOME (#253).
+    #[must_use]
+    pub fn file_opener(&self, path: &std::path::Path) -> Option<Application> {
+        let target = path.to_string_lossy();
+        self.default_opener(&target)
+            .or_else(|| is_text_file(path).then(|| self.text_editor()).flatten())
+    }
+
+    /// Opens `path` as the user asked, and says why not when nothing did: its
+    /// opener ([`Self::file_opener`]), else the desktop's `OpenURI` portal,
+    /// which is also the one way out of a Flatpak whose sandbox does not see
+    /// the right application.
+    ///
+    /// # Errors
+    ///
+    /// A sentence for the person, when neither opened it.
+    pub async fn open_path(&self, path: &std::path::Path) -> Result<(), String> {
+        let launched = match self.file_opener(path) {
+            Some(app) => self
+                .launch_checked(&app, &path.to_string_lossy())
+                .await
+                .map_err(|error| format!("{} did not start: {error}", app.name)),
+            None => Err("no application opens this kind of file".to_owned()),
+        };
+        let Err(reason) = launched else {
+            return Ok(());
+        };
+        match portal_open(path, false).await {
+            Ok(()) => Ok(()),
+            Err(portal) => {
+                tracing::info!(%portal, path = %path.display(), "the OpenURI portal did not open the file either");
+                Err(reason)
+            }
+        }
+    }
+
+    /// Shows `path` selected in the file browser: `FileManager1.ShowItems`,
+    /// else its folder in the directory opener, else the portal's
+    /// `OpenDirectory`.
+    ///
+    /// # Errors
+    ///
+    /// A sentence for the person, when none of them showed it.
+    pub async fn reveal_path(&self, path: &std::path::Path) -> Result<(), String> {
+        if let Err(error) = crate::file_manager::show_items(&file_uri(path)).await {
+            tracing::info!(%error, "FileManager1 did not show the file; opening its folder");
+        } else {
+            return Ok(());
+        }
+        let folder = path.parent().unwrap_or(path).to_string_lossy().into_owned();
+        let opener = self
+            .lists
+            .default_for("inode/directory", &self.usable())
+            .or_else(|| self.opener_ids("inode/directory").into_iter().next())
+            .and_then(|id| self.find(&id).map(|(app, _)| app.clone()));
+        if let Some(app) = opener
+            && self.launch_checked(&app, &folder).await.is_ok()
+        {
+            return Ok(());
+        }
+        portal_open(path, true).await.map_err(|error| {
+            tracing::info!(%error, "the OpenURI portal did not show the file either");
+            "no file browser is installed to show the file in".to_owned()
+        })
+    }
+
+    /// Launches `app` with `target` and waits long enough to hear whether it
+    /// started: `flatpak-spawn --host` lasts as long as the program does, so
+    /// one still running after [`LAUNCH_GRACE`] has started.
+    async fn launch_checked(&self, app: &Application, target: &str) -> Result<(), String> {
+        let Some((_, entry)) = self.find(&app.id) else {
+            return Err("it is not installed".to_owned());
+        };
+        // A `Terminal=true` editor such as Vim, started without one, runs
+        // with nowhere to draw and the open is silently lost.
+        if entry.terminal() {
+            let uris: Vec<&str> = [target].into_iter().filter(|t| !t.is_empty()).collect();
+            let argv = entry.expand_exec_with(&uris, false, None);
+            return if self.run_in_terminal(&argv, &TerminalOptions::default()) {
+                Ok(())
+            } else {
+                Err("no terminal is installed to run it in".to_owned())
+            };
+        }
+        let entry = Arc::clone(entry);
+        let target = target.to_owned();
+        let mut launch = self.runtime.spawn(async move {
+            let uris: Vec<&str> = if target.is_empty() {
+                Vec::new()
+            } else {
+                vec![target.as_str()]
+            };
+            compass_platform_linux::LinuxLauncher
+                .launch(&entry, &uris)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        });
+        match tokio::time::timeout(LAUNCH_GRACE, &mut launch).await {
+            Err(_) => Ok(()),
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Err(error.to_string()),
+        }
     }
 
     /// Every application with what `AppService::findByClass` matches a
@@ -476,6 +641,40 @@ mod tests {
             .build()
             .unwrap();
         EngineApps::new(&index, Lists::load(&[]), runtime.handle().clone())
+    }
+
+    #[test]
+    fn a_text_file_with_no_opener_of_its_own_opens_in_the_text_editor() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("editor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %F\n\
+             MimeType=text/plain;\nCategories=Utility;TextEditor;\n",
+        )
+        .unwrap();
+        let apps = apps(dir.path());
+        for name in [
+            "compass.json",
+            "default-config.jsonc",
+            "compass.log",
+            "notes.md",
+        ] {
+            assert_eq!(
+                apps.file_opener(&dir.path().join(name)).map(|app| app.name),
+                Some("Editor".to_owned()),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            apps.file_opener(&dir.path().join("index.html"))
+                .map(|app| app.name),
+            Some("Browser".to_owned()),
+            "a type's own opener comes first"
+        );
+        assert!(
+            apps.file_opener(&dir.path().join("photo.bin")).is_none(),
+            "binary data is not text"
+        );
     }
 
     #[test]

@@ -53,6 +53,16 @@ pub fn state_dir() -> Option<PathBuf> {
     Some(state.join("compass"))
 }
 
+/// The engine's log file's name, in [`state_dir`].
+pub const LOG_FILE_NAME: &str = "compass.log";
+
+/// `$XDG_STATE_HOME/compass/compass.log`: the file the engine logs to
+/// (`compass::logs`) and Show Log File shows.
+#[must_use]
+pub fn log_file() -> Option<PathBuf> {
+    Some(state_dir()?.join(LOG_FILE_NAME))
+}
+
 /// The home directory, or nothing when even the fallback cannot say.
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {

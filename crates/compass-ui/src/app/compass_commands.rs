@@ -65,15 +65,31 @@ impl LauncherApp {
             "sponsor" => self.open_link(compass_core::commands::SPONSOR_URL.to_owned()),
             "project-page" => self.open_link(compass_core::commands::PROJECT_URL.to_owned()),
             "open-config-file" => match self.config_path.clone() {
-                Some(path) => self.open_path_and_hide(path, false),
+                Some(path) => {
+                    let legacy = compass_core::config_migration::legacy_config_path().ok();
+                    match compass_core::config::ensure_config_file(&path, legacy.as_deref()) {
+                        Ok(_) => self.open_path_and_hide(path, false),
+                        Err(error) => self.say_in_root(format!(
+                            "Could not create the configuration file: {error}"
+                        )),
+                    }
+                }
                 None => self.say_in_root("No configuration file to open".to_owned()),
             },
-            "open-default-config" => match write_default_config() {
-                Ok(path) => self.open_path_and_hide(path, false),
-                Err(reason) => self.say_in_root(reason),
-            },
-            "show-logs" => match compass_core::xdg_dirs::state_dir() {
-                Some(dir) => self.open_path_and_hide(dir.join(LOG_FILE_NAME), true),
+            "open-default-config" => {
+                let written = self
+                    .default_config_dir
+                    .as_deref()
+                    .ok_or_else(|| "No place to write the default configuration".to_owned())
+                    .and_then(write_default_config_in);
+                match written {
+                    Ok(path) => self.open_path_and_hide(path, false),
+                    Err(reason) => self.say_in_root(reason),
+                }
+            }
+            "show-logs" => match self.log_path.clone() {
+                Some(path) if path.is_file() => self.open_path_and_hide(path, true),
+                Some(_) => self.say_in_root(NO_LOG_YET.to_owned()),
                 None => self.say_in_root("No log file to show".to_owned()),
             },
             "reload-scripts" => {
@@ -1004,20 +1020,17 @@ fn expiry_text(at: i64) -> Option<String> {
     )
 }
 
-/// The log file under the state directory (`compass::logs::FILE_NAME`).
-const LOG_FILE_NAME: &str = "compass.log";
+/// What Show Log File says before the engine has written its log.
+pub const NO_LOG_YET: &str = "The engine has not written its log file yet";
 
 /// `OpenDefaultVicinaeConfig`: the configuration at its defaults, written
-/// read-only to the runtime directory as `default-config.jsonc` (replacing
-/// the last one), for the editor to open.
-fn write_default_config() -> Result<std::path::PathBuf, String> {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|dir| !dir.is_empty())
-        .map_or_else(std::env::temp_dir, std::path::PathBuf::from)
-        .join("compass");
-    write_default_config_in(&dir)
-}
-
+/// read-only into `dir` as `default-config.jsonc` (replacing the last one),
+/// for the editor to open. The C++ writes it to the runtime directory; the
+/// launcher is given the cache directory ([`AppFlags::default_config_dir`]),
+/// because inside a Flatpak `$XDG_RUNTIME_DIR` is the sandbox's own and the
+/// host's editor cannot see a file there.
+///
+/// [`AppFlags::default_config_dir`]: crate::AppFlags::default_config_dir
 fn write_default_config_in(dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
     let failed = |_| "Failed to open temporary file".to_owned();
     std::fs::create_dir_all(dir).map_err(failed)?;

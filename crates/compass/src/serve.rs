@@ -685,8 +685,9 @@ const FILE_SEARCH_TIMEOUT: std::time::Duration = std::time::Duration::from_milli
 
 /// Opens a file with its default application, or shows it in the file
 /// browser, through the same application database extensions open with.
+/// Answers an error the window shows when nothing opened it, rather than an
+/// acknowledgement for a launch that failed out of sight (#253).
 async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool) -> Response {
-    use compass_worker_host::application_service::Apps;
     let target = std::path::PathBuf::from(&path);
     if !target.is_absolute() || !target.exists() {
         return Response::Error(ProtocolError::new(
@@ -699,11 +700,16 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
         compass_xdg::mimeapps::Lists::from_environment(),
         tokio::runtime::Handle::current(),
     );
-    if reveal {
-        apps.show_in_file_browser(&path, true);
-        return Response::Ack;
+    let opened = if reveal {
+        apps.reveal_path(&target).await
+    } else {
+        apps.open_path(&target).await
+    };
+    if let Err(reason) = opened {
+        tracing::warn!(%reason, path, reveal, "the file was not opened");
+        return Response::Error(ProtocolError::new(ErrorKind::Unsupported, reason));
     }
-    if apps.open_file(&target) {
+    if !reveal {
         // `OpenFileAction` records the open, so the file tops the empty
         // query next time.
         if let Some(xbel) = compass_xdg::bookmarks::recently_used_path() {
@@ -719,13 +725,8 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
                 tracing::warn!(%error, "not recording a recent file access");
             }
         }
-        Response::Ack
-    } else {
-        Response::Error(ProtocolError::new(
-            ErrorKind::Unsupported,
-            "no application opens this kind of file",
-        ))
     }
+    Response::Ack
 }
 
 /// Uninstalls an extension, as `ExtensionRegistry::uninstall` does: its

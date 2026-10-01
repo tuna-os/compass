@@ -1057,8 +1057,10 @@ its C++ id (`commands:<id>`, and `core:<id>` names it too), as `CommandKind::Vic
 - **Report a Vicinae Bug**, **Donate to Vicinae**, **Join the Discord Server**: open the link and
   hide with "Opened in browser"; the report is pre-filled from this build and `/etc/os-release`
   (`bug_report::{report_url, parse_os_release}`).
-- **Open Config File**, **Open Default Config File** (this engine's defaults written read-only to the
-  runtime directory), **Show Log File** (`compass.log`, in the file browser).
+- **Open Config File** (writing `compass.json` first when there is none), **Open Default Config
+  File** (this engine's defaults written read-only to the cache directory), **Show Log File**
+  (`compass.log`, in the file browser). See "Opening Compass's own files" below for where these
+  differ from the C++.
 - **The store intros** (`StoreIntroViewHost`): the Vicinae and Raycast stores open on their intro
   until "Continue to store", or always with `alwaysShowIntro`.
 
@@ -3423,10 +3425,20 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`); where there is no HUD (no layer shell) nothing is shown. | The engine sends the sentence to the launcher's HUD (IPC v19 `WindowCommand::Hud`), with the C++'s icon for the player commands; where the window has no HUD it posts a transient desktop notification (1.5 s, `transient` hint) instead of showing nothing. The volume commands' HUD has no icon. Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
+| 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`); where there is no HUD (no layer shell) nothing is shown. | The engine sends the sentence to the launcher's HUD (IPC v19 `WindowCommand::Hud`), with the C++'s icon for the player commands; where the window has no HUD it posts a transient desktop notification (1.5 s, `transient` hint) instead of showing nothing. The volume commands' HUD has no icon. Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the HUD, since the launcher has already hidden, and in the launcher when it is next summoned, as the power commands' do (#254). | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
 | 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players (title 1.0, artist 0.8, identity 0.6); Turn Volume Up/Down take an optional `step`. Both are typed inline beside the search field. | The same matching and the same refusals ("No media player matches …", "Invalid step value"), with no argument taking the default player (last acted on, else playing, else first) or ±5. The launcher has no inline argument fields, so Enter runs the command at once and the row's action panel offers "Choose player…" / "Choose step…", a one-field form. | `a_player_argument_picks_the_player_and_now_playing_lists_and_drives_them`, `a_media_command_runs_with_the_player_chosen_in_its_form`, `a_volume_command_runs_pactl_with_the_cpp_arguments` |
 | 3 | Volume goes through `pactl`. | The same `pactl` invocations, through `flatpak-spawn --host` inside the Flatpak, with the C++'s 3 s timeout. `libpulse-binding` was considered and not taken: a C build dependency and a threaded mainloop for five calls the ported `pactl` adapter already makes. | `a_volume_command_runs_pactl_with_the_cpp_arguments` |
 | 4 | Now Playing lists the players ("Players", fuzzy over title, artist and name), with Playing/Paused accessories, the player application's icon, and Play or Pause, Next Track and Previous Track; it reloads on `playersChanged`. | The same list, filter, accessories and actions (Enter is the first); a row shows the player's initial rather than its application's icon, and the list is asked again 300 ms after each action rather than on a bus signal, so a player changed from elsewhere shows when the view is next opened. | `now_playing_lists_the_players_and_controls_the_selected_one`, `a_player_is_found_by_track_artist_or_name_and_stays_selected` |
+
+### Opening Compass's own files (#253)
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Open Config File opens the user's settings file. | This engine writes `compass.json` only when something is saved, so a fresh install had no file and the command was refused. The command now writes it first (the C++ settings migrated if they are there, else the defaults, with `$schema`), then opens it. | `the_config_and_log_commands_open_compass_files_and_say_why_not`, `a_missing_file_is_written_and_an_existing_one_is_left_alone` |
+| 2 | The file opens with what the desktop opens its type with. | The same, and, for a text file whose type has no opener of its own, the text editor (`text/plain`'s default, then the first `TextEditor`). On GNOME the editors claim `text/plain` only, so JSON had no opener and nothing opened. An editor with `Terminal=true` (Vim) runs in the terminal rather than with nowhere to draw. | `a_text_file_with_no_opener_of_its_own_opens_in_the_text_editor`, `search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly` |
+| 3 | The open is fire-and-forget. | The engine waits a second to hear that the application started; when nothing opens the file, or the launch fails, it asks the `OpenURI` portal (`OpenFile` and `OpenDirectory` take a descriptor, so this also works from inside the Flatpak), and otherwise answers with the reason, which the launcher shows instead of hiding. | `search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly`, `the_config_and_log_commands_open_compass_files_and_say_why_not` |
+| 4 | Open Default Config File writes `default-config.jsonc` to the runtime directory. | It writes it to the cache directory's `compass`: inside a Flatpak `$XDG_RUNTIME_DIR` is the sandbox's own, and the host's editor cannot see a file there. | `the_config_and_log_commands_open_compass_files_and_say_why_not` |
+| 5 | Show Log File opens `$XDG_STATE_HOME/vicinae/vicinae.log`. | `$XDG_STATE_HOME/compass/compass.log`, the one path `compass_core::xdg_dirs::log_file` names for both the engine that writes it and the command that shows it; before the engine has written it, the command says so. | `the_config_and_log_commands_open_compass_files_and_say_why_not` |
 
 ### Search Files — what the port does not have yet
 

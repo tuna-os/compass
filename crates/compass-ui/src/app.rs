@@ -287,6 +287,12 @@ pub struct AppFlags {
     /// (`compass_core::glyph_service::default_path`); `None` keeps them in
     /// memory, as tests do.
     pub glyph_path: Option<std::path::PathBuf>,
+    /// The engine's log file, which Show Log File shows
+    /// ([`compass_core::xdg_dirs::log_file`]); `None` has none to show.
+    pub log_path: Option<std::path::PathBuf>,
+    /// Where Open Default Config File writes the defaults for the editor
+    /// (the cache directory's `compass`); `None` has nowhere to write them.
+    pub default_config_dir: Option<std::path::PathBuf>,
     /// Where the builtin icon set is installed
     /// ([`compass_core::builtin_icon::directory`]); `None` draws initials
     /// where a builtin icon would go.
@@ -408,6 +414,8 @@ impl Default for AppFlags {
             browse_apps: compass_core::browse_apps::Options::default(),
             config_path: None,
             glyph_path: None,
+            log_path: None,
+            default_config_dir: None,
             builtin_icons: None,
             emoji_skin_tone: None,
             emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
@@ -978,6 +986,10 @@ pub struct LauncherApp {
     config_path: Option<std::path::PathBuf>,
     /// See [`AppFlags::glyph_path`].
     glyph_path: Option<std::path::PathBuf>,
+    /// See [`AppFlags::log_path`].
+    log_path: Option<std::path::PathBuf>,
+    /// See [`AppFlags::default_config_dir`].
+    default_config_dir: Option<std::path::PathBuf>,
     /// See [`AppFlags::emoji_skin_tone`].
     emoji_skin_tone: Option<String>,
     /// See [`AppFlags::emoji_default_action`].
@@ -1250,6 +1262,8 @@ impl LauncherApp {
         app.browse_apps = flags.browse_apps;
         app.config_path = flags.config_path;
         app.glyph_path = flags.glyph_path;
+        app.log_path = flags.log_path;
+        app.default_config_dir = flags.default_config_dir;
         app.builtin_icons = flags.builtin_icons;
         app.emoji_skin_tone = flags.emoji_skin_tone;
         app.emoji_default_action = flags.emoji_default_action;
@@ -1360,6 +1374,8 @@ impl LauncherApp {
             config_path: None,
             browse_apps: compass_core::browse_apps::Options::default(),
             glyph_path: None,
+            log_path: None,
+            default_config_dir: None,
             emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
             emoji_skin_tone: None,
             search_history_path: None,
@@ -3160,8 +3176,16 @@ impl LauncherApp {
                 Task::batch([closing, focus_search()])
             }
             Message::BuiltinCommandDone(result) => {
-                if let Err(reason) = result {
-                    self.error = Some(reason);
+                let Err(reason) = result else {
+                    return Task::none();
+                };
+                // The launcher hid before the command ran, so a refusal said
+                // only inside it would wait unseen for the next summon: the
+                // HUD says it now.
+                let hidden = self.closing || self.window.is_none();
+                self.error = Some(reason.clone());
+                if hidden {
+                    return self.put_up_hud_for_engine(crate::hud::Hud::new(reason)).1;
                 }
                 Task::none()
             }
@@ -7692,6 +7716,20 @@ mod tests {
         /// why a refresh fails when it does.
         rates: Option<compass_core::exchange_rates::ExchangeRates>,
         refuse_rates: Option<String>,
+        /// The Rhai scripts the fake lists; `None` answers as the trait's
+        /// default does.
+        rhai_scripts: Option<Vec<compass_core::rhai_scripts::RhaiScriptItem>>,
+        /// Whether settings writes are taken and recorded rather than refused
+        /// as the trait's default refuses them.
+        records_settings: bool,
+        /// The settings written: `(key, value)`.
+        settings_set: std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+        /// The providers switched: `(provider, enabled)`.
+        providers_set: std::sync::Mutex<Vec<(String, bool)>>,
+        /// The commands whose preferences were asked for.
+        preferences_asked: std::sync::Mutex<Vec<String>>,
+        /// Why opening a file fails, when it does.
+        refuse_opens: Option<String>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -7902,7 +7940,7 @@ mod tests {
         fn open_file(&self, path: String, reveal: bool) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened.lock().unwrap().push((path, reveal));
-                Ok(())
+                self.refuse_opens.clone().map_or(Ok(()), Err)
             })
         }
 
@@ -8628,7 +8666,59 @@ mod tests {
                 Ok(())
             })
         }
+
+        fn list_rhai_scripts(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<compass_core::rhai_scripts::RhaiScriptItem>>
+        {
+            let scripts = self.rhai_scripts.clone();
+            Box::pin(async move { scripts.ok_or_else(|| "no Rhai scripts here".to_owned()) })
+        }
+
+        fn set_setting(
+            &self,
+            key: String,
+            value: serde_json::Value,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            if !self.records_settings {
+                return Box::pin(async { Err(crate::settings_page::NEEDS_ENGINE.to_owned()) });
+            }
+            self.settings_set.lock().unwrap().push((key, value));
+            Box::pin(async { Ok(()) })
+        }
+
+        fn set_provider_enabled(
+            &self,
+            provider: String,
+            enabled: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            if !self.records_settings {
+                return Box::pin(async { Err(crate::settings_page::NEEDS_ENGINE.to_owned()) });
+            }
+            self.providers_set.lock().unwrap().push((provider, enabled));
+            Box::pin(async { Ok(()) })
+        }
+
+        fn extension_preferences(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ExtensionStart> {
+            if !self.records_settings {
+                return Box::pin(async {
+                    Err("Running extension commands needs the Compass engine".to_owned())
+                });
+            }
+            self.preferences_asked.lock().unwrap().push(id.clone());
+            Box::pin(async move {
+                Ok(crate::backend::ExtensionStart::NeedsPreferences {
+                    title: id,
+                    fields: Vec::new(),
+                })
+            })
+        }
     }
+
+    mod action_audit;
 
     fn extension_app(dir: &std::path::Path, backend: Arc<TestBackend>) -> LauncherApp {
         let ext = dir.join("extensions/hello");

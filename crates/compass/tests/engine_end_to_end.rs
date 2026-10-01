@@ -3384,6 +3384,7 @@ fn search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly
     let daemon = Daemon::start_prepared(&entries, "{}", |root| {
         root_dir.set(root.to_path_buf()).unwrap();
         std::fs::write(root.join("plain.txt"), "hello").unwrap();
+        std::fs::write(root.join("blob.bin"), [0u8, 1, 2]).unwrap();
         let notes = root.join("notes.md");
         std::fs::write(&notes, "# notes").unwrap();
         let data_home = root.join("data-home");
@@ -3428,8 +3429,9 @@ fn search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly
     assert!(files[0].path.ends_with("/notes.md"), "{files:?}");
 
     // Opening refuses a path that is not there, and a file no installed
-    // application opens -- the fixture tree has none that opens Markdown --
-    // rather than launching anything on the machine running the tests.
+    // application opens -- the fixture tree has none for binary data --
+    // rather than launching anything on the machine running the tests, and
+    // says so rather than acknowledging an open that did not happen (#253).
     let Response::Error(err) = daemon.request(Request::OpenFile {
         path: "/nonexistent/gone.txt".into(),
         reveal: false,
@@ -3437,17 +3439,27 @@ fn search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly
         panic!("opening a missing file was not refused");
     };
     assert_eq!(err.kind, ErrorKind::BadRequest);
+    let root = root_dir.get().unwrap();
     let Response::Error(err) = daemon.request(Request::OpenFile {
-        path: files[0].path.clone(),
+        path: root.join("blob.bin").to_string_lossy().into_owned(),
         reveal: false,
     }) else {
         panic!("opening a file nothing opens was not refused");
     };
     assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert_eq!(err.message, "no application opens this kind of file");
+    // Markdown has no opener of its own here, but it is text: the text
+    // editor opens it, as Open Config File's JSON is opened (#253).
+    assert_eq!(
+        daemon.request(Request::OpenFile {
+            path: files[0].path.clone(),
+            reveal: false,
+        }),
+        Response::Ack
+    );
 
     // Opening one something does open (`/bin/true` here) records it in
     // `recently-used.xbel`, keeping what was there.
-    let root = root_dir.get().unwrap();
     let plain = root.join("plain.txt");
     assert_eq!(
         daemon.request(Request::OpenFile {
@@ -6711,11 +6723,48 @@ fn compass_shows_its_own_tray_icon_with_the_cpp_menu_as_the_setting_says() {
             .expect("the fake watcher owns its name on the private bus")
     });
 
+    // The browser the link entries open: a script on the engine's PATH that
+    // writes down what it was given.
+    let opened_log = std::sync::OnceLock::new();
+    let browser = "[Desktop Entry]\nType=Application\nName=Recorder\n\
+                   Exec=compass-test-browser %u\n\
+                   MimeType=x-scheme-handler/http;x-scheme-handler/https;\n";
     let mut daemon = Daemon::start_prepared(
-        &[("a.desktop", &entry("Alpha", ""))],
+        &[
+            ("a.desktop", &entry("Alpha", "")),
+            ("recorder.desktop", browser),
+        ],
         r#"{"tray": {"enabled": false}}"#,
-        |_| vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())],
+        |root| {
+            let bin = root.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let log = root.join("opened.log");
+            let script = bin.join("compass-test-browser");
+            std::fs::write(
+                &script,
+                format!("#!/bin/sh\necho \"$1\" >> '{}'\n", log.display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .unwrap();
+            opened_log.set(log).unwrap();
+            let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
+            )))
+            .unwrap();
+            vec![
+                ("DBUS_SESSION_BUS_ADDRESS", address.clone().into()),
+                ("PATH", path),
+            ]
+        },
     );
+    let opened = || {
+        std::fs::read_to_string(opened_log.get().unwrap())
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
     let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
     let wait_for = |what: &str, done: &dyn Fn() -> bool| {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -6834,19 +6883,43 @@ fn compass_shows_its_own_tray_icon_with_the_cpp_menu_as_the_setting_says() {
                 .expect("Event");
         });
     };
-    click(entry("Settings…"));
-    click(entry("About Compass"));
-    click(entry("Toggle Compass"));
-    wait_for("the window to be told", &|| window.seen().len() >= 4);
-    assert_eq!(
-        window.seen(),
-        [
-            WindowCommand::Toggle,
-            WindowCommand::Deeplink("compass://settings/open".to_owned()),
-            WindowCommand::Deeplink("compass://settings/open?tab=about".to_owned()),
-            WindowCommand::Toggle,
-        ]
-    );
+    // Every entry of the menu model, clicked, does what the model says it
+    // does (#254): a new entry, or one that stops reaching anything, fails
+    // here. Quit is clicked last, below, as it stops the engine.
+    use compass_core::tray::{Activation, EntryKind};
+    let mut told = vec![WindowCommand::Toggle]; // `Activate`, above
+    let mut links = Vec::new();
+    for menu_entry in compass_core::tray::menu_entries(false) {
+        let kind = menu_entry.kind;
+        if kind == EntryKind::Separator || !compass_core::tray::entry_enabled(kind) {
+            continue;
+        }
+        let label = compass_core::tray::entry_label(kind, env!("CARGO_PKG_VERSION"));
+        let activation = compass_core::tray::activate(&[menu_entry], menu_entry.id)
+            .unwrap_or_else(|| panic!("{label} can be clicked and does nothing"));
+        match activation {
+            Activation::Quit => continue,
+            Activation::Toggle => told.push(WindowCommand::Toggle),
+            Activation::OpenSettings { tab } => told.push(WindowCommand::Deeplink(match tab {
+                Some(tab) => format!("compass://settings/open?tab={tab}"),
+                None => "compass://settings/open".to_owned(),
+            })),
+            Activation::OpenLink(link) => links.push(link.url().to_owned()),
+        }
+        click(entry(&label));
+    }
+    wait_for("the window to be told", &|| {
+        window.seen().len() >= told.len()
+    });
+    wait_for("the browser to open the links", &|| {
+        opened().len() >= links.len()
+    });
+    assert_eq!(window.seen(), told);
+    // Each link's browser runs in its own process, so they land in any order.
+    let mut seen_links = opened();
+    seen_links.sort();
+    links.sort();
+    assert_eq!(seen_links, links);
 
     // Turned off: the item leaves the bus. On again: it comes back.
     let has_owner = |name: &str| {

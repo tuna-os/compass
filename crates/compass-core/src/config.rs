@@ -1457,3 +1457,44 @@ pub fn default_config_path() -> Result<PathBuf, ConfigError> {
     let dir = dirs::config_dir().ok_or(ConfigError::NoConfigDir)?;
     Ok(dir.join(CONFIG_RELATIVE_PATH))
 }
+
+/// Makes sure `path` exists, so "Open Config File" has a file to open: when it
+/// does not, writes what the engine would read there (the C++ engine's
+/// `legacy` settings migrated, else the defaults) with the `$schema` line, and
+/// answers `true`. An existing file is left exactly as it is.
+///
+/// # Errors
+///
+/// [`ConfigError::Write`] when the file cannot be written.
+pub fn ensure_config_file(path: &Path, legacy: Option<&Path>) -> Result<bool, ConfigError> {
+    if path.exists() {
+        return Ok(false);
+    }
+    let mut config = Config::load_or_migrate(path, legacy).unwrap_or_default();
+    if config.schema().is_none() {
+        config.set_schema(Some(SCHEMA_URL.to_owned()));
+    }
+    config.save_to(path)?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod ensure_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_file_is_written_and_an_existing_one_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compass").join("compass.json");
+        assert!(ensure_config_file(&path, None).unwrap(), "created");
+        let written = Config::load_from(&path).unwrap();
+        assert_eq!(written.schema(), Some(SCHEMA_URL));
+
+        std::fs::write(&path, r#"{"theme": {"name": "kept"}}"#).unwrap();
+        assert!(!ensure_config_file(&path, None).unwrap(), "already there");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"theme": {"name": "kept"}}"#
+        );
+    }
+}
