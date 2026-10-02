@@ -22,9 +22,18 @@ use crate::exchange_rates::ExchangeRates;
 /// The shortest query tried without a leading `=`.
 pub const MIN_CHARS: usize = 3;
 
-/// How long one evaluation may take before it is abandoned. A query is typed
-/// a keystroke at a time; an answer later than this is worse than none.
+/// How much work one evaluation may do before it is abandoned. A query is
+/// typed a keystroke at a time; an answer later than this is worse than none.
+///
+/// It is the evaluating thread's CPU time, not the clock's: the limit is there
+/// to stop an expression that would run away (`1000000!`), and a thread the
+/// scheduler has not run yet has done no work. Against the clock, a busy
+/// machine lost answers to `12*3+6`.
 const TIME_LIMIT: Duration = Duration::from_millis(50);
+
+/// The longest an evaluation may take by the clock, however little of it was
+/// spent working: the bound on how long a starved evaluation holds a keystroke.
+const WALL_LIMIT: Duration = Duration::from_secs(1);
 
 /// A calculation and its result.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,12 +75,45 @@ impl fend_core::ExchangeRateFnV2 for RateHandler {
     }
 }
 
-struct Deadline(Instant);
+/// When an evaluation is abandoned: [`TIME_LIMIT`] of the thread's work, or
+/// [`WALL_LIMIT`] by the clock, whichever comes first.
+struct Deadline {
+    work_started: Duration,
+    wall_stop: Instant,
+}
+
+impl Deadline {
+    fn start() -> Self {
+        Self {
+            work_started: thread_work(),
+            wall_stop: Instant::now() + WALL_LIMIT,
+        }
+    }
+}
 
 impl fend_core::Interrupt for Deadline {
     fn should_interrupt(&self) -> bool {
-        Instant::now() >= self.0
+        thread_work().saturating_sub(self.work_started) >= TIME_LIMIT
+            || Instant::now() >= self.wall_stop
     }
+}
+
+/// The CPU time the calling thread has used.
+#[cfg(unix)]
+fn thread_work() -> Duration {
+    use rustix::time::{ClockId, clock_gettime};
+    let now = clock_gettime(ClockId::ThreadCPUTime);
+    Duration::new(
+        u64::try_from(now.tv_sec).unwrap_or(0),
+        u32::try_from(now.tv_nsec).unwrap_or(0),
+    )
+}
+
+/// Without a per-thread CPU clock the work is measured by the clock.
+#[cfg(not(unix))]
+fn thread_work() -> Duration {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed()
 }
 
 /// The answer to `query`, if it should be shown: `found_other` says whether
@@ -114,12 +156,8 @@ pub fn compute_with_rates(question: &str, rates: Option<Arc<ExchangeRates>>) -> 
         context.set_exchange_rate_handler_v2(RateHandler(rates));
     }
     let asked = euro_amounts_suffixed(question);
-    let result = fend_core::evaluate_with_interrupt(
-        &asked,
-        &mut context,
-        &Deadline(Instant::now() + TIME_LIMIT),
-    )
-    .ok()?;
+    let result =
+        fend_core::evaluate_with_interrupt(&asked, &mut context, &Deadline::start()).ok()?;
     let answer = result.get_main_result().trim();
     // A lone number, or a function name, answers nothing.
     if result.output_is_empty() || answer.is_empty() || answer == question || answer == asked {
