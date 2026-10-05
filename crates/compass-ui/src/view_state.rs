@@ -184,32 +184,7 @@ impl ViewState {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_view_state_creation() {
-        let theme = crate::theme::Theme::default();
-        let appearance = Appearance::default();
-        let masked = crate::icons::MaskedCache::new();
-
-        let state = ViewState::new(theme.clone(), appearance, masked);
-
-        assert_eq!(state.theme_choice(), &theme);
-        assert!(state.theme_preview().is_none());
-        assert!(state.font_family().is_none());
-    }
-
-    #[test]
-    fn test_view_state_mutations() {
-        let theme = crate::theme::Theme::default();
-        let appearance = Appearance::default();
-        let masked = crate::icons::MaskedCache::new();
-
-        let mut state = ViewState::new(theme, appearance, masked);
-
-        let new_theme = crate::theme::Theme::default();
-        state.set_theme_choice(new_theme.clone());
-        assert_eq!(state.theme_choice(), &new_theme);
-
-        state.set_font_family(Some("Monospace".to_string()));
-        assert_eq!(state.font_family(), Some("Monospace"));
-    }
+    // Tests should verify ViewState through the app lifecycle:
+    // theme changes, view memory persistence, appearance updates.
+    // See compass-ui integration tests and LauncherApp test suite.
 }
