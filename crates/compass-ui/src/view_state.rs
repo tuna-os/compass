@@ -173,12 +173,3 @@ impl ViewState {
         &mut self.masked
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Tests should verify ViewState through the app lifecycle:
-    // theme changes, view memory persistence, appearance updates.
-    // See compass-ui integration tests and LauncherApp test suite.
-}
