@@ -66,12 +66,16 @@ attacker with a kernel exploit can still escape it.
 - **Syscalls**: a seccomp denylist refuses interfaces no extension needs, such as `ptrace` and
   module loading. It is a denylist because the worker is Node, whose syscall use changes between
   releases.
-- **Memory**: each worker is capped at 256 MiB (`MemoryMax` in its systemd scope, and
-  `RLIMIT_DATA`). The cap is not configurable per extension.
+- **Memory**: each worker is capped at 256 MiB by `MemoryMax` in its own systemd scope, with
+  each JavaScript heap capped at 160 MiB below that. Where no systemd is reachable (inside the
+  Flatpak) `RLIMIT_DATA` holds it at 512 MiB of committed memory. The caps are not configurable
+  per extension.
 - **Host programs**: an extension that wants to run a program on the host, such as `brew`, must
   name it in its manifest, and Compass asks you before it runs: Allow Once, Always Allow or Deny.
   See [the Raycast compatibility notes](docs/rust-engine/RAYCAST-LINUX-SHIM.md). Rhai scripts
-  declare what they need in `script.toml` and are granted it the same way. The **Script
-  Permissions** command lists and revokes these grants.
+  declare what they need in `script.toml`. Scripts you install yourself get nothing until you
+  allow it the first time you open them; the scripts Compass ships are granted what they
+  declare. The **Script Permissions** command lists and revokes these grants. See
+  [the Rhai scripts guide](docs/rust-engine/RHAI-SCRIPTS.md#permissions).
 - **Updates**: Compass checks its own releases and tells you when a newer one is out. It never
   installs anything; your package manager does that.
