@@ -137,8 +137,48 @@ Extensions add commands to Compass. Open the launcher and search for **Extension
 community extensions, or **Raycast Store** to install Raycast extensions. Each Raycast extension
 shows how well it works on Linux. Installed extensions show up in the launcher's search right away.
 
-Compass runs extensions written for Vicinae unchanged. To write your own, see the
-[Vicinae extension documentation](https://docs.vicinae.com/extensions/introduction).
+Compass runs extensions written for Vicinae unchanged. To write your own, see
+[Writing extensions for Compass](extensions.md).
+
+### Signing in to a service
+
+Some extensions connect to an account, such as GitHub or Linear. The first time you use one, Compass
+shows "Continue in your browser to connect" and opens the service's sign-in page in your default
+browser. After you approve access there, the browser hands the result back to Compass, which says
+"Connected to" the service. The extension then works without asking again.
+
+The tokens are stored in Compass's encrypted extension database, whose key is kept in your
+desktop's keyring. Each extension can read only its own tokens. To disconnect, run **Manage OAuth
+Token Sets** in the launcher, choose the extension's entry and remove it; the service's own
+settings page is where to revoke the access completely. Without a keyring (some bare window
+managers), extensions that keep tokens or preferences cannot save them; `compass doctor` says
+when this is the case.
+
+### Permissions
+
+Extensions run in a sandbox. They can use the network and their own data, but not the rest of your
+home folder. A few Raycast extensions need a program on your computer, such as `brew`; Compass asks
+before running one, with Allow Once, Always Allow or Deny. **Script Permissions** lists what you
+allowed, and takes it back.
+
+## Rhai scripts
+
+Rhai scripts are small commands with a searchable list, written in one file with no build step.
+Compass ships five, which are in root search like any other command:
+
+- **Web Search**: search the web, a wiki or a code host
+- **Unit Converter**: convert lengths, weights, volumes and temperatures
+- **Epoch Converter**: Unix timestamps to dates and back
+- **Generate**: UUIDs, lorem ipsum and passwords
+- **Quick Notes**: jot something down, find it again later
+
+Your own scripts go in a folder each under `~/.local/share/compass/scripts/` (the Flatpak uses
+`~/.var/app/org.tunaos.compass/data/compass/scripts/`). A new script appears in root search on its
+own. The first time you open one that asks for something, such as the clipboard or saved data,
+Compass lists what it wants and runs it only if you allow it. **Script Permissions** shows what each
+script was allowed and revokes it.
+
+To write one, start from an example: [Writing Rhai scripts](rust-engine/RHAI-SCRIPTS.md).
 
 ## Configuration
 
