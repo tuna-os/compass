@@ -180,9 +180,10 @@ make check-rust          # what Rust CI runs: fmt, clippy -D warnings, tests
 just bench-compare       # the Compass-versus-Vicinae benchmarks
 ```
 
-The workspace is split into `compass-*` crates: desktop entries, search, IPC, platform services,
+The workspace is split into `compass-*` crates — see **[docs/crates.md](docs/crates.md)** for how
+the code is organized: desktop entries, search, IPC, platform services,
 Wayland and portals, GNOME Shell, the UI, the extension host and the sandbox. The `compass` crate
-is the binary. Start with [CONTRIBUTING.md](CONTRIBUTING.md), the
+is the binary. Start with [CONTRIBUTING.md](CONTRIBUTING.md), [docs/crates.md](docs/crates.md), the
 [architecture decisions](docs/rust-engine/adr/README.md) and the
 [render harnesses](docs/rust-engine/RENDER-HARNESSES.md).
 
