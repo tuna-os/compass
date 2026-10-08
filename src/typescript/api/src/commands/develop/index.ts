@@ -122,7 +122,7 @@ const develop: CommandDef = {
 			await vicinae.ping();
 		} catch (error) {
 			console.error(
-				`Failed to ping vicinae\n`,
+				`Compass is not answering. Start it with \`compass start\` (or the Flatpak), then run this again.\n`,
 				error instanceof Error ? error.message : error,
 			);
 			return;
@@ -192,7 +192,10 @@ const develop: CommandDef = {
 		try {
 			await vicinae.startDevSession(id);
 		} catch (error) {
-			console.error(`Failed to invoke vicinae`, error);
+			console.error(
+				`Compass refused the development session:`,
+				error instanceof Error ? error.message : error,
+			);
 			return;
 		}
 

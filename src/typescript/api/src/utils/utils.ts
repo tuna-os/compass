@@ -10,9 +10,12 @@ export const dataDir = () => {
 	if (process.platform === "darwin")
 		return path.join(os.homedir(), ".local", "share", "vicinae");
 
+	// Compass reads extensions from $XDG_DATA_HOME/compass/extensions. Vicinae's
+	// directory only reached it through the symlink Compass's migration leaves
+	// for someone who used Vicinae first.
 	return path.join(
 		process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share"),
-		"vicinae",
+		"compass",
 	);
 };
 

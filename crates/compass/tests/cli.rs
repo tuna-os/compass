@@ -167,6 +167,34 @@ async fn a_launch_deeplink_goes_to_the_engine_bare_or_as_a_subcommand() {
     }
 }
 
+#[tokio::test]
+async fn vici_develops_links_go_to_the_engine_and_a_malformed_one_says_why() {
+    // `vici develop` reaches the engine through this command, so a link the
+    // CLI refused would stop the SDK before it watches anything.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket = dir.path().join("ipc.sock");
+    let mut requests = stub_engine(&socket).await;
+    for action in ["start", "refresh", "stop"] {
+        let url = format!("compass://api/extensions/develop/{action}?id=hello");
+        let output = run_cli(dir.path(), &socket, &["deeplink", &url]).await;
+        assert!(output.status.success(), "{url}: {}", stderr(&output));
+        assert_eq!(requests.recv().await, Some(Request::OpenDeeplink { url }));
+    }
+
+    let output = run_cli(
+        dir.path(),
+        &socket,
+        &["deeplink", "compass://api/extensions/develop/start"],
+    )
+    .await;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("?id="), "{}", stderr(&output));
+    assert!(
+        requests.try_recv().is_err(),
+        "a malformed link reached the engine"
+    );
+}
+
 // --------------------------------------------------------------------------
 // No daemon
 // --------------------------------------------------------------------------

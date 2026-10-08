@@ -673,13 +673,21 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
                 return Ok(ExitCode::from(EXIT_OK));
             }
             // What the engine's OpenDeeplink takes: a launch link
-            // (`compass://launch/<provider>/<entrypoint>`), a settings link
-            // and a store link, so the CLI refuses nothing the engine opens.
+            // (`compass://launch/<provider>/<entrypoint>`), a settings link,
+            // `vici develop`'s links and a store link, so the CLI refuses
+            // nothing the engine opens.
             if compass_core::root_items::parse_launch_link(&url).is_some()
                 || compass_core::settings_catalog::parse_settings_link(&url).is_some()
+                || matches!(
+                    compass_core::develop_link::parse_develop_link(&url),
+                    Some(Ok(_))
+                )
             {
                 ipc::send_ack(&socket, compass_ipc::Request::OpenDeeplink { url }).await?;
                 return Ok(ExitCode::from(EXIT_OK));
+            }
+            if let Some(Err(usage)) = compass_core::develop_link::parse_develop_link(&url) {
+                anyhow::bail!("{usage}");
             }
             match compass_core::store_listing::parse_extension_link(&url) {
                 Some(Ok(_)) => {
