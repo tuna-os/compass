@@ -77,7 +77,7 @@ impl LauncherApp {
         let themes = crate::theme::Theme::ALL
             .iter()
             .copied()
-            .chain(crate::theme::load_user_themes(&self.theme_dirs))
+            .chain(crate::theme::load_user_themes(&self.view.theme_dirs))
             .map(|theme| (theme.name().to_owned(), theme.title().to_owned()))
             .collect();
         let mut page = SettingsPage::new(config, providers, themes, tab);
@@ -637,8 +637,8 @@ impl LauncherApp {
         }
         let theme = crate::theme::Theme::from_name(config.launcher().appearance().theme())
             .unwrap_or_default();
-        if self.theme_preview.is_none() {
-            self.theme_choice = theme;
+        if self.view.theme_preview.is_none() {
+            self.view.theme_choice = theme;
         }
         self.root_config = config.root_config();
         self.app_index.apply_root_config(&self.root_config);
@@ -686,8 +686,8 @@ impl LauncherApp {
                 self.icons = resolved.icons;
             }
             "launcher.appearance.color_scheme" => match launcher.appearance().color_scheme() {
-                "light" => self.appearance = crate::design::Appearance::Light,
-                "dark" => self.appearance = crate::design::Appearance::Dark,
+                "light" => self.view.appearance = crate::design::Appearance::Light,
+                "dark" => self.view.appearance = crate::design::Appearance::Dark,
                 _ => {}
             },
             "launcher.appearance.theme" => {
@@ -696,7 +696,7 @@ impl LauncherApp {
             "launcher.pop_to_root_on_close" => {
                 self.pop_to_root_on_close = launcher.pop_to_root_on_close();
             }
-            "font.normal.family" => self.font_family = config.font_family().map(str::to_owned),
+            "font.normal.family" => self.view.font_family = config.font_family().map(str::to_owned),
             _ if key.starts_with("providers.power.entrypoints.") => {
                 for command in compass_core::power_commands::COMMANDS {
                     let preferences = config.entrypoint_preferences(

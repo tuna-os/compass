@@ -174,6 +174,7 @@ impl LauncherApp {
         match message {
             Message::FontsLoaded(result) => {
                 let saved = self
+                    .view
                     .view_memory
                     .get(crate::view_memory::FONT_CATEGORY)
                     .map(str::to_owned);
@@ -194,8 +195,8 @@ impl LauncherApp {
                 match result {
                     Ok(family) => {
                         // The configured family replaces the desktop's.
-                        self.typography_link = None;
-                        self.font_family = Some(family);
+                        self.view.typography_link = None;
+                        self.view.font_family = Some(family);
                     }
                     Err(reason) => {
                         if let Page::Fonts(page) = &mut self.page {
@@ -217,7 +218,8 @@ impl LauncherApp {
                 if let Page::Fonts(page) = &mut self.page {
                     page.set_category(&option);
                 }
-                self.view_memory
+                self.view
+                    .view_memory
                     .set(crate::view_memory::FONT_CATEGORY, &option);
                 Task::batch([focus_search(), crate::scroll::reveal_root_selection()])
             }

@@ -427,7 +427,10 @@ impl LauncherApp {
                     .as_bool()
             })
             .unwrap_or(false);
-        let completed = self.view_memory.get(crate::compass_pages::intro_key(store));
+        let completed = self
+            .view
+            .view_memory
+            .get(crate::compass_pages::intro_key(store));
         if crate::compass_pages::shows_intro(always, completed) {
             self.panel = None;
             self.page = Page::StoreIntro(crate::compass_pages::StoreIntroPage::new(store));
@@ -443,7 +446,8 @@ impl LauncherApp {
         };
         let store = page.store;
         self.panel = None;
-        self.view_memory
+        self.view
+            .view_memory
             .set(crate::compass_pages::intro_key(store), "true");
         self.open_store(store)
     }

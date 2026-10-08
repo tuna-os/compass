@@ -74,7 +74,7 @@ impl LauncherApp {
 
     /// Opens the flow at its first step, recording to `state_path`.
     pub fn open_onboarding(&mut self, state_path: std::path::PathBuf) {
-        let files = crate::theme::load_user_themes(&self.theme_dirs);
+        let files = crate::theme::load_user_themes(&self.view.theme_dirs);
         let extensions = self.app_index.extensions();
         let installed = |id: &str| extensions.iter().any(|command| command.extension_id == id);
         let page = OnboardingPage::new(state_path, files, installed);
@@ -149,7 +149,7 @@ impl LauncherApp {
             Key::Named(Named::Escape) => self.conceal(),
             _ if activate => match page.focused {
                 Some(Control::Theme) => {
-                    let current = ThemeOption(self.theme_choice);
+                    let current = ThemeOption(self.view.theme_choice);
                     page.menu = Some(
                         page.themes
                             .iter()
@@ -362,7 +362,7 @@ impl LauncherApp {
         content = content.push(heading).push(subtitle);
         match step {
             Step::Personalize => {
-                let current = ThemeOption(self.theme_choice);
+                let current = ThemeOption(self.view.theme_choice);
                 let theme_row = row![
                     column![
                         text("Theme").font(self.font()).size(14),

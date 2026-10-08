@@ -1014,12 +1014,9 @@ pub struct LauncherApp {
     reopen_after_close: bool,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
-    /// Curated theme (#153).
-    theme_choice: crate::theme::Theme,
-    /// Where Set Theme looks for theme files.
-    theme_dirs: Vec<std::path::PathBuf>,
-    /// What views remember between openings.
-    view_memory: crate::view_memory::ViewMemory,
+    /// Theme, appearance, typography and what views remember: the
+    /// presentation state ([`crate::view_state`]).
+    view: crate::view_state::ViewState,
     /// The `fallbacks` entries a non-empty query offers, as ids.
     fallbacks: Vec<String>,
     /// The provider search view, when root search is showing one provider.
@@ -1045,27 +1042,9 @@ pub struct LauncherApp {
     remote_icons: bool,
     /// See [`AppFlags::favicon_service`].
     favicon_service: compass_core::favicon::Service,
-    /// Masked images, drawn once.
-    masked: crate::icons::MaskedCache,
-    /// Extension icon files seen to exist, so a draw does not stat them.
-    known_files: std::collections::HashSet<std::path::PathBuf>,
-    /// Previously persisted theme for live-preview cancellation (#153).
-    theme_preview: Option<crate::theme::Theme>,
     /// The first-run flow, when it is due but the launcher started hidden:
     /// it opens with the first summon rather than at login.
     pending_onboarding: Option<std::path::PathBuf>,
-    /// Which palette to draw with. See [`LauncherApp::theme`].
-    appearance: Appearance,
-    /// Where later appearance changes arrive. See [`AppFlags::appearance_link`].
-    appearance_link: Option<crate::appearance::AppearanceLink>,
-    /// The desktop's interface font family.
-    ///
-    /// `None` is the historic hard-coded `Cantarell` path. `Some` is whatever
-    /// `org.gnome.desktop.interface font-name` reported, parsed to a family.
-    /// See `crate::typography`.
-    font_family: Option<String>,
-    /// Where later font changes arrive. See [`AppFlags::typography_link`].
-    typography_link: Option<crate::typography::TypographyLink>,
     /// Where `compass.json` arrives after a change. See [`AppFlags::config_link`].
     config_link: Option<crate::config_link::ConfigLink>,
     /// Whether the selection wraps at the ends. See
@@ -1424,13 +1403,13 @@ impl LauncherApp {
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
         app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
-        app.theme_choice = flags.theme;
-        app.theme_dirs = flags.theme_dirs;
-        app.view_memory = crate::view_memory::ViewMemory::load(flags.view_state_path);
-        app.appearance = flags.appearance;
-        app.appearance_link = flags.appearance_link;
-        app.font_family = flags.font_family;
-        app.typography_link = flags.typography_link;
+        app.view.theme_choice = flags.theme;
+        app.view.theme_dirs = flags.theme_dirs;
+        app.view.view_memory = crate::view_memory::ViewMemory::load(flags.view_state_path);
+        app.view.appearance = flags.appearance;
+        app.view.appearance_link = flags.appearance_link;
+        app.view.font_family = flags.font_family;
+        app.view.typography_link = flags.typography_link;
         app.config_link = flags.config_link;
     }
 
@@ -1492,9 +1471,7 @@ impl LauncherApp {
             closing: false,
             reopen_after_close: false,
             window_config: AppFlags::default().window_config,
-            theme_choice: crate::theme::Theme::System,
-            theme_dirs: Vec::new(),
-            view_memory: crate::view_memory::ViewMemory::default(),
+            view: crate::view_state::ViewState::default(),
             fallbacks: Vec::new(),
             provider_scope: None,
             rhai_icons: std::collections::HashMap::new(),
@@ -1506,14 +1483,7 @@ impl LauncherApp {
             shortcuts_inhibited: false,
             remote_icons: false,
             favicon_service: compass_core::favicon::Service::default(),
-            masked: crate::icons::MaskedCache::default(),
-            known_files: std::collections::HashSet::new(),
-            theme_preview: None,
             pending_onboarding: None,
-            appearance: Appearance::Light,
-            appearance_link: None,
-            font_family: None,
-            typography_link: None,
             config_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
@@ -1856,7 +1826,7 @@ impl LauncherApp {
                 page.query,
                 page.rows.len(),
                 page.selected,
-                self.theme_choice.name()
+                self.view.theme_choice.name()
             ));
         }
         if let Page::Dmenu(page) = &self.page {
@@ -1988,7 +1958,7 @@ impl LauncherApp {
     /// [`AppFlags::appearance_link`], and otherwise stays on
     /// [`AppFlags::appearance`] for the window's whole life.
     fn palette(&self) -> design::Palette {
-        self.theme_choice.palette(self.appearance)
+        self.view.theme_choice.palette(self.view.appearance)
     }
 
     /// The font the launcher draws text with.
@@ -1998,7 +1968,7 @@ impl LauncherApp {
     /// `iced::Font::DEFAULT` which keeps the historic `Cantarell` fallback
     /// readable on a minimal image.
     fn font(&self) -> iced::Font {
-        match &self.font_family {
+        match &self.view.font_family {
             Some(family) => crate::typography::iced_font(family),
             None => iced::Font::DEFAULT,
         }
@@ -2023,14 +1993,14 @@ impl LauncherApp {
     /// The application theme.
     pub fn theme(&self) -> Theme {
         let p = self.palette();
-        if self.theme_choice == crate::theme::Theme::System {
-            return design::theme(self.appearance);
+        if self.view.theme_choice == crate::theme::Theme::System {
+            return design::theme(self.view.appearance);
         }
         iced::Theme::custom(
             format!(
                 "Compass {}-{}",
-                self.theme_choice.name(),
-                self.appearance.name()
+                self.view.theme_choice.name(),
+                self.view.appearance.name()
             ),
             iced::theme::Palette {
                 background: p.surface.to_iced(),
@@ -2099,10 +2069,10 @@ impl LauncherApp {
                     .map(|command| command.map_or(Message::EngineDisconnected, Message::Command)),
             );
         }
-        if let Some(link) = &self.appearance_link {
+        if let Some(link) = &self.view.appearance_link {
             streams.push(link.subscription().map(Message::AppearanceChanged));
         }
-        if let Some(link) = &self.typography_link {
+        if let Some(link) = &self.view.typography_link {
             streams.push(link.subscription().map(Message::TypographyChanged));
         }
         if let Some(link) = &self.config_link {
@@ -2486,34 +2456,34 @@ impl LauncherApp {
                 Task::none()
             }
             Message::AppearanceChanged(appearance) => {
-                self.appearance = appearance;
+                self.view.appearance = appearance;
                 Task::none()
             }
             Message::TypographyChanged(family) => {
                 let family = family.trim().to_owned();
                 if family.is_empty() {
-                    self.font_family = None;
+                    self.view.font_family = None;
                 } else {
-                    self.font_family = Some(family);
+                    self.view.font_family = Some(family);
                 }
                 Task::none()
             }
             Message::ConfigReloaded(config) => self.apply_reloaded_config(&config),
             Message::ThemePreview(theme) => {
-                if self.theme_preview.is_none() {
-                    self.theme_preview = Some(self.theme_choice);
+                if self.view.theme_preview.is_none() {
+                    self.view.theme_preview = Some(self.view.theme_choice);
                 }
-                self.theme_choice = theme;
+                self.view.theme_choice = theme;
                 Task::none()
             }
             Message::ThemeCommit => {
                 // Persist is handled by compass theme set; in-ui commit clears preview backup.
-                self.theme_preview = None;
+                self.view.theme_preview = None;
                 Task::none()
             }
             Message::ThemeCancel => {
-                if let Some(prev) = self.theme_preview.take() {
-                    self.theme_choice = prev;
+                if let Some(prev) = self.view.theme_preview.take() {
+                    self.view.theme_choice = prev;
                 }
                 Task::none()
             }
@@ -3574,7 +3544,8 @@ impl LauncherApp {
                     return Task::none();
                 };
                 let generation = page.set_category(&key);
-                self.view_memory
+                self.view
+                    .view_memory
                     .set(crate::view_memory::FILE_CATEGORY, &key);
                 Task::batch([self.files_search_task(generation), focus_search()])
             }
@@ -5180,7 +5151,7 @@ impl LauncherApp {
                     let [r, g, b, _] = c.into_rgba8();
                     [r, g, b]
                 });
-                self.masked.get(art, mask, color)
+                self.view.masked.get(art, mask, color)
             }
             _ => None,
         };
@@ -6792,7 +6763,7 @@ impl LauncherApp {
     /// (`restoreCategoryFilter`: anything but "All").
     fn open_search_files(&mut self, query: String) -> Task<Message> {
         let mut page = crate::files_page::FilesPage::default();
-        if let Some(key) = self.view_memory.get(crate::view_memory::FILE_CATEGORY) {
+        if let Some(key) = self.view.view_memory.get(crate::view_memory::FILE_CATEGORY) {
             page.set_category(key);
         }
         page.set_query(query);
@@ -7212,7 +7183,7 @@ impl LauncherApp {
         command: &compass_core::extension_commands::ExtensionCommand,
     ) -> Option<compass_core::image_url::ImageUrl> {
         self.icons
-            .then(|| command.icon_url(|path| self.known_files.contains(path)))
+            .then(|| command.icon_url(|path| self.view.known_files.contains(path)))
     }
 
     /// Resolves `urls` into [`Self::url_glyphs`], asking for each remote
@@ -7325,10 +7296,10 @@ impl LauncherApp {
                         {
                             let path = command.extension_dir.join("assets").join(icon);
                             if path.is_file() {
-                                self.known_files.insert(path);
+                                self.view.known_files.insert(path);
                             }
                         }
-                        urls.push(command.icon_url(|path| self.known_files.contains(path)));
+                        urls.push(command.icon_url(|path| self.view.known_files.contains(path)));
                     }
                 }
                 RootRow::Script(index) => {
@@ -7561,7 +7532,11 @@ mod tests {
             crate::onboarding_page::ThemeOption(crate::theme::Theme::Dracula),
         ));
         settle(&mut app, task);
-        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula, "previewed");
+        assert_eq!(
+            app.view.theme_choice,
+            crate::theme::Theme::Dracula,
+            "previewed"
+        );
         assert_eq!(
             backend.themes_kept.lock().unwrap().as_slice(),
             ["dracula"],
@@ -7673,7 +7648,7 @@ mod tests {
         assert_eq!(page.menu, Some(0), "open at the current theme");
         let _ = app.update(pressed(Named::ArrowDown));
         let _ = app.update(pressed(Named::Enter));
-        assert_eq!(app.theme_choice, crate::theme::Theme::ALL[1]);
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::ALL[1]);
         let _ = app.update(shift_tab());
         assert_eq!(focused(&app), None, "Shift+Tab from the first control");
 
@@ -7965,13 +7940,13 @@ mod tests {
                 crate::onboarding_page::ThemeOption(Theme::Nord),
             ));
             settle(&mut app, task);
-            assert_eq!(app.theme_choice, Theme::Nord);
+            assert_eq!(app.view.theme_choice, Theme::Nord);
             // The pick list draws its value without a text widget a selector
             // finds; the paint tier checks the card is drawn in the theme.
-            assert_eq!(app.palette(), Theme::Nord.palette(app.appearance));
+            assert_eq!(app.palette(), Theme::Nord.palette(app.view.appearance));
             if let Some(backend) = backend {
                 assert_eq!(backend.themes_kept.lock().unwrap().as_slice(), ["nord"]);
-                assert_eq!(app.theme_preview, None, "kept, so nothing to put back");
+                assert_eq!(app.view.theme_preview, None, "kept, so nothing to put back");
             }
             assert_eq!(onboarding_page(&app).notice, None);
         }
@@ -8231,7 +8206,7 @@ mod tests {
             }
             if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
                 for appearance in Appearance::ALL {
-                    app.appearance = appearance;
+                    app.view.appearance = appearance;
                     let mut ui = iced_test::Simulator::with_size(
                         iced::Settings::default(),
                         iced::Size::new(800.0, 320.0),
@@ -8437,7 +8412,7 @@ mod tests {
         let backend = store_backend(dir.path());
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend);
-        app.view_memory.set(
+        app.view.view_memory.set(
             crate::compass_pages::intro_key(crate::backend::Store::Vicinae),
             "true",
         );
@@ -11460,15 +11435,15 @@ mod tests {
         let before = theme_name(&app);
         let _ = app.update(Message::ThemePreview(crate::theme::Theme::Dracula));
         assert_ne!(theme_name(&app), before);
-        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::Dracula);
         let _ = app.update(Message::ThemeCancel);
         assert_eq!(theme_name(&app), before);
-        assert_eq!(app.theme_choice, crate::theme::Theme::System);
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::System);
 
         let _ = app.update(Message::ThemePreview(crate::theme::Theme::Nord));
         let _ = app.update(Message::ThemeCommit);
-        assert_eq!(app.theme_choice, crate::theme::Theme::Nord);
-        assert!(app.theme_preview.is_none());
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::Nord);
+        assert!(app.view.theme_preview.is_none());
     }
 
     #[test]
@@ -11479,15 +11454,15 @@ mod tests {
             appearance: Appearance::Dark,
             ..AppFlags::default()
         });
-        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::Dracula);
         let _ = app.update(Message::ThemePreview(crate::theme::Theme::System));
-        assert_eq!(app.theme_choice, crate::theme::Theme::System);
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::System);
         let _ = app.update(Message::ThemeCancel);
-        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::Dracula);
         let _ = app.update(Message::ThemePreview(crate::theme::Theme::System));
         let _ = app.update(Message::ThemeCommit);
-        assert_eq!(app.theme_choice, crate::theme::Theme::System);
-        assert!(app.theme_preview.is_none());
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::System);
+        assert!(app.view.theme_preview.is_none());
     }
 
     #[test]
@@ -11502,12 +11477,12 @@ mod tests {
         // Simulate that preset is stored separately — app holds theme_choice,
         // preset is in appearance config, but the UI must not couple them.
         // This test documents the contract: changing one must not change the other.
-        let theme_before = app.theme_choice;
+        let theme_before = app.view.theme_choice;
         let _ = app.update(Message::ThemePreview(crate::theme::Theme::Gruvbox));
-        assert_eq!(app.theme_choice, crate::theme::Theme::Gruvbox);
-        assert_eq!(app.theme_preview, Some(theme_before));
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::Gruvbox);
+        assert_eq!(app.view.theme_preview, Some(theme_before));
         let _ = app.update(Message::ThemeCancel);
-        assert_eq!(app.theme_choice, theme_before);
+        assert_eq!(app.view.theme_choice, theme_before);
     }
 
     #[test]
@@ -13131,7 +13106,7 @@ mod tests {
         });
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend.clone());
-        app.view_memory =
+        app.view.view_memory =
             crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
         open_builtin(&mut app, "search files", "commands:search-files");
         let page = files_page(&app);
@@ -13165,7 +13140,7 @@ mod tests {
         // A new opening, even in a new process, starts filtered.
         let mut again = LauncherApp::with_index(index(dir.path()));
         again.backend = Some(backend.clone());
-        again.view_memory =
+        again.view.view_memory =
             crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
         open_builtin(&mut again, "search files", "commands:search-files");
         assert_eq!(files_page(&again).category.as_deref(), Some("Images"));
@@ -14223,7 +14198,7 @@ mod tests {
         let backend = Arc::new(TestBackend::default());
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend.clone());
-        app.view_memory =
+        app.view.view_memory =
             crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
         open_builtin(&mut app, "browse fonts", "commands:browse-fonts");
         let task = app.update(pressed(iced::keyboard::key::Named::ArrowRight));
@@ -14246,13 +14221,13 @@ mod tests {
             backend.fonts_set.lock().unwrap().as_slice(),
             ["JetBrains Mono"]
         );
-        assert_eq!(app.font_family.as_deref(), Some("JetBrains Mono"));
+        assert_eq!(app.view.font_family.as_deref(), Some("JetBrains Mono"));
 
         let task = app.update(Message::Dismiss);
         settle(&mut app, task);
         let mut reopened = LauncherApp::with_index(index(dir.path()));
         reopened.backend = Some(backend);
-        reopened.view_memory =
+        reopened.view.view_memory =
             crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
         open_builtin(&mut reopened, "browse fonts", "commands:browse-fonts");
         let Page::Fonts(page) = &reopened.page else {
@@ -14660,7 +14635,7 @@ mod tests {
         let mut app = LauncherApp::with_index(index(dir.path()));
 
         for family in [None, Some("Cantarell")] {
-            app.font_family = family.map(str::to_owned);
+            app.view.font_family = family.map(str::to_owned);
             let launcher = app.font();
             let settings = app.markdown_settings();
             let mut spans = Vec::new();
@@ -14790,7 +14765,7 @@ mod tests {
         let task = app.update(pressed(iced::keyboard::key::Named::Enter));
         settle(&mut app, task);
         assert_eq!(
-            app.view_memory.get(crate::compass_pages::intro_key(
+            app.view.view_memory.get(crate::compass_pages::intro_key(
                 crate::backend::Store::Vicinae
             )),
             Some("true")
@@ -14891,7 +14866,7 @@ mod tests {
         let backend = store_backend(dir.path());
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend.clone());
-        app.view_memory.set(
+        app.view.view_memory.set(
             crate::compass_pages::intro_key(crate::backend::Store::Raycast),
             "true",
         );
@@ -14939,7 +14914,7 @@ mod tests {
         let backend = Arc::new(TestBackend::default());
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend.clone());
-        app.theme_choice = crate::theme::Theme::Nord;
+        app.view.theme_choice = crate::theme::Theme::Nord;
         open_builtin(&mut app, "set theme", "commands:set-theme");
         assert!(
             app.state_line().contains("page=themes"),
@@ -14949,10 +14924,14 @@ mod tests {
 
         let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
         settle(&mut app, task);
-        assert_ne!(app.theme_choice, crate::theme::Theme::Nord, "previewed");
+        assert_ne!(
+            app.view.theme_choice,
+            crate::theme::Theme::Nord,
+            "previewed"
+        );
         let task = app.update(pressed(iced::keyboard::key::Named::Escape));
         settle(&mut app, task);
-        assert_eq!(app.theme_choice, crate::theme::Theme::Nord, "put back");
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::Nord, "put back");
         assert!(matches!(app.page, Page::Root));
         assert!(backend.themes_kept.lock().unwrap().is_empty());
     }
@@ -14963,17 +14942,17 @@ mod tests {
         let backend = Arc::new(TestBackend::default());
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend.clone());
-        app.theme_choice = crate::theme::Theme::System;
+        app.view.theme_choice = crate::theme::Theme::System;
         open_builtin(&mut app, "set theme", "commands:set-theme");
         let _ = app.update(Message::ThemesQueryChanged("dracula".into()));
         let task = app.update(pressed(iced::keyboard::key::Named::Enter));
         settle(&mut app, task);
         assert_eq!(backend.themes_kept.lock().unwrap().as_slice(), ["dracula"]);
-        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        assert_eq!(app.view.theme_choice, crate::theme::Theme::Dracula);
         let task = app.update(Message::Dismiss);
         settle(&mut app, task);
         assert_eq!(
-            app.theme_choice,
+            app.view.theme_choice,
             crate::theme::Theme::Dracula,
             "a kept theme stays when the launcher hides"
         );
@@ -15897,7 +15876,7 @@ mod tests {
             ..FakeClipboard::default()
         });
         let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
-        app.view_memory = crate::view_memory::ViewMemory::load(None);
+        app.view.view_memory = crate::view_memory::ViewMemory::load(None);
         open_clipboard(&mut app);
 
         // The pane shows the selected entry, its text and its metadata.
@@ -15930,7 +15909,8 @@ mod tests {
             Some(&Some(crate::backend::ClipboardRowKind::Image))
         );
         assert_eq!(
-            app.view_memory
+            app.view
+                .view_memory
                 .get(crate::clipboard_page::FILTER_MEMORY_KEY),
             Some("image")
         );
@@ -18503,7 +18483,7 @@ mod view_tests {
         let dir = tempfile::tempdir().unwrap();
         let mut app = long_results(dir.path());
         for appearance in Appearance::ALL {
-            app.appearance = appearance;
+            app.view.appearance = appearance;
             let mut ui = iced_test::Simulator::with_size(
                 iced::Settings::default(),
                 iced::Size::new(800.0, 320.0),
@@ -18653,7 +18633,7 @@ mod view_tests {
     fn long_action_panels_keep_a_bounded_scroll_region_below_the_filter() {
         let mut app = LauncherApp::with_index(AppIndex::builder().build());
         for appearance in Appearance::ALL {
-            app.appearance = appearance;
+            app.view.appearance = appearance;
             let panel = PanelState::new(vec![PanelSection {
                 name: String::new(),
                 actions: (0..40)
