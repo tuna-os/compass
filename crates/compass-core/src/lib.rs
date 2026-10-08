@@ -54,6 +54,7 @@ pub mod config_migration;
 pub mod contrast;
 pub mod create_extension;
 pub mod default_app;
+pub mod develop_link;
 pub mod emoji_grid;
 pub mod entry_filter;
 pub mod exchange_rates;

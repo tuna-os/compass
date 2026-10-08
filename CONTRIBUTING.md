@@ -16,6 +16,8 @@ If you think you've found a severe security issue, report it privately through G
 
 Less is more: each new line of code represents additional maintenance for the project and huge PRs have lower odds of being accepted, especially if they involve significant architectural commitments that were not discussed before. For a big change, open an issue first. The [architecture decisions](docs/rust-engine/adr/README.md) record what has already been settled.
 
+[How the code is organised](docs/crates.md) says what each crate is for and where to start on a given change.
+
 All submitted code needs to be locally tested. `make check-rust` runs what Rust CI runs: formatting, Clippy with warnings denied, and the workspace tests. [AGENTS.md](AGENTS.md) has the coding rules, and [RENDER-HARNESSES.md](docs/rust-engine/RENDER-HARNESSES.md) explains how to see the launcher without a desktop.
 
 Behaviour inherited from Vicinae should match the pinned upstream release, which is the reference now that the C++ engine is gone ([ADR-0021](docs/rust-engine/adr/0021-remove-the-cpp-engine.md)). An intentional difference is recorded in the [parity ledger](docs/rust-engine/PARITY.md) with its rationale.

@@ -1,145 +1,90 @@
-import * as net from "node:net";
-import * as os from "node:os";
-import * as path from "node:path";
-import { Client, type PingResponse, RpcTransport } from "../proto/ipc.js";
+import { execFile } from "node:child_process";
 
 export type VicinaeClientOptions = {
+	/** The engine's socket; `COMPASS_SOCKET` and the CLI's default otherwise. */
 	socketPath?: string;
 	timeoutMs?: number;
 };
 
-// The engine's socket: `$XDG_RUNTIME_DIR/compass/ipc.sock`, or
-// `/tmp/compass-$USER/ipc.sock` without a runtime directory, as
-// crates/compass-ipc/src/path.rs resolves it. `COMPASS_SOCKET` overrides it,
-// as it does for the `compass` CLI.
-const runtimeDir = (): string => {
-	const runtime =
-		process.platform === "darwin"
-			? process.env.TMPDIR
-			: process.env.XDG_RUNTIME_DIR;
-	if (runtime) return path.join(runtime, "compass");
-	return path.join("/tmp", `compass-${os.userInfo().username}`);
+type Invocation = { file: string; args: string[] };
+
+// How to run the `compass` CLI: `COMPASS_BIN` when set, then `compass` on
+// PATH, then the Flatpak. The engine's wire format is postcard-encoded and
+// versioned with the engine, so the SDK does not speak it itself: the CLI is
+// always the engine's own version and says which one it speaks.
+const invocations = (args: string[]): Invocation[] => {
+	if (process.env.COMPASS_BIN) return [{ file: process.env.COMPASS_BIN, args }];
+	return [
+		{ file: "compass", args },
+		{ file: "flatpak", args: ["run", "org.tunaos.compass", ...args] },
+	];
 };
 
-export const serverSocketPath = (): string => {
-	if (process.env.COMPASS_SOCKET) return process.env.COMPASS_SOCKET;
-	if (process.platform === "win32")
-		return `\\\\.\\pipe\\compass-${os.userInfo().username}`;
-	return path.join(runtimeDir(), "ipc.sock");
-};
+const run = (
+	{ file, args }: Invocation,
+	timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> =>
+	new Promise((resolve, reject) => {
+		execFile(file, args, { timeout: timeoutMs }, (error, stdout, stderr) => {
+			if (error) {
+				const failure = Object.assign(error, { stdout, stderr });
+				reject(failure);
+				return;
+			}
+			resolve({ stdout, stderr });
+		});
+	});
 
 export class VicinaeClient {
 	constructor(private readonly options: VicinaeClientOptions = {}) {}
 
-	ping(): Promise<PingResponse> {
-		return this.withConnection((client) => client.Ipc.ping());
+	/** Whether a Compass engine is answering. */
+	async ping(): Promise<void> {
+		await this.compass(["ping"]);
 	}
 
 	refreshDevSession(extensionId: string): Promise<void> {
 		return this.deeplink(
-			`compass://api/extensions/develop/refresh?id=${extensionId}`,
+			`compass://api/extensions/develop/refresh?id=${encodeURIComponent(extensionId)}`,
 		);
 	}
 
 	startDevSession(extensionId: string): Promise<void> {
 		return this.deeplink(
-			`compass://api/extensions/develop/start?id=${extensionId}`,
+			`compass://api/extensions/develop/start?id=${encodeURIComponent(extensionId)}`,
 		);
 	}
 
 	stopDevSession(extensionId: string): Promise<void> {
 		return this.deeplink(
-			`compass://api/extensions/develop/stop?id=${extensionId}`,
+			`compass://api/extensions/develop/stop?id=${encodeURIComponent(extensionId)}`,
 		);
 	}
 
 	private async deeplink(url: string): Promise<void> {
-		const response = await this.withConnection((client) =>
-			client.Ipc.deeplink({ url }),
-		);
-
-		if (response.error) throw new Error(response.error);
+		await this.compass(["deeplink", url]);
 	}
 
-	private withConnection<T>(run: (client: Client) => Promise<T>): Promise<T> {
-		const socketPath = this.options.socketPath ?? serverSocketPath();
+	private async compass(args: string[]): Promise<string> {
 		const timeoutMs = this.options.timeoutMs ?? 5000;
-
-		return new Promise<T>((resolve, reject) => {
-			const socket = net.createConnection({ path: socketPath });
-			let data = Buffer.alloc(0);
-			let settled = false;
-
-			const fail = (error: Error) => {
-				if (settled) return;
-				settled = true;
-				socket.destroy();
-				reject(error);
-			};
-
-			const succeed = (value: T) => {
-				if (settled) return;
-				settled = true;
-				socket.end();
-				resolve(value);
-			};
-
-			const client = new Client(
-				new RpcTransport({
-					send: (payload: string) => {
-						const body = Buffer.from(payload);
-						const frame = Buffer.alloc(4 + body.length);
-
-						frame.writeUInt32LE(body.length, 0);
-						body.copy(frame, 4);
-						socket.write(frame);
-					},
-				}),
-			);
-
-			socket.setTimeout(timeoutMs, () => {
-				fail(new Error("Timed out waiting for a response from Vicinae"));
-			});
-
-			socket.on("error", (error: NodeJS.ErrnoException) => {
-				if (error.code === "ENOENT" || error.code === "ECONNREFUSED") {
-					fail(
-						new Error(
-							`Could not connect to Vicinae at ${socketPath}. Is Vicinae running?`,
-						),
-					);
-					return;
+		const socket = this.options.socketPath ?? process.env.COMPASS_SOCKET;
+		const full = socket ? ["--socket", socket, ...args] : args;
+		let missing: Error | undefined;
+		for (const invocation of invocations(full)) {
+			try {
+				return (await run(invocation, timeoutMs)).stdout;
+			} catch (error) {
+				const failure = error as NodeJS.ErrnoException & { stderr?: string };
+				if (failure.code === "ENOENT") {
+					missing = failure;
+					continue;
 				}
-				fail(error);
-			});
-
-			socket.on("close", () => {
-				fail(new Error("Connection closed before a response was received"));
-			});
-
-			socket.on("connect", () => {
-				run(client).then(succeed, (error: unknown) => {
-					fail(error instanceof Error ? error : new Error(String(error)));
-				});
-			});
-
-			socket.on("data", (chunk) => {
-				data = Buffer.concat([data, chunk]);
-
-				while (data.length >= 4) {
-					const size = data.readUInt32LE(0);
-					if (data.length < 4 + size) break;
-
-					try {
-						client.route(data.subarray(4, 4 + size).toString());
-					} catch (error) {
-						fail(new Error(`Received a malformed response: ${error}`));
-						return;
-					}
-
-					data = data.subarray(4 + size);
-				}
-			});
-		});
+				const reason = failure.stderr?.trim() || failure.message;
+				throw new Error(reason);
+			}
+		}
+		throw new Error(
+			`Could not find the compass command (${missing?.message ?? "not found"}). Install Compass, or set COMPASS_BIN to its path.`,
+		);
 	}
 }

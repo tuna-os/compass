@@ -2536,6 +2536,26 @@ fn no_window(what: &str) -> Response {
     ))
 }
 
+/// `vici develop`'s deeplinks ([`compass_core::develop_link`]): a new or
+/// rebuilt extension is rescanned, so it is in root search and its next run
+/// uses the new bundle.
+async fn develop(
+    state: &Arc<RwLock<EngineState>>,
+    link: &compass_core::develop_link::DevelopLink,
+) -> Response {
+    use compass_core::develop_link::DevelopAction;
+    match link.action {
+        DevelopAction::Start | DevelopAction::Refresh => {
+            tracing::info!(id = %link.id, action = ?link.action, "an extension under development was rebuilt");
+            state.write().await.rescan_extensions();
+        }
+        DevelopAction::Stop => {
+            tracing::info!(id = %link.id, "an extension's development session ended");
+        }
+    }
+    Response::Ack
+}
+
 /// Forwards `command` to the attached window, if there is one.
 ///
 /// Clears the slot when the push fails. That is **hygiene, not behaviour**: a
@@ -3127,6 +3147,13 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             if compass_core::settings_catalog::parse_settings_link(&url).is_some() {
                 let slot = state.read().await.window_slot();
                 return forward(&slot, WindowCommand::Deeplink(url), "open the settings").await;
+            }
+            match compass_core::develop_link::parse_develop_link(&url) {
+                Some(Ok(link)) => return develop(state, &link).await,
+                Some(Err(usage)) => {
+                    return Response::Error(ProtocolError::new(ErrorKind::BadRequest, usage));
+                }
+                None => {}
             }
             match compass_core::store_listing::parse_extension_link(&url) {
                 Some(Ok(_)) => {
