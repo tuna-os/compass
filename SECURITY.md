@@ -70,9 +70,10 @@ attacker with a kernel exploit can still escape it.
   each JavaScript heap capped at 160 MiB below that. Where no systemd is reachable (inside the
   Flatpak) `RLIMIT_DATA` holds it at 512 MiB of committed memory. The caps are not configurable
   per extension.
-- **Host programs**: an extension that wants to run a program on the host, such as `brew`, must
-  name it in its manifest, and Compass asks you before it runs: Allow Once, Always Allow or Deny.
-  See [the Raycast compatibility notes](docs/rust-engine/RAYCAST-LINUX-SHIM.md). Rhai scripts
+- **Host programs**: an extension runs a program on the host, such as `brew`, only if Compass's
+  own [overrides list](extensions/raycast-linux-overrides.json) names that program for it, and
+  only after asking you: Allow Once, Always Allow or Deny. An extension cannot add a program to
+  that list itself. See [the Raycast compatibility notes](docs/rust-engine/RAYCAST-LINUX-SHIM.md). Rhai scripts
   declare what they need in `script.toml`. Scripts you install yourself get nothing until you
   allow it the first time you open them; the scripts Compass ships are granted what they
   declare. The **Script Permissions** command lists and revokes these grants. See
