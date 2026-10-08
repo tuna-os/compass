@@ -3,7 +3,7 @@
 //! Encapsulates theme, appearance, typography, and view memory state that persists
 //! across application sessions and is independent of search, dialog, or window lifecycle.
 
-use crate::appearance::Appearance;
+use crate::design::Appearance;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -129,10 +129,7 @@ impl ViewState {
     }
 
     /// Set the appearance link.
-    pub fn set_appearance_link(
-        &mut self,
-        link: Option<crate::appearance::AppearanceLink>,
-    ) {
+    pub fn set_appearance_link(&mut self, link: Option<crate::appearance::AppearanceLink>) {
         self.appearance_link = link;
     }
 
@@ -152,10 +149,7 @@ impl ViewState {
     }
 
     /// Set the typography link.
-    pub fn set_typography_link(
-        &mut self,
-        link: Option<crate::typography::TypographyLink>,
-    ) {
+    pub fn set_typography_link(&mut self, link: Option<crate::typography::TypographyLink>) {
         self.typography_link = link;
     }
 
