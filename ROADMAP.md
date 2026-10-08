@@ -1,6 +1,6 @@
 # Compass Roadmap
 
-**Last updated**: 2026-10-03 | **Maintainer**: tuna-os maintainers
+**Last updated**: 2026-10-08 | **Maintainer**: tuna-os maintainers
 
 ## Mission
 
@@ -11,9 +11,11 @@ ecosystems.
 
 ## Current Status
 
-The current release is **v0.28.2**. The Rust port covers all 152 rows in the
-[parity ledger](docs/rust-engine/PARITY.md), and the Flatpak is published in the
-TunaOS remote. The remaining work is primarily accessibility, first-run polish,
+The current release is **v0.28.2**. The Rust engine has replaced the C++ one
+([ADR-0021](docs/rust-engine/adr/0021-remove-the-cpp-engine.md)), the
+[parity ledger](docs/rust-engine/PARITY.md) tracks what remains against upstream
+Vicinae, and Compass is published as a Flatpak in the TunaOS remote and as a
+Homebrew bottle in `ublue-os/experimental-tap`. The remaining work is primarily accessibility, first-run polish,
 performance enforcement, and maintainability rather than feature-parity work.
 
 ### Priorities
