@@ -70,7 +70,9 @@ bump_version() {
     sed -i "s/^\(\s*\)version = \"[^\"]*\";/\1version = \"${bare}\";/" \
         "$repo_root/packaging/nix/compass.nix" \
         "$repo_root/packaging/nix/extension-runtime.nix"
-    sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"|<release version=\"${bare}\" date=\"$(date +%F)\"|" \
+    # AppStream's <releases> is a history, newest first: add the new release
+    # above the others rather than renaming the last one.
+    sed -i "0,/^\(\s*\)<releases>\$/s||&\n\1  <release version=\"${bare}\" date=\"$(date +%F)\"/>|" \
         "$repo_root/packaging/flatpak/org.tunaos.compass.metainfo.xml"
     sed -i "s/^pkgver=.*/pkgver=${bare}.r0.g0000000/" "$repo_root/packaging/arch/PKGBUILD"
     sed -i "s/printf '[0-9.]*\.r%s\.g%s'/printf '${bare}.r%s.g%s'/" \
