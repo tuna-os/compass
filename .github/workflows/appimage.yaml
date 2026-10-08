@@ -1,19 +1,16 @@
 name: AppImage
 
 # The AppImage, built and smoke-tested (Suite 5). Called by packaging.yaml on
-# every packaging change and nightly, and by release.yml for a tag, which passes
-# `release-tag` so the AppImage it tested is the one attached to the release.
-# FlatPark repackages that release asset, so it has to be a release download,
-# not a workflow artifact that expires.
+# every packaging change and nightly, and by release.yml for a tag, which
+# attaches the `appimage` artifact this uploads, so the AppImage it tested is
+# the one on the release. FlatPark repackages that release asset.
+#
+# Read-only on purpose: a called workflow cannot ask for more than its caller
+# grants, and GitHub refuses the whole run at startup if any job does, even a
+# skipped one. The write that attaching needs lives in release.yml.
 
 on:
   workflow_call:
-    inputs:
-      release-tag:
-        description: "Attach the AppImage and its SHA-256 to this release (e.g. v1.2.3); empty to only build and test"
-        type: string
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -111,27 +108,3 @@ jobs:
           path: Compass-x86_64.AppImage
           retention-days: 14
           if-no-files-found: error
-
-  attach:
-    name: Attach to the release
-    if: inputs.release-tag != ''
-    needs: appimage
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: appimage
-      - name: Upload the AppImage and its checksum
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # Through the environment, never ${{ }} in the script (#227).
-          TAG: ${{ inputs.release-tag }}
-        run: |
-          set -euo pipefail
-          sha256sum Compass-x86_64.AppImage > Compass-x86_64.AppImage.sha256
-          cat Compass-x86_64.AppImage.sha256
-          gh release upload "$TAG" Compass-x86_64.AppImage Compass-x86_64.AppImage.sha256 \
-            --clobber --repo "$GITHUB_REPOSITORY"

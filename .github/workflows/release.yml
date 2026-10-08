@@ -90,9 +90,28 @@ jobs:
           make_latest: true
 
   appimage:
-    needs: [resolve-tag, publish-release]
+    needs: resolve-tag
+    uses: ./.github/workflows/appimage.yaml
+
+  attach-appimage:
+    name: Attach the AppImage to the release
+    needs: [resolve-tag, publish-release, appimage]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
-    uses: ./.github/workflows/appimage.yaml
-    with:
-      release-tag: ${{ needs.resolve-tag.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: appimage
+      - name: Upload the AppImage and its checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Through the environment, never ${{ }} in the script (#227).
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          sha256sum Compass-x86_64.AppImage > Compass-x86_64.AppImage.sha256
+          cat Compass-x86_64.AppImage.sha256
+          gh release upload "$TAG" Compass-x86_64.AppImage Compass-x86_64.AppImage.sha256 \
+            --clobber --repo "$GITHUB_REPOSITORY"
