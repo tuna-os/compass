@@ -29,6 +29,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - .github/workflows/packaging.yaml
+      - .github/workflows/appimage.yaml
   pull_request:
     paths:
       - packaging/appimage/**
@@ -42,6 +43,7 @@ on:
       - crates/compass-core/src/config.rs
       - crates/compass-core/src/config_migration.rs
       - .github/workflows/packaging.yaml
+      - .github/workflows/appimage.yaml
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -78,95 +80,11 @@ jobs:
           python3 -m pip install --quiet jsonschema
           python3 scripts/packaging/check-config-schema.py
 
-  # Built once and handed to the AppImage. Arch and Nix build their own, the
-  # way their packages have to.
-  extension-runtime:
-    name: Extension runtime bundle
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Build
-        run: |
-          ./scripts/build-extension-runtime.sh
-          test -s src/typescript/extension-manager/dist/runtime.js
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: extension-runtime
-          path: src/typescript/extension-manager/dist/runtime.js
-          retention-days: 3
-          if-no-files-found: error
-
+  # The AppImage build lives in appimage.yaml, which the tagged release also
+  # calls to attach the same, smoke-tested AppImage to the GitHub release.
   appimage:
     name: AppImage
-    needs: extension-runtime
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: extension-runtime
-          path: src/typescript/extension-manager/dist
-
-      - name: Cache cargo
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: cargo-release-${{ runner.os }}-
-
-      # rust-toolchain.toml pins the channel; rustup on the runner honours it.
-      - name: Install build dependencies
-        # iced_layershell (the wlroots launcher surface) links xkbcommon.
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libxkbcommon-dev
-      - name: Build the release binaries
-        run: cargo build --release --locked -p compass -p compass-sandbox -p compass-input-server --bins
-
-      - name: Cache the AppImage tools
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: .build/appimage-tools
-          key: appimage-tools-${{ hashFiles('packaging/appimage/build-appimage.sh') }}
-
-      - name: Build the AppImage
-        run: |
-          REQUIRE_RUNTIME=1 OUT="$PWD/Compass-x86_64.AppImage" packaging/appimage/build-appimage.sh
-          ls -lh Compass-x86_64.AppImage
-
-      # Twice, because they prove different things. Extracted, the layout can
-      # be checked file by file; mounted through FUSE, it runs the way a user
-      # runs it, AppRun and all.
-      - name: "Suite 5: extracted layout"
-        run: |
-          ./Compass-x86_64.AppImage --appimage-extract >/dev/null
-          test -x squashfs-root/AppRun
-          squashfs-root/usr/bin/node --version
-          REQUIRE_RUNTIME=1 scripts/packaging/smoke.sh --prefix squashfs-root/usr -- squashfs-root/AppRun
-
-      - name: "Suite 5: the AppImage as a user runs it"
-        run: |
-          sudo apt-get install -y -qq libfuse2t64
-          # Said, not silently degraded: without FUSE this is the extracted
-          # run again, and the log should show which one happened.
-          if [ ! -e /dev/fuse ]; then
-            echo "::warning::no /dev/fuse on this runner; running the AppImage extract-and-run"
-            export APPIMAGE_EXTRACT_AND_RUN=1
-          fi
-          scripts/packaging/smoke.sh -- ./Compass-x86_64.AppImage
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: appimage
-          path: Compass-x86_64.AppImage
-          retention-days: 14
-          if-no-files-found: error
+    uses: ./.github/workflows/appimage.yaml
 
   arch:
     name: Arch package
