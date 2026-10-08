@@ -27,8 +27,9 @@ permissions:
 jobs:
   # The C++ engine's binary tarball, AppImage and macOS DMG were built here until
   # the C++ tree was removed (ADR-0021). The Rust engine ships as the Flatpak
-  # (publish-flatpak.yaml); a tag now publishes the extension API and the
-  # release notes.
+  # (publish-flatpak.yaml); a tag publishes the extension API, the release
+  # notes, and the AppImage as a release asset (appimage.yaml), which FlatPark
+  # and anyone without Flatpak download.
   resolve-tag:
     runs-on: ubuntu-24.04
     permissions:
@@ -87,3 +88,11 @@ jobs:
           name: ${{ needs.resolve-tag.outputs.tag }}
           generate_release_notes: true
           make_latest: true
+
+  appimage:
+    needs: [resolve-tag, publish-release]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/appimage.yaml
+    with:
+      release-tag: ${{ needs.resolve-tag.outputs.tag }}
