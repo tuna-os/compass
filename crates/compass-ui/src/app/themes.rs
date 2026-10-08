@@ -24,8 +24,8 @@ impl LauncherApp {
     /// Opens Set Theme over the theme in use, reading the theme files anew
     /// so one added since the last opening is offered.
     pub(super) fn open_set_theme(&mut self) -> Task<Message> {
-        let files = crate::theme::load_user_themes(&self.theme_dirs);
-        self.page = Page::Themes(ThemesPage::new(self.theme_choice, files));
+        let files = crate::theme::load_user_themes(&self.view.theme_dirs);
+        self.page = Page::Themes(ThemesPage::new(self.view.theme_choice, files));
         focus_search()
     }
 
@@ -99,7 +99,9 @@ impl LauncherApp {
             return Task::none();
         };
         match page.selected_theme() {
-            Some(theme) if theme != self.theme_choice => self.update(Message::ThemePreview(theme)),
+            Some(theme) if theme != self.view.theme_choice => {
+                self.update(Message::ThemePreview(theme))
+            }
             _ => Task::none(),
         }
     }
@@ -189,7 +191,7 @@ impl LauncherApp {
             Message::ThemeSaved(Ok(())) => {
                 let commit = self.update(Message::ThemeCommit);
                 if let Page::Themes(page) = &mut self.page {
-                    page.configured = self.theme_choice;
+                    page.configured = self.view.theme_choice;
                     page.refilter();
                 }
                 commit

@@ -33,7 +33,7 @@ impl LauncherApp {
     /// whether copies are being recorded.
     pub(super) fn open_clipboard_history(&mut self) -> Task<Message> {
         let kind = clipboard_page::kind_for_stored(
-            self.view_memory.get(clipboard_page::FILTER_MEMORY_KEY),
+            self.view.view_memory.get(clipboard_page::FILTER_MEMORY_KEY),
         );
         self.page = Page::Clipboard(ClipboardPage {
             kind,
@@ -101,7 +101,7 @@ impl LauncherApp {
                     // the filter.
                     page.query.clear();
                 }
-                self.view_memory.set(
+                self.view.view_memory.set(
                     clipboard_page::FILTER_MEMORY_KEY,
                     clipboard_page::filter_for_kind(kind).1,
                 );

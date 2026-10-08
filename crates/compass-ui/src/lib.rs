@@ -63,6 +63,7 @@ pub mod themes_page;
 pub mod tray_page;
 pub mod typography;
 pub mod view_memory;
+pub(crate) mod view_state;
 pub mod windows_page;
 pub mod workspaces_page;
 

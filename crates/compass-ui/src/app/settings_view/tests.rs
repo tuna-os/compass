@@ -457,11 +457,15 @@ fn with_an_engine_the_engine_writes_and_a_theme_is_kept_or_put_back() {
             &[("launcher.appearance.theme".to_owned(), json!("nord"))]
         );
         if refuse {
-            assert_eq!(app.theme_choice, crate::theme::Theme::System, "put back");
+            assert_eq!(
+                app.view.theme_choice,
+                crate::theme::Theme::System,
+                "put back"
+            );
             assert_eq!(page(&app).notice.as_deref(), Some("unknown theme"));
         } else {
-            assert_eq!(app.theme_choice, crate::theme::Theme::Nord);
-            assert!(app.theme_preview.is_none(), "kept");
+            assert_eq!(app.view.theme_choice, crate::theme::Theme::Nord);
+            assert!(app.view.theme_preview.is_none(), "kept");
         }
         send(
             &mut app,
@@ -746,7 +750,7 @@ fn a_reloaded_file_reaches_the_window_and_an_open_settings_view() {
     settle(&mut app, task);
     assert!(app.wrap_navigation);
     assert_eq!(app.keybinding, compass_core::keybinding::Scheme::Emacs);
-    assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+    assert_eq!(app.view.theme_choice, crate::theme::Theme::Dracula);
     let wrap = settings_catalog::find("launcher.wrap_navigation").unwrap();
     assert_eq!(page(&app).value(&wrap), json!(true));
 }

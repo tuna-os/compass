@@ -383,7 +383,7 @@ impl World {
             panel: app.panel.as_ref().map(|panel| format!("{panel:?}")),
             calls,
             root_config: format!("{:?}", app.root_config),
-            theme: format!("{:?} {:?}", app.theme_choice, app.theme_preview),
+            theme: format!("{:?} {:?}", app.view.theme_choice, app.view.theme_preview),
             config_file: fs::read_to_string(&self.config_path).ok(),
         }
     }
