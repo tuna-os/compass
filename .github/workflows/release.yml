@@ -1,18 +1,28 @@
 name: Release (tagged)
 
+# A release is a merged version bump. `make bump-patch|minor|major` writes the
+# new tag into manifest.yaml; when that lands on main, this workflow tags the
+# merge commit and publishes it. Nobody has to push a tag by hand, though a
+# pushed tag still releases, and a dispatch re-runs a release that failed.
 on:
   push:
+    branches:
+      - main
+    paths:
+      - manifest.yaml
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v1.2.3)"
+        description: "Release tag (e.g. v1.2.3); empty for the one manifest.yaml names"
         required: false
 
+# Never cancelled: a release half published (npm out, no GitHub release) is
+# worse than two that queue.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 # The default for every job in this file. Jobs that need more say so
 # themselves, and a job-level block REPLACES this one rather than adding to it —
@@ -36,7 +46,12 @@ jobs:
       contents: read
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
+      release: ${{ steps.meta.outputs.release }}
+      create: ${{ steps.meta.outputs.create }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
       - name: Resolve tag
         id: meta
         shell: bash
@@ -46,28 +61,72 @@ jobs:
         # check below ever sees it (#227).
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            TAG="${INPUT_TAG:-}"
-            if [[ -z "$TAG" ]]; then
-              echo "When dispatching manually, you must provide 'tag' (e.g. v1.2.3)." >&2
-              exit 1
-            fi
+          manifest_tag() { sed -n 's/^  tag: "\(.*\)"$/\1/p' manifest.yaml; }
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            TAG="$GITHUB_REF_NAME"
+          elif [[ "$EVENT" == "workflow_dispatch" && -n "${INPUT_TAG:-}" ]]; then
+            TAG="$INPUT_TAG"
           else
-            TAG="${GITHUB_REF_NAME}"
+            TAG="$(manifest_tag)"
           fi
 
-          # Optional: validate tag format like v1.2.3 (allow v1 or v1.2 etc.)
           if ! [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]]; then
             echo "Tag '$TAG' does not match expected format (e.g. v1.2.3)." >&2
             exit 1
           fi
 
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # A tag that already exists was released (or is being released by
+          # its own push). A manifest edit that isn't a bump releases nothing;
+          # a dispatch re-runs that release.
+          release=true
+          create=false
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            if [[ "$EVENT" == "push" && "$REF_TYPE" == "branch" ]]; then
+              echo "$TAG already exists; manifest.yaml changed without a version bump."
+              release=false
+            fi
+          elif [[ "$REF_TYPE" == "tag" ]]; then
+            :
+          else
+            create=true
+          fi
+
+          {
+            echo "tag=$TAG"
+            echo "release=$release"
+            echo "create=$create"
+          } >> "$GITHUB_OUTPUT"
+
+  # Tags the commit this run is on: on a merged bump, the merge commit. Pushed
+  # with the workflow token, the tag does not start a second run of this file.
+  create-tag:
+    needs: resolve-tag
+    if: needs.resolve-tag.outputs.create == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+      - name: Tag ${{ needs.resolve-tag.outputs.tag }}
+        env:
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
 
   publish-npm:
-    needs: resolve-tag
+    needs: [resolve-tag, create-tag]
+    if: >-
+      !cancelled() && needs.resolve-tag.outputs.release == 'true' &&
+      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
     permissions:
       id-token: write
       contents: read
@@ -90,8 +149,15 @@ jobs:
           make_latest: true
 
   appimage:
-    needs: resolve-tag
+    needs: [resolve-tag, create-tag]
+    if: >-
+      !cancelled() && needs.resolve-tag.outputs.release == 'true' &&
+      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
     uses: ./.github/workflows/appimage.yaml
+    with:
+      # The tag, not the run's commit: a re-run dispatched from main later
+      # still ships what the tag names.
+      ref: ${{ needs.resolve-tag.outputs.tag }}
 
   attach-appimage:
     name: Attach the AppImage to the release
@@ -115,3 +181,42 @@ jobs:
           cat Compass-x86_64.AppImage.sha256
           gh release upload "$TAG" Compass-x86_64.AppImage Compass-x86_64.AppImage.sha256 \
             --clobber --repo "$GITHUB_REPOSITORY"
+
+  # The in-tree Homebrew formula names the release tarball, whose checksum only
+  # exists once the tag does, so the bump leaves a placeholder. This fills it
+  # in with a PR against main.
+  homebrew-sha:
+    name: Fill the Homebrew formula's sha256
+    needs: [resolve-tag, publish-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+      - name: Open the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          formula=packaging/homebrew/compass.rb
+          if ! grep -q "/tags/${TAG}.tar.gz\"" "$formula" \
+             || ! grep -q 'REPLACE_WITH_RELEASE_TARBALL_SHA256' "$formula"; then
+            echo "The formula on main is not waiting for ${TAG}'s checksum."
+            exit 0
+          fi
+          sha=$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz" | sha256sum | cut -d' ' -f1)
+          sed -i "s/REPLACE_WITH_RELEASE_TARBALL_SHA256/${sha}/" "$formula"
+          branch="release/homebrew-${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -qam "homebrew: the ${TAG} tarball's sha256"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "homebrew: the ${TAG} tarball's sha256" \
+            --body "Fills in the checksum the version bump left as a placeholder: sha256 of https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"

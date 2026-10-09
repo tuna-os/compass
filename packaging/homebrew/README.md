@@ -23,4 +23,5 @@ learned the hard way — keep them true when the install changes:
   Arch and Nix packages do.
 - The `sha256` belongs to the GitHub-generated tag tarball and exists only
   after the tag is pushed; `scripts/bump_version.sh` moves the url and
-  resets the hash to the placeholder, so filling it is part of the release.
+  resets the hash to the placeholder, and the release workflow opens a PR
+  that fills it in once the tag exists.
