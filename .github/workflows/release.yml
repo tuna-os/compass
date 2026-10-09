@@ -102,7 +102,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   # Tags the commit this run is on: on a merged bump, the merge commit. Pushed
-  # with the workflow token, the tag does not start a second run of this file.
+  # with the workflow token, the tag does not start a second run of this file,
+  # nor the VM tier that a pushed tag starts, so this dispatches that on the tag.
   create-tag:
     needs: resolve-tag
     if: needs.resolve-tag.outputs.create == 'true'
@@ -110,6 +111,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -121,6 +123,13 @@ jobs:
           set -euo pipefail
           git tag "$TAG" "$GITHUB_SHA"
           git push origin "refs/tags/$TAG"
+      - name: Start the VM tier on ${{ needs.resolve-tag.outputs.tag }}
+        # It answers for the release; it doesn't gate publishing it.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+        run: gh workflow run vm-tier.yaml --ref "$TAG" --repo "$GITHUB_REPOSITORY"
 
   publish-npm:
     needs: [resolve-tag, create-tag]
