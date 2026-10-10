@@ -88,11 +88,16 @@ jobs:
           # practice; the `backfill-` prefix keeps it outside semver range
           # syntax, which npm rejects as a tag name). Normal releases
           # publish exactly as before.
+          #
+          # `--provenance` on both paths: it is what makes npm mint the OIDC
+          # token and perform the trusted-publisher exchange (id-token: write
+          # above). Without it npm never attempts OIDC and dies with
+          # ENEEDAUTH (run 38035006880).
           SMALLEST=$(printf '%s\n%s\n' "$VERSION" "$LATEST" | sort -V | head -n1)
           if [ "$SMALLEST" = "$VERSION" ] && [ "$VERSION" != "$LATEST" ]; then
             TAG="backfill-${VERSION%.*}"
             echo "Backfill release: publishing $VERSION under dist-tag '$TAG' (latest stays $LATEST)."
-            npm publish --tag "$TAG"
+            npm publish --provenance --tag "$TAG"
           else
-            npm publish
+            npm publish --provenance
           fi
