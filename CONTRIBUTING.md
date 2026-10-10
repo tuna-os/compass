@@ -39,3 +39,7 @@ AI generated code is treated the same as regular code. As such, all the aforemen
 AI is **not** a substitute for properly understanding and testing your code: don't be lazy. Lazy AI PRs that do not respect the guidelines will be rejected. In particular, keep your pull request's description as concise as possible: no maintainer will read your novel.
 
 If your contribution was mostly AI generated, it's considered good practice to indicate what model or tool you used for that.
+
+## Releasing
+
+Run `make bump-patch` (or `bump-minor`, `bump-major`) on a branch and open a PR with the commit it makes. When the PR merges, `release.yml` tags the merge commit and publishes the release: the extension API on npm, the GitHub release with its notes, and the tested AppImage attached to it. It then opens a PR that fills in the Homebrew formula's checksum. Don't push the tag yourself. If a release fails partway, re-run it from the Actions tab with the tag.
