@@ -74,4 +74,18 @@ jobs:
 
       - name: Publish
         if: steps.check.outputs.published == 'false'
-        run: npm publish
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          LATEST=$(npm view "@vicinae/api" version)
+          # A backfill release (older than npm latest) must not hijack the
+          # `latest` tag: npm refuses the implicit tag for it, so pin the
+          # version to its minor line instead (standard npm backfill
+          # practice). Normal releases publish exactly as before.
+          SMALLEST=$(printf '%s\n%s\n' "$VERSION" "$LATEST" | sort -V | head -n1)
+          if [ "$SMALLEST" = "$VERSION" ] && [ "$VERSION" != "$LATEST" ]; then
+            MINOR="${VERSION%.*}"
+            echo "Backfill release: publishing $VERSION under dist-tag '$MINOR' (latest stays $LATEST)."
+            npm publish --tag "$MINOR"
+          else
+            npm publish
+          fi
