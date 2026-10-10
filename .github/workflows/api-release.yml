@@ -32,10 +32,15 @@ jobs:
           ref: ${{ inputs.tag }}
 
       - name: Setup Node.js
+        # No `registry-url` on purpose: setup-node would export
+        # NODE_AUTH_TOKEN=GITHUB_TOKEN, and npm treats any configured token
+        # as the credential -- sending a GitHub JWT to registry.npmjs.org
+        # (PUT -> 404) and never attempting the OIDC trusted-publisher
+        # exchange this job relies on (id-token: write above). npm's default
+        # registry is registry.npmjs.org, and install needs no auth.
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
 
       - name: Update npm (trusted publishing requires >= 11.5.1)
         run: npm install -g npm@latest && npm --version
