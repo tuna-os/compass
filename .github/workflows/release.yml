@@ -164,6 +164,11 @@ jobs:
   attach-appimage:
     name: Attach the AppImage to the release
     needs: [resolve-tag, publish-release, appimage]
+    # Explicit, because create-tag is skipped whenever the tag already exists,
+    # and a job downstream of a skipped one is skipped unless it says otherwise.
+    if: >-
+      !cancelled() && needs.publish-release.result == 'success' &&
+      needs.appimage.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -190,6 +195,7 @@ jobs:
   homebrew-sha:
     name: Fill the Homebrew formula's sha256
     needs: [resolve-tag, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
