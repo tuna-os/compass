@@ -116,6 +116,26 @@ cargo build --release -p compass
 ./target/release/compass start
 ```
 
+### Using Nix (Optional)
+
+If you have Nix and [direnv](https://direnv.net) installed, the development environment is
+automatically loaded when you enter the repository:
+
+```sh
+cd compass
+# direnv loads the Nix dev shell automatically
+```
+
+Without direnv, enter the dev shell manually:
+
+```sh
+nix flake update
+nix develop
+```
+
+The dev shell includes Rust, Node.js, and all necessary build tools. Run `make dev` as usual
+inside the Nix shell.
+
 ## Running Tests
 
 Compass uses a **test ladder** with four tiers, each proving different aspects of the system.
