@@ -10,10 +10,10 @@ set -euo pipefail
 #      crates/compass/tests/version_sync.rs fails while it disagrees with
 #      the manifest tag
 #   3. commit the version changes
-#   4. tag *that* commit
 #
-# The tag must land on the commit that carries the updated manifest, otherwise
-# anyone checking out the tag gets a manifest pointing at the previous release.
+# Open a PR with that commit. When it merges, release.yml sees the new tag in
+# manifest.yaml, tags the merge commit and publishes the release, so the tag
+# always lands on a commit that carries the updated manifest.
 
 bump_version() {
     local version_type=${1:-patch}
@@ -31,7 +31,7 @@ bump_version() {
     # a `v0.28.1` manifest. Git tags are only the fallback for a manifest
     # that names nothing yet.
     local current_tag
-    current_tag=$(yq -r '.release.tag // ""' "$manifest")
+    current_tag=$(sed -n 's/^  tag: "\(.*\)"$/\1/p' "$manifest")
     if [ -z "$current_tag" ]; then
         current_tag=$(git tag -l 'v*' --sort=-v:refname | head -n1)
     fi
@@ -56,9 +56,11 @@ bump_version() {
     # bump commit so the manifest references the actual code commit.
     local rev short_rev
     rev=$(git rev-parse HEAD)
-    short_rev=$(git rev-parse --short HEAD)
+    short_rev=$(git rev-parse --short=9 HEAD)
 
-    yq -i ".release.tag = \"${new_version}\" | .release.rev = \"${rev}\" | .release.short_rev = \"${short_rev}\"" "$manifest"
+    sed -i -e "s/^  tag: \".*\"$/  tag: \"${new_version}\"/" \
+        -e "s/^  rev: \".*\"$/  rev: \"${rev}\"/" \
+        -e "s/^  short_rev: \".*\"$/  short_rev: \"${short_rev}\"/" "$manifest"
 
     # The tag without its `v`: the form every version source carries.
     local bare=${new_version#v}
@@ -101,9 +103,8 @@ bump_version() {
         packaging/flatpak/org.tunaos.compass.metainfo.xml \
         packaging/arch/PKGBUILD packaging/homebrew/compass.rb
     git commit -m "chore: bump to ${new_version}"
-    git tag "${new_version}"
 
-    echo "bumped to ${new_version} (tag on $(git rev-parse --short HEAD))"
+    echo "bumped to ${new_version}: open a PR with this commit; merging it releases ${new_version}"
 }
 
 bump_version "$@"
