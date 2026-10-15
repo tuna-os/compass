@@ -143,8 +143,14 @@ jobs:
     with:
       tag: ${{ needs.resolve-tag.outputs.tag }}
 
+  # Not gated on npm: the extension API keeps upstream's package name
+  # (ADR-0020), and a failure there must not hold back Compass's own release
+  # and AppImage.
   publish-release:
-    needs: [resolve-tag, publish-npm]
+    needs: [resolve-tag, create-tag]
+    if: >-
+      !cancelled() && needs.resolve-tag.outputs.release == 'true' &&
+      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
