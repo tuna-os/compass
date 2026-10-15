@@ -42,4 +42,4 @@ If your contribution was mostly AI generated, it's considered good practice to i
 
 ## Releasing
 
-Run `make bump-patch` (or `bump-minor`, `bump-major`) on a branch and open a PR with the commit it makes. When the PR merges, `release.yml` tags the merge commit and publishes the release: the extension API on npm, the GitHub release with its notes, and the tested AppImage attached to it. It then opens a PR that fills in the Homebrew formula's checksum. Don't push the tag yourself. If a release fails partway, re-run it from the Actions tab with the tag.
+Run `make bump-patch` (or `bump-minor`, `bump-major`) on a branch and open a PR with the commit it makes. When the PR merges, `release.yml` tags the merge commit and publishes the GitHub release with its notes and the tested AppImage attached to it. It then opens a PR that fills in the Homebrew formula's checksum. Don't push the tag yourself. If a release fails partway, re-run it from the Actions tab with the tag.

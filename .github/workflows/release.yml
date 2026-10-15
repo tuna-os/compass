@@ -18,8 +18,8 @@ on:
         description: "Release tag (e.g. v1.2.3); empty for the one manifest.yaml names"
         required: false
 
-# Never cancelled: a release half published (npm out, no GitHub release) is
-# worse than two that queue.
+# Never cancelled: a release half published (a GitHub release with no
+# AppImage) is worse than two that queue.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -37,9 +37,11 @@ permissions:
 jobs:
   # The C++ engine's binary tarball, AppImage and macOS DMG were built here until
   # the C++ tree was removed (ADR-0021). The Rust engine ships as the Flatpak
-  # (publish-flatpak.yaml); a tag publishes the extension API, the release
-  # notes, and the AppImage as a release asset (appimage.yaml), which FlatPark
-  # and anyone without Flatpak download.
+  # (publish-flatpak.yaml); a tag publishes the release notes and the AppImage
+  # as a release asset (appimage.yaml), which FlatPark and anyone without
+  # Flatpak download. Compass is a hard fork and publishes nothing to npm:
+  # the SDK keeps upstream's package name, @vicinae/api, so that store
+  # extensions build unchanged (ADR-0020), and that package is upstream's.
   resolve-tag:
     runs-on: ubuntu-24.04
     permissions:
@@ -131,21 +133,6 @@ jobs:
           TAG: ${{ needs.resolve-tag.outputs.tag }}
         run: gh workflow run vm-tier.yaml --ref "$TAG" --repo "$GITHUB_REPOSITORY"
 
-  publish-npm:
-    needs: [resolve-tag, create-tag]
-    if: >-
-      !cancelled() && needs.resolve-tag.outputs.release == 'true' &&
-      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
-    permissions:
-      id-token: write
-      contents: read
-    uses: ./.github/workflows/api-release.yml
-    with:
-      tag: ${{ needs.resolve-tag.outputs.tag }}
-
-  # Not gated on npm: the extension API keeps upstream's package name
-  # (ADR-0020), and a failure there must not hold back Compass's own release
-  # and AppImage.
   publish-release:
     needs: [resolve-tag, create-tag]
     if: >-
