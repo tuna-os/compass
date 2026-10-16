@@ -175,7 +175,13 @@ Compass.
 
 ## Development
 
+For a complete setup guide including prerequisites, toolchain installation, and running tests, see
+[DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+Quick start:
+
 ```sh
+make dev                 # build and run the launcher
 make check-rust          # what Rust CI runs: fmt, clippy -D warnings, tests
 just bench-compare       # the Compass-versus-Vicinae benchmarks
 ```
