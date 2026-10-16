@@ -33,27 +33,22 @@ Install from [nodejs.org](https://nodejs.org) or via your distribution's package
 
 ### System Packages
 
-Install the following for your distribution:
+Compass builds on Linux only. Its Wayland client needs the xkbcommon headers, which CI also
+installs:
 
 **Debian / Ubuntu:**
 ```sh
-sudo apt install build-essential git pkg-config
+sudo apt install build-essential git pkg-config libxkbcommon-dev
 ```
 
 **Fedora:**
 ```sh
-sudo dnf install @development-tools git pkg-config
+sudo dnf install @development-tools git pkg-config libxkbcommon-devel
 ```
 
 **Arch:**
 ```sh
-sudo pacman -S base-devel git pkg-config
-```
-
-**macOS:**
-Xcode Command Line Tools are required (Compass targets Linux, but macOS builds are possible):
-```sh
-xcode-select --install
+sudo pacman -S base-devel git pkg-config libxkbcommon
 ```
 
 ### Development Tools
@@ -129,7 +124,6 @@ cd compass
 Without direnv, enter the dev shell manually:
 
 ```sh
-nix flake update
 nix develop
 ```
 
@@ -186,9 +180,9 @@ make test-t2
 gh workflow run vm-tier.yaml --ref $(git branch --show-current)
 ```
 
-### Full CI Suite
+### Rust CI Checks
 
-Run everything the CI checks:
+Run the checks that the Rust CI job runs:
 
 ```sh
 make check-rust
@@ -197,7 +191,7 @@ make check-rust
 This runs:
 1. Formatting check (`cargo fmt --all -- --check`)
 2. Linting (`cargo clippy --workspace --all-targets -- -D warnings`)
-3. Tests (`cargo test --workspace --all-targets`)
+3. Tests (`cargo test --workspace --all-targets` and `cargo test --workspace --doc`)
 
 ## Formatting and Linting
 
