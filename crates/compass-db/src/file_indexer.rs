@@ -70,6 +70,7 @@ struct Inner<D: IndexDatabase, R: IndexReader> {
     last_vocab_rebuild: Mutex<Option<Instant>>,
     watcher_starter: Mutex<Option<WatcherStarter>>,
     watcher_stopper: Mutex<Option<WatcherStopper>>,
+    watcher_paused: Mutex<bool>,
     on_scan_event: Mutex<Option<EventCallback>>,
 }
 
@@ -106,6 +107,7 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
             last_vocab_rebuild: Mutex::new(None),
             watcher_starter: Mutex::new(None),
             watcher_stopper: Mutex::new(None),
+            watcher_paused: Mutex::new(false),
             on_scan_event: Mutex::new(None),
         });
         inner.writer.prune_scan_history(SCAN_HISTORY_MAX_AGE_SECS);
@@ -193,8 +195,9 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
 
     /// Applies a configuration change without rescanning the world:
     /// uncovered subtrees are forgotten, uncovered roots are fully scanned,
-    /// and the watch restarts around the work.
-    pub fn apply_config(&self, paths: Vec<PathBuf>, excluded_paths: Vec<PathBuf>) {
+    /// and the watch restarts around the work. Returns false if the cached
+    /// rows could not be reconciled; the caller must leave queries disabled.
+    pub fn apply_config(&self, paths: Vec<PathBuf>, excluded_paths: Vec<PathBuf>) -> bool {
         let new_entrypoints = normalize_paths(paths, absolute);
         let new_excluded = normalize_paths(excluded_paths, absolute);
         let (old_entrypoints, old_excluded) = {
@@ -204,7 +207,7 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
             if new_entrypoints == config.entrypoints && new_excluded == config.excluded_paths {
-                return;
+                return true;
             }
             (config.entrypoints.clone(), config.excluded_paths.clone())
         };
@@ -221,6 +224,24 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
             .pending_full_scan_roots_for(&new_entrypoints, &new_excluded);
         plan.scan_roots.append(&mut pending);
         plan.scan_roots = compact_subtrees(std::mem::take(&mut plan.scan_roots));
+
+        tracing::info!(
+            deletes = plan.delete_subtrees.len(),
+            scans = plan.scan_roots.len(),
+            "applying file indexer configuration change"
+        );
+        self.inner.pause_file_system_watcher();
+        self.dispatcher().clear_pending();
+        self.dispatcher().interrupt_all();
+        self.dispatcher().wait_until_idle();
+
+        if let Err(error) = self.inner.writer.retain_indexed_files(
+            new_entrypoints.clone(),
+            new_excluded.clone(),
+        ) {
+            tracing::error!(%error, "could not reconcile cached files; leaving indexing paused");
+            return false;
+        }
         {
             let mut config = self
                 .inner
@@ -232,31 +253,16 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
             config.excluded_filenames = self.inner.excluded_database_basenames();
         }
 
-        tracing::info!(
-            deletes = plan.delete_subtrees.len(),
-            scans = plan.scan_roots.len(),
-            "applying file indexer configuration change"
-        );
-        self.inner.stop_file_system_watcher();
-        self.dispatcher().clear_pending();
-        self.dispatcher().interrupt_all();
-        self.dispatcher().wait_until_idle();
-
-        let has_deletes = !plan.delete_subtrees.is_empty();
         let has_scans = !plan.scan_roots.is_empty();
-        if has_deletes {
-            let inner = Arc::clone(&self.inner);
-            let restart_watcher = !has_scans;
+        if !plan.delete_subtrees.is_empty() {
             self.inner.writer.delete_indexed_files(
                 std::mem::take(&mut plan.delete_subtrees),
-                restart_watcher.then(|| {
-                    Box::new(move || inner.start_file_system_watcher()) as Box<dyn FnOnce() + Send>
-                }),
+                None,
             );
         }
+        self.inner.mark_full_scan_roots_pending(&plan.scan_roots);
+        *self.inner.watcher_paused.lock().unwrap_or_else(PoisonError::into_inner) = false;
         for root in std::mem::take(&mut plan.scan_roots) {
-            self.inner
-                .mark_full_scan_roots_pending(std::slice::from_ref(&root));
             self.dispatcher().enqueue(Scan {
                 path: root,
                 data: ScanData::Full(FullScan {
@@ -265,9 +271,10 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
                 notify: true,
             });
         }
-        if !has_deletes && !has_scans {
+        if !has_scans {
             self.inner.start_file_system_watcher();
         }
+        true
     }
 
     /// Clears the index and fully scans every entrypoint on a worker thread,
@@ -363,12 +370,22 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
 
     /// Starts from the entrypoints: first startups scan fully, interrupted
     /// full scans are marked and restarted, healthy ones go incremental —
-    /// and the watch starts when nothing needs a full scan.
-    pub fn start(&self) {
+    /// and the watch starts when nothing needs a full scan. Cached rows are
+    /// first reconciled to the current boundary, including changes made while
+    /// the helper was stopped. Returns false if that cannot be done safely.
+    pub fn start(&self) -> bool {
         if !(self.inner.make_reader)().is_open() {
             tracing::error!("file indexer database is not open, refusing to start scans");
-            return;
+            return false;
         }
+        if let Err(error) = self.inner.writer.retain_indexed_files(
+            self.entrypoints(),
+            self.excluded_paths(),
+        ) {
+            tracing::error!(%error, "could not reconcile cached files; refusing to start scans");
+            return false;
+        }
+        *self.inner.watcher_paused.lock().unwrap_or_else(PoisonError::into_inner) = false;
         // Typo corrections before the first scan of the session completes.
         if !(self.inner.make_reader)().has_vocabulary() {
             self.inner.writer.rebuild_vocabulary();
@@ -402,6 +419,7 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
         if !needs_full_scan {
             self.inner.start_file_system_watcher();
         }
+        true
     }
 
     /// Searches the index, or nothing when the engine has no vocabulary.
@@ -465,6 +483,10 @@ impl<D: IndexDatabase, R: IndexReader> Inner<D, R> {
     }
 
     fn start_file_system_watcher(&self) {
+        let paused = self.watcher_paused.lock().unwrap_or_else(PoisonError::into_inner);
+        if *paused {
+            return;
+        }
         let config = self.config.lock().unwrap_or_else(PoisonError::into_inner);
         let starter = self
             .watcher_starter
@@ -478,6 +500,12 @@ impl<D: IndexDatabase, R: IndexReader> Inner<D, R> {
                 config.excluded_filenames.clone(),
             );
         }
+    }
+
+    fn pause_file_system_watcher(&self) {
+        let mut paused = self.watcher_paused.lock().unwrap_or_else(PoisonError::into_inner);
+        *paused = true;
+        self.stop_file_system_watcher();
     }
 
     fn stop_file_system_watcher(&self) {
@@ -689,6 +717,10 @@ mod tests {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .extend(paths.iter().cloned());
+        }
+
+        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), crate::db_writer::ReconcileError> {
+            Ok(())
         }
 
         fn delete_all_indexed_files(&mut self) {}

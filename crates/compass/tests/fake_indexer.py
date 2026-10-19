@@ -12,6 +12,9 @@ Usage: fake_indexer.py <mode>, where mode is:
 - crash: answer one query, then exit(1) with no further output.
 - crash-now: answer the configure, then exit(1) with scans still tracked.
 - exit-zero: exit(0) immediately, for the clean-exit path.
+- hold-query: acknowledge receiving a query with a scan event, but never reply.
+- exit-query: emit that scan event, then exit(0) without replying to the query.
+- reject-configure-once: reject the first configuration, then accept retries.
 """
 
 import json
@@ -105,10 +108,42 @@ def main():
     stream = sys.stdin.buffer
     if mode == "exit-zero":
         return 0
+    configure_count = 0
     while True:
         msg = read_frame(stream)
         if msg is None:
             return 0
+        if mode == "reject-configure-once" and msg.get("method") == "FileIndexer/configure":
+            configure_count += 1
+            if configure_count == 1:
+                write_frame(sys.stdout.buffer, {
+                    "jsonrpc": "2.0", "id": msg["id"],
+                    "error": {"code": -32603, "message": "temporary reconciliation failure"},
+                })
+                event(sys.stdout.buffer, "FileIndexer/scanStatusChanged", {
+                    "status": {
+                        "scan_id": 43, "kind": "Full", "state": "Started",
+                        "entrypoint": "/tmp/rejected-configuration", "processed_file_count": 0,
+                    },
+                })
+                continue
+        if mode in ("hold-query", "exit-query") and msg.get("method") == "FileIndexer/query":
+            event(
+                sys.stdout.buffer,
+                "FileIndexer/scanStatusChanged",
+                {
+                    "status": {
+                        "scan_id": 42,
+                        "kind": "Full",
+                        "state": "Started",
+                        "entrypoint": "/tmp/pending-query",
+                        "processed_file_count": 0,
+                    }
+                },
+            )
+            if mode == "exit-query":
+                return 0
+            continue
         handle(sys.stdout.buffer, msg)
         sys.stdout.buffer.flush()
         if mode == "crash" and msg.get("method") == "FileIndexer/query":

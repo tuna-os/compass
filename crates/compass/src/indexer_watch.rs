@@ -383,6 +383,10 @@ mod tests {
 
         fn delete_indexed_files(&mut self, _paths: &[PathBuf]) {}
 
+        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), compass_db::db_writer::ReconcileError> {
+            Ok(())
+        }
+
         fn delete_all_indexed_files(&mut self) {}
 
         fn compact(&mut self) {}

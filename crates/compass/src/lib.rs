@@ -37,6 +37,7 @@ pub mod fonts;
 pub mod frontmost;
 pub mod global_shortcuts;
 pub mod host_commands;
+pub mod index_stats;
 pub mod indexer_client;
 pub mod indexer_service;
 pub mod indexer_watch;
@@ -756,7 +757,9 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             cli_commands::app(&socket, command).await
         }
         Command::Fs(command) => {
-            require_servable_engine(cli.engine)?;
+            if matches!(command, cli::FsCommand::Query { .. }) {
+                require_servable_engine(cli.engine)?;
+            }
             cli_commands::fs(&socket, command).await
         }
         Command::Script(command) => cli_commands::script(command),

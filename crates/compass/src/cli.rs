@@ -462,6 +462,13 @@ pub enum AppCommand {
 /// `compass fs` subcommands.
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub enum FsCommand {
+    /// Measure the file-index database without starting the engine or changing its data.
+    Stats {
+        /// Emit byte counts and unavailable reasons as JSON, without indexed paths.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Return a list of indexed files matching the given query.
     #[command(alias = "q")]
     Query {
@@ -1017,6 +1024,14 @@ mod tests {
         assert!(
             Cli::try_parse_from(["compass", "fs", "query", "abc", "-c", "Documents"]).is_err(),
             "the C++'s category names, and only those"
+        );
+        assert_eq!(
+            parse(&["compass", "fs", "stats", "--json"]).command,
+            Command::Fs(FsCommand::Stats { json: true })
+        );
+        assert_eq!(
+            parse(&["compass", "fs", "stats"]).command,
+            Command::Fs(FsCommand::Stats { json: false })
         );
         assert_eq!(
             parse(&["compass", "fs", "query", "abc"]).command,

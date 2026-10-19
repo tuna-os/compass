@@ -11,7 +11,7 @@
 //! owns the timing; what is decided here is only what a query answers.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use compass_core::file_category::{FileCategory, file_category};
 use compass_core::file_search::{
@@ -38,33 +38,83 @@ pub struct FileResults {
     pub files: Vec<FileHit>,
 }
 
-/// The engine's file search: the indexer it supervises, if it runs one.
-#[derive(Debug, Default)]
+/// The engine's file search, sharing one helper across live settings changes.
+#[derive(Debug)]
 pub struct FileSearch {
-    indexer: Option<Arc<IndexerClient>>,
+    indexer: Arc<IndexerClient>,
+    settings: Mutex<Option<IndexingSettings>>,
+}
+
+impl Default for FileSearch {
+    fn default() -> Self {
+        Self {
+            indexer: IndexerClient::new(),
+            settings: Mutex::new(None),
+        }
+    }
 }
 
 impl FileSearch {
-    /// No indexer: direct paths and recent files still answer.
+    /// No running indexer: direct paths and recent files still answer.
     #[must_use]
     pub fn without_indexer() -> Self {
         Self::default()
     }
 
     /// Starts the indexer helper configured from `settings`, unless indexing
-    /// is turned off — then nothing runs, as `stopProcess` leaves it.
+    /// is turned off. The same client can be enabled later.
     #[must_use]
     pub fn start(settings: IndexingSettings) -> Self {
+        let files = Self::default();
+        files.apply_settings(settings);
+        files
+    }
+
+    /// Applies a settings snapshot to the existing helper, without rebuilding
+    /// the index. Identical snapshots do nothing; disabled indexing keeps the
+    /// configuration for the next start.
+    ///
+    /// Blocking: stopping joins the helper's supervisor. Call from a blocking
+    /// task, without holding the engine's async lock. The local lock serializes
+    /// lifecycle changes while queries continue to share the same client.
+    pub fn apply_settings(&self, settings: IndexingSettings) {
+        let mut applied = self.settings.lock().unwrap_or_else(PoisonError::into_inner);
+        self.apply_settings_locked(&mut applied, settings);
+    }
+
+    /// Loads a fresh snapshot while serialized with other updates. Callbacks
+    /// signal a reload rather than applying a snapshot that may already be stale.
+    pub(crate) fn reload_settings(
+        &self,
+        load: impl FnOnce() -> Result<IndexingSettings, String>,
+    ) -> Result<(), String> {
+        let mut applied = self.settings.lock().unwrap_or_else(PoisonError::into_inner);
+        let settings = load()?;
+        self.apply_settings_locked(&mut applied, settings);
+        Ok(())
+    }
+
+    fn apply_settings_locked(&self, applied: &mut Option<IndexingSettings>, settings: IndexingSettings) {
+        let rejected = self.indexer.configuration_rejected();
+        if applied.as_ref() == Some(&settings)
+            && (!settings.enabled || (self.indexer.is_running() && !rejected))
+        {
+            return;
+        }
         if !settings.enabled {
-            tracing::info!("file indexing is turned off; file search answers no index queries");
-            return Self::without_indexer();
+            self.indexer.stop();
         }
-        let client = IndexerClient::new();
-        client.configure(settings.paths, settings.excluded_paths);
-        client.start();
-        Self {
-            indexer: Some(client),
+        let paths_changed = applied.as_ref().is_none_or(|previous| {
+            previous.paths != settings.paths || previous.excluded_paths != settings.excluded_paths
+        });
+        if paths_changed || rejected {
+            self.indexer
+                .configure(settings.paths.clone(), settings.excluded_paths.clone());
         }
+        if settings.enabled {
+            self.indexer.start();
+        }
+        *applied = Some(settings);
     }
 
     /// Answers a Search Files query. Blocking: it reads the recent-files list
@@ -121,9 +171,7 @@ impl FileSearch {
     /// Whether the index answers queries: the indexer is running.
     #[must_use]
     pub fn index_available(&self) -> bool {
-        self.indexer
-            .as_ref()
-            .is_some_and(|indexer| indexer.is_running())
+        self.indexer.is_running() && self.indexer.configuration_ready()
     }
 
     /// The index's own rows for `query`, as `FileSearch/search` hands them
@@ -136,11 +184,10 @@ impl FileSearch {
         limit: i32,
         category: Option<FileCategory>,
     ) -> Vec<(PathBuf, f64, FileCategory, Option<String>)> {
-        let Some(indexer) = self.indexer.as_ref().filter(|indexer| indexer.is_running()) else {
+        if !self.index_available() {
             return Vec::new();
-        };
-        indexer
-            .query(query, limit, category.map(wire_category))
+        }
+        self.current_results(self.indexer.query(query, limit, category.map(wire_category)))
             .into_iter()
             .map(|result| {
                 (
@@ -153,19 +200,38 @@ impl FileSearch {
             .collect()
     }
 
+    /// A query may finish after a newer configuration has taken effect. The
+    /// helper reconciles asynchronously, so never expose rows outside the
+    /// latest accepted scope, including responses already in flight at stop.
+    fn current_results(
+        &self,
+        mut results: Vec<compass_db::query_engine::IndexerFileResult>,
+    ) -> Vec<compass_db::query_engine::IndexerFileResult> {
+        let applied = self.settings.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.indexer.configuration_rejected() {
+            return Vec::new();
+        }
+        let Some(settings) = applied.as_ref().filter(|settings| settings.enabled) else {
+            return Vec::new();
+        };
+        results.retain(|result| {
+            settings.paths.iter().any(|root| result.path.starts_with(root))
+                && !settings.excluded_paths.iter().any(|excluded| result.path.starts_with(excluded))
+        });
+        results
+    }
+
     /// Asks the index, under the heading its query earns.
     fn indexed(
         &self,
         query: &str,
         category: Option<FileCategory>,
     ) -> Result<FileResults, &'static str> {
-        let indexer = self
-            .indexer
-            .as_ref()
-            .filter(|indexer| indexer.is_running())
-            .ok_or(INDEXER_UNAVAILABLE)?;
-        let files = indexer
-            .query(query, INDEXED_QUERY_LIMIT, category.map(wire_category))
+        if !self.index_available() {
+            return Err(INDEXER_UNAVAILABLE);
+        }
+        let files = self
+            .current_results(self.indexer.query(query, INDEXED_QUERY_LIMIT, category.map(wire_category)))
             .into_iter()
             .map(|result| hit(&result.path, Some(from_indexed(result.category))))
             .collect();
@@ -282,5 +348,85 @@ mod tests {
     fn the_root_is_searched_for_rather_than_listed() {
         let search = FileSearch::without_indexer();
         assert_eq!(search.search("/", None), Err(INDEXER_UNAVAILABLE));
+    }
+
+    #[test]
+    fn disabled_settings_are_staged_without_starting_a_helper() {
+        let settings = IndexingSettings {
+            enabled: false,
+            paths: Vec::new(),
+            excluded_paths: Vec::new(),
+        };
+        let search = FileSearch::start(settings.clone());
+        assert!(!search.index_available());
+        search.apply_settings(settings.clone());
+        assert_eq!(*search.settings.lock().unwrap(), Some(settings));
+        assert!(!search.index_available());
+    }
+
+    #[test]
+    fn a_delayed_reload_reads_the_latest_file_instead_of_its_old_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let old = dir.path().join("old").to_string_lossy().into_owned();
+        let latest = dir.path().join("latest").to_string_lossy().into_owned();
+        let write = |root: &str| {
+            std::fs::write(&path, serde_json::json!({
+                "autoIndexing": false, "indexingPaths": [root]
+            }).to_string()).unwrap();
+        };
+        let load = |path: &Path| -> Result<IndexingSettings, String> {
+            let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            Ok(IndexingSettings::from_preferences(value.as_object(), None))
+        };
+        write(&old);
+        let files = Arc::new(FileSearch::start(load(&path).unwrap()));
+        let (release, delayed) = std::sync::mpsc::channel();
+        let older_callback = {
+            let files = Arc::clone(&files);
+            let path = path.clone();
+            std::thread::spawn(move || {
+                delayed.recv().unwrap();
+                files.reload_settings(|| load(&path)).unwrap();
+            })
+        };
+        // A newer callback completes before the older blocking task is scheduled.
+        write(&latest);
+        files.reload_settings(|| load(&path)).unwrap();
+        release.send(()).unwrap();
+        older_callback.join().unwrap();
+        assert_eq!(files.settings.lock().unwrap().as_ref().unwrap().paths, [latest]);
+        std::fs::write(&path, "{invalid").unwrap();
+        let previous = files.settings.lock().unwrap().clone();
+        assert!(files.reload_settings(|| load(&path)).is_err());
+        assert_eq!(*files.settings.lock().unwrap(), previous);
+        assert!(!files.index_available());
+    }
+
+    #[test]
+    fn shared_searches_filter_in_flight_rows_against_the_latest_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("kept");
+        let files = Arc::new(FileSearch::without_indexer());
+        let extension_search = Arc::clone(&files);
+        let row = |path: PathBuf| compass_db::query_engine::IndexerFileResult {
+            path, rank: 1.0, category: IndexedFileCategory::Document, mime_type: None,
+        };
+        // Set only the accepted snapshot: this pure result test never starts a helper.
+        *files.settings.lock().unwrap() = Some(IndexingSettings {
+            enabled: true,
+            paths: vec![root.to_string_lossy().into_owned()],
+            excluded_paths: vec![root.join("private").to_string_lossy().into_owned()],
+        });
+        let rows = extension_search.current_results(vec![
+            row(root.join("public.txt")),
+            row(root.join("private/secret.txt")),
+            row(dir.path().join("kept-sibling/outside.txt")),
+        ]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, root.join("public.txt"));
+        files.settings.lock().unwrap().as_mut().unwrap().enabled = false;
+        assert!(extension_search.current_results(rows).is_empty());
     }
 }

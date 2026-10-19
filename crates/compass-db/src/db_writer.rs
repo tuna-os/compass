@@ -27,6 +27,7 @@ use std::thread::{self, JoinHandle};
 use std::time::SystemTime;
 
 use compass_core::io_pacer::IoPacer;
+use compass_core::scan_roots::{is_covered_by_any, normalize_path};
 
 /// How many bulk writes may wait before their submitters block.
 pub const MAX_PENDING_BULK_WRITES: usize = 8;
@@ -104,6 +105,17 @@ pub struct FileEvent {
     pub size_bytes: Option<i64>,
 }
 
+/// Why the cached index could not be reconciled to its current boundary.
+#[derive(Debug, thiserror::Error)]
+pub enum ReconcileError {
+    /// SQLite rejected the atomic reconciliation.
+    #[error("could not reconcile cached index rows: {0}")]
+    Database(String),
+    /// The serialized writer stopped before returning a result.
+    #[error("the file index writer stopped during reconciliation")]
+    WorkerStopped,
+}
+
 /// What the writer needs from the file-index database.
 ///
 /// Mirrors the `FileIndexerDatabase` methods the C++ writer calls, so the
@@ -126,6 +138,9 @@ pub trait IndexDatabase: Send + 'static {
     fn index_files(&mut self, paths: &[PathBuf]);
     /// Forgets indexed files.
     fn delete_indexed_files(&mut self, paths: &[PathBuf]);
+    /// Forgets only derived rows outside normalized roots or inside exclusions.
+    /// Must complete atomically, without touching source files or scan history.
+    fn retain_indexed_files(&mut self, roots: &[PathBuf], excluded: &[PathBuf]) -> Result<(), ReconcileError>;
     /// Forgets everything indexed.
     fn delete_all_indexed_files(&mut self);
     /// Reclaims space.
@@ -136,6 +151,18 @@ pub trait IndexDatabase: Send + 'static {
     fn rebuild_vocabulary(&mut self);
     /// Applies scanner-found changes and removals.
     fn index_events(&mut self, events: &[FileEvent]);
+}
+
+struct IndexingScope {
+    roots: Vec<PathBuf>,
+    excluded: Vec<PathBuf>,
+}
+
+impl IndexingScope {
+    fn contains(&self, path: &Path) -> bool {
+        let path = normalize_path(path);
+        is_covered_by_any(&path, &self.roots) && !is_covered_by_any(&path, &self.excluded)
+    }
 }
 
 /// One queued mutation and whether it counts against the bulk budget.
@@ -159,6 +186,9 @@ struct Shared<D: IndexDatabase> {
     active: AtomicBool,
     /// A vocabulary rebuild is queued or running.
     vocab_queued: AtomicBool,
+    /// Applied on the writer thread, so late writes from an old scan cannot
+    /// put retired or excluded paths back after reconciliation.
+    scope: Mutex<Option<IndexingScope>>,
 }
 
 /// One writer, one worker thread, one database.
@@ -185,6 +215,7 @@ impl<D: IndexDatabase> DbWriter<D> {
             not_full: Condvar::new(),
             active: AtomicBool::new(true),
             vocab_queued: AtomicBool::new(false),
+            scope: Mutex::new(None),
         });
         let worker_shared = Arc::clone(&shared);
         let worker = thread::spawn(move || {
@@ -315,9 +346,13 @@ impl<D: IndexDatabase> DbWriter<D> {
     }
 
     /// Adds or refreshes indexed files, applying backpressure.
-    pub fn index_files(&self, paths: Vec<PathBuf>) {
+    pub fn index_files(&self, mut paths: Vec<PathBuf>) {
+        let shared = Arc::clone(&self.shared);
         self.submit(
             move |db: &mut D| {
+                if let Some(scope) = shared.scope.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+                    paths.retain(|path| scope.contains(path));
+                }
                 db.index_files(&paths);
             },
             true,
@@ -339,6 +374,32 @@ impl<D: IndexDatabase> DbWriter<D> {
             },
             false,
         );
+    }
+
+    /// Reconciles cached rows before any new scans or queries can use them,
+    /// then guards future scanner writes with the same normalized boundary.
+    /// Waiting also drains all mutations submitted by interrupted scans.
+    ///
+    /// # Errors
+    ///
+    /// The database could not reconcile its rows, or its worker stopped.
+    pub fn retain_indexed_files(&self, roots: Vec<PathBuf>, excluded: Vec<PathBuf>) -> Result<(), ReconcileError> {
+        let shared = Arc::clone(&self.shared);
+        let (sender, receiver) = mpsc::channel();
+        self.submit(
+            move |db: &mut D| {
+                let result = db.retain_indexed_files(&roots, &excluded);
+                let scope = if result.is_ok() {
+                    IndexingScope { roots, excluded }
+                } else {
+                    IndexingScope { roots: Vec::new(), excluded: Vec::new() }
+                };
+                *shared.scope.lock().unwrap_or_else(PoisonError::into_inner) = Some(scope);
+                let _ = sender.send(result);
+            },
+            false,
+        );
+        receiver.recv().map_err(|_| ReconcileError::WorkerStopped)?
     }
 
     /// Forgets everything indexed, then runs `on_complete` on the worker thread.
@@ -380,9 +441,13 @@ impl<D: IndexDatabase> DbWriter<D> {
     }
 
     /// Applies scanner-found changes and removals, applying backpressure.
-    pub fn index_events(&self, events: Vec<FileEvent>) {
+    pub fn index_events(&self, mut events: Vec<FileEvent>) {
+        let shared = Arc::clone(&self.shared);
         self.submit(
             move |db: &mut D| {
+                if let Some(scope) = shared.scope.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+                    events.retain(|event| scope.contains(&event.path));
+                }
                 db.index_events(&events);
             },
             true,
@@ -496,6 +561,10 @@ mod tests {
 
         fn delete_indexed_files(&mut self, paths: &[PathBuf]) {
             self.record(&format!("delete {}", paths.len()));
+        }
+
+        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), crate::db_writer::ReconcileError> {
+            Ok(())
         }
 
         fn delete_all_indexed_files(&mut self) {

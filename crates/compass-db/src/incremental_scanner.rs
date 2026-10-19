@@ -323,6 +323,10 @@ mod tests {
                 .extend(paths.iter().cloned());
         }
 
+        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), crate::db_writer::ReconcileError> {
+            Ok(())
+        }
+
         fn delete_all_indexed_files(&mut self) {}
 
         fn compact(&mut self) {}

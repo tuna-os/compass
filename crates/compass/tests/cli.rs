@@ -502,3 +502,52 @@ async fn help_documents_the_exit_codes() {
     assert!(text.contains("no check failed"));
     assert!(text.contains("could not be parsed"));
 }
+
+// File-index size diagnostics need neither a daemon nor a writable database.
+#[tokio::test]
+async fn fs_stats_missing_database_is_structured_and_creates_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run_cli(
+        dir.path(),
+        &dir.path().join("absent.sock"),
+        &["fs", "stats", "--json"],
+    )
+    .await;
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(report["schema"], 1);
+    assert_eq!(report["status"], "missing");
+    assert_eq!(report["database_bytes"]["status"], "missing");
+    assert!(report["database_bytes"]["value"].is_null());
+    assert!(!dir.path().join(".cache").exists());
+    assert!(!stdout(&output).contains(&dir.path().display().to_string()));
+}
+
+#[tokio::test]
+async fn fs_stats_reads_existing_index_without_a_daemon_or_data_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = compass::indexer_service::database_path(&dir.path().join(".cache"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let db = compass_sqlcipher_sys::open(&path, &[]).unwrap();
+    db.execute_batch("PRAGMA journal_mode = DELETE").unwrap();
+    compass_db::sqlite_writer::ensure_file_index_schema(&db).unwrap();
+    db.execute_batch(
+        "INSERT INTO indexed_file(path, skeleton_path) VALUES ('/private/report.txt', 'report txt')",
+    )
+    .unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    let output = run_cli(
+        dir.path(),
+        &dir.path().join("absent.sock"),
+        &["fs", "stats", "--json"],
+    )
+    .await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(report["status"], "ok");
+    assert_eq!(report["indexed_rows"]["value"], 1);
+    assert_eq!(report["database_bytes"]["value"], before.len() as u64);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(!stdout(&output).contains("/private/report.txt"));
+}

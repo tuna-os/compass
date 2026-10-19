@@ -115,6 +115,7 @@ pub struct IndexerClient {
 
 struct Inner {
     config: Mutex<WireIndexerConfig>,
+    configuration: Mutex<ConfigurationState>,
     want_running: AtomicBool,
     state: Mutex<State>,
     next_id: AtomicI64,
@@ -123,6 +124,13 @@ struct Inner {
     scan_callback: Mutex<Option<ScanCallback>>,
     program_override: Mutex<Option<PathBuf>>,
     base_delay: Mutex<Duration>,
+}
+
+enum ConfigurationState {
+    Unconfigured,
+    Pending(i64),
+    Ready,
+    Rejected,
 }
 
 struct State {
@@ -147,6 +155,7 @@ impl IndexerClient {
         Arc::new(Self {
             inner: Arc::new(Inner {
                 config: Mutex::new(WireIndexerConfig::default()),
+                configuration: Mutex::new(ConfigurationState::Unconfigured),
                 want_running: AtomicBool::new(false),
                 state: Mutex::new(State {
                     generation: 0,
@@ -195,6 +204,33 @@ impl IndexerClient {
             .is_some()
     }
 
+    /// Whether the current helper acknowledged its latest configuration.
+    #[must_use]
+    pub fn configuration_ready(&self) -> bool {
+        matches!(
+            *self
+                .inner
+                .configuration
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            ConfigurationState::Ready
+        )
+    }
+
+    /// Whether the latest configuration was rejected and can be retried.
+    /// A configuration still awaiting acknowledgement is not rejected.
+    #[must_use]
+    pub fn configuration_rejected(&self) -> bool {
+        matches!(
+            *self
+                .inner
+                .configuration
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            ConfigurationState::Rejected
+        )
+    }
+
     /// Starts the helper with the current configuration, unless it runs.
     pub fn start(self: &Arc<Self>) {
         self.inner.want_running.store(true, Ordering::SeqCst);
@@ -214,7 +250,8 @@ impl IndexerClient {
     }
 
     /// Stops wanting the helper: closes its stdin so it exits, and joins
-    /// the reader. Attempts are counted per run, so a later
+    /// the reader. Outstanding queries settle empty and unfinished scans
+    /// are interrupted. Attempts are counted per run, so a later
     /// [`start`](Self::start) begins them over.
     pub fn stop(&self) {
         self.inner.want_running.store(false, Ordering::SeqCst);
@@ -229,9 +266,13 @@ impl IndexerClient {
             state.stdin_owner = None;
             state.reader.take()
         };
+        self.reset_configuration();
+        self.fail_pending("the file indexer stopped");
         if let Some(reader) = reader {
             let _ = reader.join();
         }
+        self.interrupt_scans();
+        self.reset_configuration();
     }
 
     /// Replaces the configuration, sending it when the helper runs —
@@ -359,6 +400,9 @@ impl IndexerClient {
                 break;
             }
             let status = self.route(stdout, child);
+            self.reset_configuration();
+            self.interrupt_scans();
+            self.fail_pending("the file indexer exited");
             if !self.inner.want_running.load(Ordering::SeqCst) {
                 break;
             }
@@ -374,8 +418,6 @@ impl IndexerClient {
                     tracing::warn!(?status, "file indexer process ended");
                 }
             }
-            self.interrupt_scans();
-            self.fail_pending("the file indexer died");
             crashes += 1;
             if crashes > MAX_RESTART_ATTEMPTS {
                 tracing::error!(
@@ -388,6 +430,9 @@ impl IndexerClient {
             tracing::warn!(?delay, attempt = crashes, "restarting the file indexer");
             std::thread::sleep(delay);
         }
+        self.reset_configuration();
+        self.interrupt_scans();
+        self.fail_pending("the file indexer stopped");
         self.release(generation);
     }
 
@@ -516,7 +561,9 @@ impl IndexerClient {
             }
         };
         if let Some(id) = value.get("id").and_then(serde_json::Value::as_i64) {
-            self.complete_query(id, &value);
+            if !self.complete_configuration(id, &value) {
+                self.complete_query(id, &value);
+            }
         } else if let Some(method) = value.get("method").and_then(serde_json::Value::as_str) {
             self.route_event(method, &value);
         } else {
@@ -585,18 +632,66 @@ impl IndexerClient {
             .generation
     }
 
+    fn reset_configuration(&self) {
+        *self
+            .inner
+            .configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = ConfigurationState::Unconfigured;
+    }
+
+    fn complete_configuration(&self, id: i64, value: &serde_json::Value) -> bool {
+        let mut configuration = self
+            .inner
+            .configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !matches!(*configuration, ConfigurationState::Pending(expected) if expected == id) {
+            return false;
+        }
+        *configuration = if value.get("error").is_none()
+            && value.get("result").is_some_and(serde_json::Value::is_null)
+        {
+            ConfigurationState::Ready
+        } else {
+            tracing::warn!("the file indexer rejected its configuration");
+            ConfigurationState::Rejected
+        };
+        true
+    }
+
     /// Sends the current configuration when the helper runs.
     fn send_configure(&self) {
         let config = self
             .inner
             .config
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        self.write_frame(
-            "FileIndexer/configure",
-            &serde_json::json!({"config": config}),
-        );
+            .unwrap_or_else(PoisonError::into_inner);
+        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        let mut configuration = self
+            .inner
+            .configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *configuration = ConfigurationState::Pending(id);
+        drop(configuration);
+        if self
+            .write_raw(
+                id,
+                "FileIndexer/configure",
+                &serde_json::json!({"config": &*config}),
+            )
+            .is_none()
+        {
+            let mut configuration = self
+                .inner
+                .configuration
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if matches!(*configuration, ConfigurationState::Pending(expected) if expected == id) {
+                *configuration = ConfigurationState::Unconfigured;
+            }
+        }
     }
 
     /// Writes one request frame, returning its id — or nothing when the
@@ -687,6 +782,34 @@ fn drain_stderr(stderr: Option<impl Read + Send + 'static>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_latest_configuration_reply_changes_readiness() {
+        let client = IndexerClient::new();
+        *client.inner.configuration.lock().unwrap() = ConfigurationState::Pending(2);
+        assert!(!client.complete_configuration(1, &serde_json::json!({"result": null})));
+        assert!(!client.configuration_ready());
+        assert!(
+            !client.configuration_rejected(),
+            "a pending reply is not a rejection"
+        );
+        assert!(client.complete_configuration(2, &serde_json::json!({"error": {}})));
+        assert!(client.configuration_rejected());
+
+        *client.inner.configuration.lock().unwrap() = ConfigurationState::Pending(3);
+        assert!(!client.complete_configuration(2, &serde_json::json!({"result": null})));
+        assert!(!client.configuration_ready());
+        assert!(client.complete_configuration(3, &serde_json::json!({"result": null})));
+        assert!(client.configuration_ready());
+        assert!(!client.complete_configuration(2, &serde_json::json!({"error": {}})));
+        assert!(
+            client.configuration_ready(),
+            "a stale rejection cannot undo success"
+        );
+        client.stop();
+        assert!(!client.configuration_ready());
+        assert!(!client.configuration_rejected());
+    }
 
     #[test]
     fn helper_search_covers_the_installed_layout() {

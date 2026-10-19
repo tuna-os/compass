@@ -348,7 +348,7 @@ impl<D: IndexDatabase, R: IndexReader> IndexerService<D, R> {
     /// Routes one JSON payload, the generated `Server::route`.
     ///
     /// Unknown methods and unparseable frames are ignored; unparseable params
-    /// run with defaults.
+    /// run with defaults, except malformed configurations, which are refused.
     pub fn handle_frame(&self, frame: &[u8]) {
         let request: RpcRequest = match serde_json::from_slice(frame) {
             Ok(request) => request,
@@ -356,25 +356,41 @@ impl<D: IndexDatabase, R: IndexReader> IndexerService<D, R> {
         };
         match request.method.as_str() {
             "FileIndexer/configure" => {
-                let params: ConfigureParams =
-                    serde_json::from_value(request.params).unwrap_or_default();
+                let params: ConfigureParams = match serde_json::from_value(request.params) {
+                    Ok(params) => params,
+                    Err(_) => {
+                        self.error(request.id, "invalid file indexing configuration");
+                        return;
+                    }
+                };
                 let paths = to_paths(params.config.paths);
                 let excluded = to_paths(params.config.excluded_paths);
                 // First configuration starts the indexer; later ones apply,
                 // like `m_started` in the C++ service.
-                if self.started.swap(true, Ordering::SeqCst) {
-                    self.indexer.apply_config(paths, excluded);
+                let accepted = if self.started.swap(false, Ordering::SeqCst) {
+                    self.indexer.apply_config(paths, excluded)
                 } else {
                     self.indexer.set_config(paths, excluded);
-                    self.indexer.start();
+                    self.indexer.start()
+                };
+                self.started.store(accepted, Ordering::SeqCst);
+                if accepted {
+                    self.reply(request.id, &());
+                } else {
+                    self.error(request.id, "could not reconcile file indexing settings");
+                }
+            }
+            "FileIndexer/rebuildIndex" => {
+                if self.started.load(Ordering::SeqCst) {
+                    self.indexer.rebuild_index();
                 }
                 self.reply(request.id, &());
             }
-            "FileIndexer/rebuildIndex" => {
-                self.indexer.rebuild_index();
-                self.reply(request.id, &());
-            }
             "FileIndexer/query" => {
+                if !self.started.load(Ordering::SeqCst) {
+                    self.reply(request.id, &WireQueryResponse::default());
+                    return;
+                }
                 let params: QueryParams =
                     serde_json::from_value(request.params).unwrap_or_default();
                 let sink = Arc::clone(&self.sink);
@@ -419,6 +435,13 @@ impl<D: IndexDatabase, R: IndexReader> IndexerService<D, R> {
             }
             self.handle_frame(&payload);
         }
+    }
+
+    fn error(&self, id: i64, message: &str) {
+        self.sink.send(&serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0", "id": id,
+            "error": {"code": -32603, "message": message},
+        })).expect("serializable error"));
     }
 
     fn reply(&self, id: i64, result: &impl Serialize) {
@@ -557,6 +580,10 @@ mod tests {
         fn index_files(&mut self, _paths: &[PathBuf]) {}
 
         fn delete_indexed_files(&mut self, _paths: &[PathBuf]) {}
+
+        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), compass_db::db_writer::ReconcileError> {
+            Ok(())
+        }
 
         fn delete_all_indexed_files(&mut self) {}
 
@@ -757,6 +784,30 @@ mod tests {
                 home.path().to_string_lossy().into_owned()
             ))
         );
+    }
+
+    #[test]
+    fn malformed_configuration_does_not_replace_the_accepted_scope() {
+        let (service, sink) = fixture();
+        service.handle_frame(&request(
+            1,
+            "FileIndexer/configure",
+            serde_json::json!({"config": {"paths": [], "excluded_paths": []}}),
+        ));
+        assert!(service.started.load(Ordering::SeqCst));
+        service.handle_frame(&request(
+            2,
+            "FileIndexer/configure",
+            serde_json::json!({"config": {"paths": 7}}),
+        ));
+        let reply = wait_for(
+            &sink,
+            |value| value.get("id") == Some(&serde_json::json!(2)),
+            "configuration error",
+            Duration::from_secs(5),
+        );
+        assert!(reply.get("error").is_some());
+        assert!(service.started.load(Ordering::SeqCst));
     }
 
     #[test]
