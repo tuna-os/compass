@@ -163,7 +163,10 @@ fn with_query_budget<T>(db: &Connection, budget: Duration, read: impl FnOnce(Ins
     let (finished, wait) = mpsc::channel();
     std::thread::scope(|scope| {
         scope.spawn(move || {
-            if matches!(wait.recv_timeout(budget), Err(mpsc::RecvTimeoutError::Timeout)) {
+            if matches!(
+                wait.recv_timeout(budget),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
                 loop {
                     interrupt.interrupt();
                     if !matches!(
@@ -248,8 +251,11 @@ fn number(db: &Connection, sql: &str, deadline: Instant) -> Measurement {
             "diagnostic query time limit reached; retry when idle".into(),
         );
     }
-    match db.query_row(sql, [], |row| row.get::<_, u64>(0)) {
-        Ok(value) => Measurement::Value(value),
+    match db.query_row(sql, [], |row| row.get::<_, i64>(0)) {
+        Ok(value) => match u64::try_from(value) {
+            Ok(value) => Measurement::Value(value),
+            Err(_) => Measurement::Unavailable("database returned a negative measurement".into()),
+        },
         Err(error) => Measurement::Unavailable(database_error(error)),
     }
 }
@@ -326,7 +332,10 @@ mod tests {
         let entries = directory_entries(dir.path());
         let stats = inspect(&path);
         assert!(stats.complete(), "{stats:?}");
-        assert_eq!(stats.database_bytes, Measurement::Value(before.len() as u64));
+        assert_eq!(
+            stats.database_bytes,
+            Measurement::Value(before.len() as u64)
+        );
         assert_eq!(stats.indexed_rows, Measurement::Value(2));
         assert_eq!(stats.wal_bytes, Measurement::Missing);
         assert_eq!(stats.shm_bytes, Measurement::Missing);
@@ -388,7 +397,10 @@ mod tests {
         let content = b"this is not a valid sqlite database";
         fs::write(&path, content).unwrap();
         let stats = inspect(&path);
-        assert_eq!(stats.database_bytes, Measurement::Value(content.len() as u64));
+        assert_eq!(
+            stats.database_bytes,
+            Measurement::Value(content.len() as u64)
+        );
         assert!(!stats.complete());
         assert_eq!(fs::read(&path).unwrap(), content);
     }
@@ -403,6 +415,17 @@ mod tests {
         assert!(matches!(stats.database_bytes, Measurement::Value(_)));
         assert!(matches!(stats.page_count, Measurement::Unavailable(_)));
         assert!(!stats.complete());
+    }
+
+    #[test]
+    fn negative_sql_measurements_are_unavailable_but_zero_is_valid() {
+        let db = Connection::open_in_memory().unwrap();
+        let deadline = Instant::now() + QUERY_BUDGET;
+        assert!(matches!(
+            number(&db, "SELECT -1", deadline),
+            Measurement::Unavailable(reason) if reason.contains("negative")
+        ));
+        assert_eq!(number(&db, "SELECT 0", deadline), Measurement::Value(0));
     }
 
     #[test]
@@ -460,11 +483,12 @@ mod tests {
             "SELECT coalesce(sum(pgsize), 0) FROM dbstat WHERE name GLOB 'path_idx_*' \
              OR name GLOB 'skeleton_idx_*'",
             [],
-            |row| row.get::<_, u64>(0),
+            |row| row.get::<_, i64>(0),
         );
         let stats = inspect(&path);
         match expected {
             Ok(bytes) => {
+                let bytes = u64::try_from(bytes).expect("dbstat reports nonnegative bytes");
                 assert!(bytes > 0);
                 assert_eq!(stats.fts_bytes, Measurement::Value(bytes));
             }

@@ -21,7 +21,8 @@ indexed_file content and WAL overhead. Missing files and unavailable metrics are
 /// cannot finish, or the report cannot be serialized. Missing/unreadable
 /// databases instead produce a structured report and exit code 1.
 pub async fn run(as_json: bool) -> Result<ExitCode> {
-    let cache = compass_core::xdg_dirs::cache_home().context("cannot resolve the cache directory")?;
+    let cache =
+        compass_core::xdg_dirs::cache_home().context("cannot resolve the cache directory")?;
     let path = crate::indexer_service::database_path(&cache);
     let stats = tokio::task::spawn_blocking(move || compass_db::index_stats::inspect(&path))
         .await
@@ -111,7 +112,11 @@ mod tests {
         assert_eq!(report["database_bytes"]["status"], "missing");
         assert!(report["database_bytes"]["value"].is_null());
         assert_eq!(report["indexed_rows"]["status"], "unavailable");
-        assert!(!report.to_string().contains(&dir.path().display().to_string()));
+        assert!(
+            !report
+                .to_string()
+                .contains(&dir.path().display().to_string())
+        );
     }
 
     #[test]

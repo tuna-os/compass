@@ -155,7 +155,11 @@ async fn apply_live(state: &Arc<RwLock<EngineState>>, config: &Config, key: &str
 /// home-wide index. Validate the raw values, which Config preserves even when
 /// it cannot deserialize an ancestor, before taking a new live snapshot.
 pub(super) fn file_indexing_settings(config: &Config) -> Result<IndexingSettings, String> {
-    for key in ["providers", "providers.files", "providers.files.preferences"] {
+    for key in [
+        "providers",
+        "providers.files",
+        "providers.files.preferences",
+    ] {
         if config
             .get_path(key)
             .is_some_and(|value| !value.is_null() && !value.is_object())
@@ -231,9 +235,13 @@ mod tests {
     use super::*;
 
     fn config(value: serde_json::Value) -> Config {
-        Config::parse_layered(&value.to_string(), std::path::Path::new("compass.json"), None)
-            .unwrap()
-            .0
+        Config::parse_layered(
+            &value.to_string(),
+            std::path::Path::new("compass.json"),
+            None,
+        )
+        .unwrap()
+        .0
     }
 
     #[test]
@@ -252,7 +260,10 @@ mod tests {
                 "excludedIndexingPaths": ["/data/private", 7]
             }}}}),
         ] {
-            assert!(file_indexing_settings(&config(value.clone())).is_err(), "{value}");
+            assert!(
+                file_indexing_settings(&config(value.clone())).is_err(),
+                "{value}"
+            );
         }
     }
 
@@ -273,6 +284,9 @@ mod tests {
         }}}}));
         let settings = file_indexing_settings(&empty).unwrap();
         assert!(!settings.enabled);
-        assert!(settings.paths.is_empty(), "an explicit empty list stays empty");
+        assert!(
+            settings.paths.is_empty(),
+            "an explicit empty list stays empty"
+        );
     }
 }

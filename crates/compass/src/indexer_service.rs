@@ -438,10 +438,13 @@ impl<D: IndexDatabase, R: IndexReader> IndexerService<D, R> {
     }
 
     fn error(&self, id: i64, message: &str) {
-        self.sink.send(&serde_json::to_vec(&serde_json::json!({
-            "jsonrpc": "2.0", "id": id,
-            "error": {"code": -32603, "message": message},
-        })).expect("serializable error"));
+        self.sink.send(
+            &serde_json::to_vec(&serde_json::json!({
+                "jsonrpc": "2.0", "id": id,
+                "error": {"code": -32603, "message": message},
+            }))
+            .expect("serializable error"),
+        );
     }
 
     fn reply(&self, id: i64, result: &impl Serialize) {
@@ -581,7 +584,11 @@ mod tests {
 
         fn delete_indexed_files(&mut self, _paths: &[PathBuf]) {}
 
-        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), compass_db::db_writer::ReconcileError> {
+        fn retain_indexed_files(
+            &mut self,
+            _roots: &[PathBuf],
+            _excluded: &[PathBuf],
+        ) -> Result<(), compass_db::db_writer::ReconcileError> {
             Ok(())
         }
 

@@ -235,10 +235,11 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
         self.dispatcher().interrupt_all();
         self.dispatcher().wait_until_idle();
 
-        if let Err(error) = self.inner.writer.retain_indexed_files(
-            new_entrypoints.clone(),
-            new_excluded.clone(),
-        ) {
+        if let Err(error) = self
+            .inner
+            .writer
+            .retain_indexed_files(new_entrypoints.clone(), new_excluded.clone())
+        {
             tracing::error!(%error, "could not reconcile cached files; leaving indexing paused");
             return false;
         }
@@ -255,13 +256,16 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
 
         let has_scans = !plan.scan_roots.is_empty();
         if !plan.delete_subtrees.is_empty() {
-            self.inner.writer.delete_indexed_files(
-                std::mem::take(&mut plan.delete_subtrees),
-                None,
-            );
+            self.inner
+                .writer
+                .delete_indexed_files(std::mem::take(&mut plan.delete_subtrees), None);
         }
         self.inner.mark_full_scan_roots_pending(&plan.scan_roots);
-        *self.inner.watcher_paused.lock().unwrap_or_else(PoisonError::into_inner) = false;
+        *self
+            .inner
+            .watcher_paused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = false;
         for root in std::mem::take(&mut plan.scan_roots) {
             self.dispatcher().enqueue(Scan {
                 path: root,
@@ -378,14 +382,19 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
             tracing::error!("file indexer database is not open, refusing to start scans");
             return false;
         }
-        if let Err(error) = self.inner.writer.retain_indexed_files(
-            self.entrypoints(),
-            self.excluded_paths(),
-        ) {
+        if let Err(error) = self
+            .inner
+            .writer
+            .retain_indexed_files(self.entrypoints(), self.excluded_paths())
+        {
             tracing::error!(%error, "could not reconcile cached files; refusing to start scans");
             return false;
         }
-        *self.inner.watcher_paused.lock().unwrap_or_else(PoisonError::into_inner) = false;
+        *self
+            .inner
+            .watcher_paused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = false;
         // Typo corrections before the first scan of the session completes.
         if !(self.inner.make_reader)().has_vocabulary() {
             self.inner.writer.rebuild_vocabulary();
@@ -483,7 +492,10 @@ impl<D: IndexDatabase, R: IndexReader> Inner<D, R> {
     }
 
     fn start_file_system_watcher(&self) {
-        let paused = self.watcher_paused.lock().unwrap_or_else(PoisonError::into_inner);
+        let paused = self
+            .watcher_paused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if *paused {
             return;
         }
@@ -503,7 +515,10 @@ impl<D: IndexDatabase, R: IndexReader> Inner<D, R> {
     }
 
     fn pause_file_system_watcher(&self) {
-        let mut paused = self.watcher_paused.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut paused = self
+            .watcher_paused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         *paused = true;
         self.stop_file_system_watcher();
     }
@@ -719,7 +734,11 @@ mod tests {
                 .extend(paths.iter().cloned());
         }
 
-        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), crate::db_writer::ReconcileError> {
+        fn retain_indexed_files(
+            &mut self,
+            _roots: &[PathBuf],
+            _excluded: &[PathBuf],
+        ) -> Result<(), crate::db_writer::ReconcileError> {
             Ok(())
         }
 

@@ -37,21 +37,24 @@ impl Daemon {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
         let helper = bin.join("compass-file-indexer");
         std::fs::copy(fixtures.join("recording_indexer.py"), &helper).unwrap();
-        std::fs::copy(fixtures.join("fake_indexer.py"), bin.join("fake_indexer.py")).unwrap();
+        std::fs::copy(
+            fixtures.join("fake_indexer.py"),
+            bin.join("fake_indexer.py"),
+        )
+        .unwrap();
         std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::create_dir_all(root.join("config/compass")).unwrap();
         std::fs::create_dir_all(root.join("runtime")).unwrap();
-        std::fs::write(
-            root.join("config/compass/compass.json"),
-            config,
-        )
-        .unwrap();
+        std::fs::write(root.join("config/compass/compass.json"), config).unwrap();
         let socket = root.join("ipc.sock");
         let child = Command::new(binary)
             .args(["--socket", socket.to_str().unwrap(), "serve", "--no-hotkey"])
             .current_dir(root)
             .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into()))
+            .env(
+                "PATH",
+                std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into()),
+            )
             .env("HOME", root)
             .env("XDG_DATA_HOME", root.join("data"))
             .env("XDG_DATA_DIRS", root.join("empty"))
@@ -60,9 +63,15 @@ impl Daemon {
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"))
-            .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/compass-test-no-bus")
+            .env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                "unix:path=/nonexistent/compass-test-no-bus",
+            )
             .env("COMPASS_DISABLE_AUTO_RATE_REFRESH", "1")
-            .env("COMPASS_UPDATE_FEED_URL", "http://127.0.0.1:9/releases/latest")
+            .env(
+                "COMPASS_UPDATE_FEED_URL",
+                "http://127.0.0.1:9/releases/latest",
+            )
             .env("COMPASS_INPUT_SERVER_BIN", "/bin/true")
             .env("COMPASS_TEST_INDEXER_LOG", root.join("indexer.jsonl"))
             .stdout(Stdio::null())
@@ -71,18 +80,27 @@ impl Daemon {
             .unwrap();
         let daemon = Self {
             child,
-            runtime: tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(),
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
             socket,
             dir,
         };
-        wait_for(|| daemon.try_request(Request::Ping).is_some(), "the engine socket");
+        wait_for(
+            || daemon.try_request(Request::Ping).is_some(),
+            "the engine socket",
+        );
         daemon
     }
 
     fn try_request(&self, request: Request) -> Option<Response> {
         self.runtime.block_on(async {
             tokio::time::timeout(TIMEOUT, async {
-                compass_ipc::Client::connect(&self.socket).await?.request(request).await
+                compass_ipc::Client::connect(&self.socket)
+                    .await?
+                    .request(request)
+                    .await
             })
             .await
             .ok()
@@ -110,7 +128,8 @@ impl Daemon {
     }
 
     fn configurations(&self) -> Vec<Value> {
-        self.records().into_iter()
+        self.records()
+            .into_iter()
             .filter(|row| row["method"] == "FileIndexer/configure")
             .collect()
     }
@@ -118,20 +137,36 @@ impl Daemon {
     fn wait_config(&self, paths: &[PathBuf], excluded: &[PathBuf]) -> Value {
         let expected = json!({"paths": paths, "excluded_paths": excluded});
         wait_for(
-            || self.configurations().last().is_some_and(|row| row["params"]["config"] == expected),
+            || {
+                self.configurations()
+                    .last()
+                    .is_some_and(|row| row["params"]["config"] == expected)
+            },
             "the helper configuration",
         );
-        let expected_files: Vec<PathBuf> = paths.iter().map(|root| root.join("probe.txt")).collect();
-        wait_for(|| match self.search("probe") {
-            Response::Files { files, .. } => files.into_iter().map(|file| PathBuf::from(file.path))
-                .collect::<Vec<_>>() == expected_files,
-            _ => false,
-        }, "the configured query result");
+        let expected_files: Vec<PathBuf> =
+            paths.iter().map(|root| root.join("probe.txt")).collect();
+        wait_for(
+            || match self.search("probe") {
+                Response::Files { files, .. } => {
+                    files
+                        .into_iter()
+                        .map(|file| PathBuf::from(file.path))
+                        .collect::<Vec<_>>()
+                        == expected_files
+                }
+                _ => false,
+            },
+            "the configured query result",
+        );
         self.configurations().pop().unwrap()
     }
 
     fn search(&self, query: &str) -> Response {
-        self.request(Request::SearchFiles { query: query.to_owned(), category: None })
+        self.request(Request::SearchFiles {
+            query: query.to_owned(),
+            category: None,
+        })
     }
 
     fn assert_query_root(&self, root: &Path) {
@@ -185,7 +220,10 @@ fn settle_watcher() {
 fn file_settings_reconfigure_one_helper_and_survive_disable_and_reenable() {
     let daemon = Daemon::start();
     let root = daemon.dir.path();
-    assert!(daemon.records().is_empty(), "disabled at startup means no helper");
+    assert!(
+        daemon.records().is_empty(),
+        "disabled at startup means no helper"
+    );
     let Response::Error(error) = daemon.search("probe") else {
         panic!("disabled indexing must be unavailable");
     };
@@ -195,23 +233,42 @@ fn file_settings_reconfigure_one_helper_and_survive_disable_and_reenable() {
     let first = daemon.wait_config(&[root.join("first")], &[]);
     daemon.assert_query_root(&root.join("first"));
 
-    assert_eq!(daemon.set("indexingPaths", json!(["~/second/./", "~/second"])), Response::Ack);
+    assert_eq!(
+        daemon.set("indexingPaths", json!(["~/second/./", "~/second"])),
+        Response::Ack
+    );
     let changed = daemon.wait_config(&[root.join("second")], &[]);
-    assert_eq!(changed["pid"], first["pid"], "roots change in the existing helper");
+    assert_eq!(
+        changed["pid"], first["pid"],
+        "roots change in the existing helper"
+    );
     daemon.assert_query_root(&root.join("second"));
-    assert_eq!(daemon.set("excludedIndexingPaths", json!(["~/second/private"])), Response::Ack);
+    assert_eq!(
+        daemon.set("excludedIndexingPaths", json!(["~/second/private"])),
+        Response::Ack
+    );
     let changed = daemon.wait_config(&[root.join("second")], &[root.join("second/private")]);
     assert_eq!(changed["pid"], first["pid"]);
     let count = daemon.configurations().len();
-    assert_eq!(daemon.set("excludedIndexingPaths", json!(["~/second/./private"])), Response::Ack);
+    assert_eq!(
+        daemon.set("excludedIndexingPaths", json!(["~/second/./private"])),
+        Response::Ack
+    );
     settle_watcher();
     daemon.assert_query_root(&root.join("second"));
-    assert_eq!(daemon.configurations().len(), count, "same snapshot sends no configure");
+    assert_eq!(
+        daemon.configurations().len(),
+        count,
+        "same snapshot sends no configure"
+    );
 
     let edited = configuration(true, json!(["third/./"]), json!(["~/third/private"]));
     daemon.write_config(&edited.to_string());
     let changed = daemon.wait_config(&[root.join("third")], &[root.join("third/private")]);
-    assert_eq!(changed["pid"], first["pid"], "hand edits use the same live path");
+    assert_eq!(
+        changed["pid"], first["pid"],
+        "hand edits use the same live path"
+    );
     daemon.assert_query_root(&root.join("third"));
 
     let count = daemon.configurations().len();
@@ -227,30 +284,66 @@ fn file_settings_reconfigure_one_helper_and_survive_disable_and_reenable() {
         daemon.write_config(broken);
         settle_watcher();
         daemon.assert_query_root(&root.join("third"));
-        assert_eq!(daemon.configurations().len(), count, "invalid edits keep the good snapshot");
+        assert_eq!(
+            daemon.configurations().len(),
+            count,
+            "invalid edits keep the good snapshot"
+        );
     }
     daemon.write_config(&edited.to_string());
     settle_watcher();
 
     assert_eq!(daemon.set("autoIndexing", json!(false)), Response::Ack);
-    assert_eq!(daemon.records().iter().filter(|row| row["event"] == "stop").count(), 1);
+    assert_eq!(
+        daemon
+            .records()
+            .iter()
+            .filter(|row| row["event"] == "stop")
+            .count(),
+        1
+    );
     assert!(matches!(daemon.search("probe"), Response::Error(_)));
     let direct = root.join("direct.txt");
     std::fs::write(&direct, "temporary fixture").unwrap();
-    assert!(matches!(daemon.search(direct.to_str().unwrap()), Response::Files { .. }));
+    assert!(matches!(
+        daemon.search(direct.to_str().unwrap()),
+        Response::Files { .. }
+    ));
 
-    assert_eq!(daemon.set("indexingPaths", json!(["~/fourth"])), Response::Ack);
-    assert_eq!(daemon.set("excludedIndexingPaths", json!(["~/fourth/private"])), Response::Ack);
+    assert_eq!(
+        daemon.set("indexingPaths", json!(["~/fourth"])),
+        Response::Ack
+    );
+    assert_eq!(
+        daemon.set("excludedIndexingPaths", json!(["~/fourth/private"])),
+        Response::Ack
+    );
     settle_watcher();
-    assert_eq!(daemon.configurations().len(), count, "disabled edits are staged without a helper");
+    assert_eq!(
+        daemon.configurations().len(),
+        count,
+        "disabled edits are staged without a helper"
+    );
     assert_eq!(daemon.set("autoIndexing", json!(true)), Response::Ack);
     let restarted = daemon.wait_config(&[root.join("fourth")], &[root.join("fourth/private")]);
     assert_ne!(restarted["pid"], first["pid"]);
     daemon.assert_query_root(&root.join("fourth"));
     assert_eq!(daemon.set("autoIndexing", json!(true)), Response::Ack);
     settle_watcher();
-    assert_eq!(daemon.records().iter().filter(|row| row["event"] == "start").count(), 2);
-    assert!(!daemon.records().iter().any(|row| row["method"] == "FileIndexer/rebuildIndex"));
+    assert_eq!(
+        daemon
+            .records()
+            .iter()
+            .filter(|row| row["event"] == "start")
+            .count(),
+        2
+    );
+    assert!(
+        !daemon
+            .records()
+            .iter()
+            .any(|row| row["method"] == "FileIndexer/rebuildIndex")
+    );
     assert_eq!(daemon.set("autoIndexing", json!(false)), Response::Ack);
 }
 

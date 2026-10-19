@@ -629,7 +629,10 @@ mod tests {
         });
         let settings = IndexingSettings::from_preferences(stored.as_object(), Some(home));
         assert_eq!(settings.paths, ["/home/test-user/code", "/srv"]);
-        assert_eq!(settings.excluded_paths, ["/home/test-user/code/private", "/srv/cache"]);
+        assert_eq!(
+            settings.excluded_paths,
+            ["/home/test-user/code/private", "/srv/cache"]
+        );
         let stored = serde_json::json!({"indexingPaths": ["~", "/"]});
         assert_eq!(
             IndexingSettings::from_preferences(stored.as_object(), Some(home)).paths,
@@ -648,23 +651,39 @@ mod tests {
             stored.as_object(),
             Some(Path::new("/different/home")),
         );
-        assert_eq!(settings.paths, [cwd.join("docs").to_string_lossy().into_owned()]);
+        assert_eq!(
+            settings.paths,
+            [cwd.join("docs").to_string_lossy().into_owned()]
+        );
         assert_eq!(
             settings.excluded_paths,
-            [crate::scan_roots::lexically_normal(&cwd.join("../../private")).to_string_lossy().into_owned()]
+            [
+                crate::scan_roots::lexically_normal(&cwd.join("../../private"))
+                    .to_string_lossy()
+                    .into_owned()
+            ]
         );
     }
 
     #[test]
     fn indexing_paths_do_not_interpolate_shell_or_environment_syntax() {
         let cwd = std::env::current_dir().unwrap();
-        for path in ["$HOME/docs", "${HOME}/docs", "~someone/docs", "$(pwd)/docs", "docs/*"] {
+        for path in [
+            "$HOME/docs",
+            "${HOME}/docs",
+            "~someone/docs",
+            "$(pwd)/docs",
+            "docs/*",
+        ] {
             let stored = serde_json::json!({"indexingPaths": [path]});
             let settings = IndexingSettings::from_preferences(
                 stored.as_object(),
                 Some(Path::new("/different/home")),
             );
-            assert_eq!(settings.paths, [cwd.join(path).to_string_lossy().into_owned()]);
+            assert_eq!(
+                settings.paths,
+                [cwd.join(path).to_string_lossy().into_owned()]
+            );
         }
         let stored = serde_json::json!({"indexingPaths": ["~/docs"]});
         assert_eq!(

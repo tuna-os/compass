@@ -291,7 +291,11 @@ mod tests {
 
         fn delete_indexed_files(&mut self, _paths: &[PathBuf]) {}
 
-        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), crate::db_writer::ReconcileError> {
+        fn retain_indexed_files(
+            &mut self,
+            _roots: &[PathBuf],
+            _excluded: &[PathBuf],
+        ) -> Result<(), crate::db_writer::ReconcileError> {
             Ok(())
         }
 

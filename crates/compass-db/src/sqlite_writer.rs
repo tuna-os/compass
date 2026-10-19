@@ -24,7 +24,9 @@ use compass_core::file_category::{FileCategory, file_category};
 use compass_core::vocabulary::{basename, skeletonize_token, tokenize_filename};
 use compass_sqlcipher_sys::rusqlite::{self, Connection, named_params};
 
-use crate::db_writer::{FileEvent, FileEventType, IndexDatabase, ReconcileError, ScanRecord, ScanStatus, ScanType};
+use crate::db_writer::{
+    FileEvent, FileEventType, IndexDatabase, ReconcileError, ScanRecord, ScanStatus, ScanType,
+};
 use crate::query_engine::IndexedFileCategory;
 use crate::sqlite_reader::{file_id, int_or_zero, status_from_db};
 
@@ -288,22 +290,31 @@ impl IndexDatabase for SqliteWriter {
         }
     }
 
-    fn retain_indexed_files(&mut self, roots: &[PathBuf], excluded: &[PathBuf]) -> Result<(), ReconcileError> {
+    fn retain_indexed_files(
+        &mut self,
+        roots: &[PathBuf],
+        excluded: &[PathBuf],
+    ) -> Result<(), ReconcileError> {
         let mut parameters = Vec::new();
         let mut covered_by = |paths: &[PathBuf]| {
             if paths.is_empty() {
                 return "0".to_owned();
             }
-            paths.iter().map(|path| {
-                let (lower, upper) = subtree_range(path);
-                parameters.extend([path.to_string_lossy().into_owned(), lower, upper]);
-                "(path = ? OR (path >= ? AND path < ?))"
-            }).collect::<Vec<_>>().join(" OR ")
+            paths
+                .iter()
+                .map(|path| {
+                    let (lower, upper) = subtree_range(path);
+                    parameters.extend([path.to_string_lossy().into_owned(), lower, upper]);
+                    "(path = ? OR (path >= ? AND path < ?))"
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ")
         };
         let included = covered_by(roots);
         let excluded = covered_by(excluded);
         let sql = format!("DELETE FROM indexed_file WHERE NOT ({included}) OR ({excluded})");
-        self.db.execute(&sql, rusqlite::params_from_iter(parameters))
+        self.db
+            .execute(&sql, rusqlite::params_from_iter(parameters))
             .map(|_| ())
             .map_err(|error| ReconcileError::Database(error.to_string()))
     }

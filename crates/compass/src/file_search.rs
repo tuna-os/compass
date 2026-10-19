@@ -94,7 +94,11 @@ impl FileSearch {
         Ok(())
     }
 
-    fn apply_settings_locked(&self, applied: &mut Option<IndexingSettings>, settings: IndexingSettings) {
+    fn apply_settings_locked(
+        &self,
+        applied: &mut Option<IndexingSettings>,
+        settings: IndexingSettings,
+    ) {
         let rejected = self.indexer.configuration_rejected();
         if applied.as_ref() == Some(&settings)
             && (!settings.enabled || (self.indexer.is_running() && !rejected))
@@ -187,17 +191,20 @@ impl FileSearch {
         if !self.index_available() {
             return Vec::new();
         }
-        self.current_results(self.indexer.query(query, limit, category.map(wire_category)))
-            .into_iter()
-            .map(|result| {
-                (
-                    result.path,
-                    result.rank,
-                    from_indexed(result.category),
-                    result.mime_type,
-                )
-            })
-            .collect()
+        self.current_results(
+            self.indexer
+                .query(query, limit, category.map(wire_category)),
+        )
+        .into_iter()
+        .map(|result| {
+            (
+                result.path,
+                result.rank,
+                from_indexed(result.category),
+                result.mime_type,
+            )
+        })
+        .collect()
     }
 
     /// A query may finish after a newer configuration has taken effect. The
@@ -215,8 +222,14 @@ impl FileSearch {
             return Vec::new();
         };
         results.retain(|result| {
-            settings.paths.iter().any(|root| result.path.starts_with(root))
-                && !settings.excluded_paths.iter().any(|excluded| result.path.starts_with(excluded))
+            settings
+                .paths
+                .iter()
+                .any(|root| result.path.starts_with(root))
+                && !settings
+                    .excluded_paths
+                    .iter()
+                    .any(|excluded| result.path.starts_with(excluded))
         });
         results
     }
@@ -231,7 +244,11 @@ impl FileSearch {
             return Err(INDEXER_UNAVAILABLE);
         }
         let files = self
-            .current_results(self.indexer.query(query, INDEXED_QUERY_LIMIT, category.map(wire_category)))
+            .current_results(self.indexer.query(
+                query,
+                INDEXED_QUERY_LIMIT,
+                category.map(wire_category),
+            ))
             .into_iter()
             .map(|result| hit(&result.path, Some(from_indexed(result.category))))
             .collect();
@@ -371,13 +388,19 @@ mod tests {
         let old = dir.path().join("old").to_string_lossy().into_owned();
         let latest = dir.path().join("latest").to_string_lossy().into_owned();
         let write = |root: &str| {
-            std::fs::write(&path, serde_json::json!({
-                "autoIndexing": false, "indexingPaths": [root]
-            }).to_string()).unwrap();
+            std::fs::write(
+                &path,
+                serde_json::json!({
+                    "autoIndexing": false, "indexingPaths": [root]
+                })
+                .to_string(),
+            )
+            .unwrap();
         };
         let load = |path: &Path| -> Result<IndexingSettings, String> {
             let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-            let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            let value: serde_json::Value =
+                serde_json::from_str(&text).map_err(|error| error.to_string())?;
             Ok(IndexingSettings::from_preferences(value.as_object(), None))
         };
         write(&old);
@@ -396,7 +419,10 @@ mod tests {
         files.reload_settings(|| load(&path)).unwrap();
         release.send(()).unwrap();
         older_callback.join().unwrap();
-        assert_eq!(files.settings.lock().unwrap().as_ref().unwrap().paths, [latest]);
+        assert_eq!(
+            files.settings.lock().unwrap().as_ref().unwrap().paths,
+            [latest]
+        );
         std::fs::write(&path, "{invalid").unwrap();
         let previous = files.settings.lock().unwrap().clone();
         assert!(files.reload_settings(|| load(&path)).is_err());
@@ -411,7 +437,10 @@ mod tests {
         let files = Arc::new(FileSearch::without_indexer());
         let extension_search = Arc::clone(&files);
         let row = |path: PathBuf| compass_db::query_engine::IndexerFileResult {
-            path, rank: 1.0, category: IndexedFileCategory::Document, mime_type: None,
+            path,
+            rank: 1.0,
+            category: IndexedFileCategory::Document,
+            mime_type: None,
         };
         // Set only the accepted snapshot: this pure result test never starts a helper.
         *files.settings.lock().unwrap() = Some(IndexingSettings {

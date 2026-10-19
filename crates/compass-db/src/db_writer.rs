@@ -140,7 +140,11 @@ pub trait IndexDatabase: Send + 'static {
     fn delete_indexed_files(&mut self, paths: &[PathBuf]);
     /// Forgets only derived rows outside normalized roots or inside exclusions.
     /// Must complete atomically, without touching source files or scan history.
-    fn retain_indexed_files(&mut self, roots: &[PathBuf], excluded: &[PathBuf]) -> Result<(), ReconcileError>;
+    fn retain_indexed_files(
+        &mut self,
+        roots: &[PathBuf],
+        excluded: &[PathBuf],
+    ) -> Result<(), ReconcileError>;
     /// Forgets everything indexed.
     fn delete_all_indexed_files(&mut self);
     /// Reclaims space.
@@ -350,7 +354,12 @@ impl<D: IndexDatabase> DbWriter<D> {
         let shared = Arc::clone(&self.shared);
         self.submit(
             move |db: &mut D| {
-                if let Some(scope) = shared.scope.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+                if let Some(scope) = shared
+                    .scope
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_ref()
+                {
                     paths.retain(|path| scope.contains(path));
                 }
                 db.index_files(&paths);
@@ -383,7 +392,11 @@ impl<D: IndexDatabase> DbWriter<D> {
     /// # Errors
     ///
     /// The database could not reconcile its rows, or its worker stopped.
-    pub fn retain_indexed_files(&self, roots: Vec<PathBuf>, excluded: Vec<PathBuf>) -> Result<(), ReconcileError> {
+    pub fn retain_indexed_files(
+        &self,
+        roots: Vec<PathBuf>,
+        excluded: Vec<PathBuf>,
+    ) -> Result<(), ReconcileError> {
         let shared = Arc::clone(&self.shared);
         let (sender, receiver) = mpsc::channel();
         self.submit(
@@ -392,7 +405,10 @@ impl<D: IndexDatabase> DbWriter<D> {
                 let scope = if result.is_ok() {
                     IndexingScope { roots, excluded }
                 } else {
-                    IndexingScope { roots: Vec::new(), excluded: Vec::new() }
+                    IndexingScope {
+                        roots: Vec::new(),
+                        excluded: Vec::new(),
+                    }
                 };
                 *shared.scope.lock().unwrap_or_else(PoisonError::into_inner) = Some(scope);
                 let _ = sender.send(result);
@@ -445,7 +461,12 @@ impl<D: IndexDatabase> DbWriter<D> {
         let shared = Arc::clone(&self.shared);
         self.submit(
             move |db: &mut D| {
-                if let Some(scope) = shared.scope.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+                if let Some(scope) = shared
+                    .scope
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_ref()
+                {
                     events.retain(|event| scope.contains(&event.path));
                 }
                 db.index_events(&events);
@@ -563,7 +584,11 @@ mod tests {
             self.record(&format!("delete {}", paths.len()));
         }
 
-        fn retain_indexed_files(&mut self, _roots: &[PathBuf], _excluded: &[PathBuf]) -> Result<(), crate::db_writer::ReconcileError> {
+        fn retain_indexed_files(
+            &mut self,
+            _roots: &[PathBuf],
+            _excluded: &[PathBuf],
+        ) -> Result<(), crate::db_writer::ReconcileError> {
             Ok(())
         }
 
