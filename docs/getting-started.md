@@ -192,6 +192,8 @@ Changes to the file apply as soon as it is saved, whether you edit it by hand or
 as `compass theme set dracula`. A key Compass does not know, or a value of the wrong type, does not
 stop the rest of the file from loading: Compass uses the default for that setting and says what is
 wrong in its log, in `compass doctor` and at the bottom of the settings view.
+File-index settings have stricter handling so invalid values cannot widen indexing;
+see [Live file-index settings](#live-file-index-settings).
 
 If you used Vicinae before, Compass moves its settings over on first start.
 
@@ -238,3 +240,63 @@ compass doctor --check-only
 `--check-only` prints only the problems. When you
 [report a bug](https://github.com/tuna-os/compass/issues/new), include the full `compass doctor`
 output, your distribution and desktop, and how you installed Compass.
+
+### Live file-index settings
+
+Changes to `providers.files.preferences.autoIndexing`, `indexingPaths`, and
+`excludedIndexingPaths` take effect while Compass is running, whether saved in
+Settings or edited in `compass.json`. Unchanged settings do not restart the
+helper. Turning automatic indexing off stops it; turning it back on uses the
+latest folders and exclusions. Direct-path search and recently used files
+remain available when indexing is off.
+
+Folders are literal paths. `~` and `~/` expand to your home directory; other
+relative paths are resolved against the engine's working directory. Dot
+components and duplicate paths are normalized without following symlinks.
+Environment variables, named-user tildes and shell wildcards are not expanded.
+An explicit empty indexed-folder list indexes nothing; removing that setting
+restores the home-directory default.
+
+Malformed file-index settings keep the last valid settings during a session.
+At startup, unreadable or malformed configuration leaves indexing off until a
+valid configuration is saved. On every helper start, cached rows outside the
+current roots or inside exclusions are removed before indexed queries become
+available. Live changes apply the same boundary, including to delayed scanner
+writes and query results. This changes only the derived file-search index;
+source files are never deleted, and no schema migration or full index rebuild
+is requested. A rejected configuration can be retried by saving the same valid
+settings again.
+
+### File-index size diagnostics
+
+Run `compass fs stats` (or `compass fs stats --json`) to measure the existing
+file-search index without starting the engine. It reports the main database,
+WAL and SHM file lengths in bytes, SQLite page size, page count and freelist
+pages, indexed rows (files and directories), and the two FTS indexes' page
+footprint when this SQLite build provides `dbstat`. Missing files and unavailable
+measurements have explicit statuses; they are never silently reported as zero.
+The report contains no indexed paths or clipboard data.
+
+The database is `$XDG_CACHE_HOME/compass/file-indexer/compass-file-index.db`,
+falling back to `~/.cache/compass/file-indexer/compass-file-index.db`. The command
+opens it read-only and never creates a missing database, changes its schema or
+journal mode, checkpoints, vacuums, or rebuilds the index. No schema migration
+is needed: this reads the existing version and reports unsupported versions.
+SQLite can update reader-lock bookkeeping in an existing SHM file. If a WAL
+sidecar is absent or unreadable, SQL measurements are skipped to avoid creating
+sidecars; retry while the indexer is running. A concurrently exiting indexer
+can still remove sidecars after this preflight, in which case SQLite may recreate
+them for reader coordination.
+
+SQL measurements share a read transaction that includes committed WAL pages.
+Queries have a two-second interruption budget and a 100 ms lock wait; busy,
+unreadable, corrupt, unsupported, or timed-out databases produce unavailable
+reasons. File lengths are sampled separately and may change during a scan.
+They are logical lengths, not allocated disk blocks. WAL length includes reusable
+frames; FTS bytes include shadow-table pages but exclude the external
+`indexed_file` content and WAL overhead. Do not add FTS bytes or freelist bytes
+to the database size: those pages are already part of the database. These are
+measurements, not a performance comparison or a recommendation to compact.
+
+The command exits 1 when required measurements are unavailable and 0 when they
+are available. Optional FTS-footprint unavailability does not fail the command.

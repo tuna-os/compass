@@ -238,3 +238,109 @@ fn a_missing_helper_answers_nothing() {
     assert!(client.query("report", 10, None).is_empty());
     client.stop();
 }
+
+fn check_unanswered_query_is_settled(mode: &str, stop: bool) {
+    let (_dir, wrapper) = fake(mode);
+    let client = IndexerClient::new();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    client.set_scan_callback(move |scan| sink.lock().unwrap().push(scan));
+    client.start_with(&wrapper);
+    let guard = Guard { client };
+    wait_until_running(&guard.client, "unanswered-query helper");
+
+    let query_client = Arc::clone(&guard.client);
+    let (send, received) = std::sync::mpsc::channel();
+    let query = std::thread::spawn(move || {
+        let _ = send.send(query_client.query("report", 10, None));
+    });
+    wait_for(
+        &seen,
+        |scans| {
+            scans
+                .iter()
+                .any(|scan| scan.scan_id == 42 && scan.state == WireScanState::Started)
+        },
+        "helper receiving the unanswered query",
+        Duration::from_secs(10),
+    );
+
+    if stop {
+        guard.client.stop();
+    }
+    assert!(
+        received
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a stopped helper must settle the pending query")
+            .is_empty()
+    );
+    query.join().unwrap();
+    wait_until_stopped(&guard.client, "unanswered-query helper");
+    let scans = wait_for(
+        &seen,
+        |scans| {
+            scans
+                .iter()
+                .any(|scan| scan.scan_id == 42 && scan.state == WireScanState::Interrupted)
+        },
+        "interrupted unanswered-query scan",
+        Duration::from_secs(10),
+    );
+    assert_eq!(
+        scans
+            .iter()
+            .filter(|scan| scan.scan_id == 42 && scan.state == WireScanState::Interrupted)
+            .count(),
+        1,
+        "the unfinished scan is settled exactly once"
+    );
+    assert!(guard.client.active_scans().is_empty());
+}
+
+#[test]
+fn stopping_settles_pending_queries_and_interrupts_scans() {
+    check_unanswered_query_is_settled("hold-query", true);
+}
+
+#[test]
+fn a_clean_exit_settles_pending_queries_and_interrupts_scans() {
+    check_unanswered_query_is_settled("exit-query", false);
+}
+
+#[test]
+fn a_rejected_configuration_can_be_retried_without_restarting() {
+    let (_dir, wrapper) = fake("reject-configure-once");
+    let client = IndexerClient::new();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    client.set_scan_callback(move |scan| sink.lock().unwrap().push(scan));
+    let paths = vec!["/tmp".to_owned()];
+    client.configure(paths.clone(), Vec::new());
+    assert!(!client.configuration_ready());
+    assert!(!client.configuration_rejected());
+    client.start_with(&wrapper);
+    let guard = Guard { client };
+    wait_for(
+        &seen,
+        |scans| scans.iter().any(|scan| scan.scan_id == 43),
+        "the rejected configuration",
+        Duration::from_secs(10),
+    );
+    assert!(!guard.client.configuration_ready());
+    assert!(guard.client.configuration_rejected());
+
+    guard.client.configure(paths, Vec::new());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !guard.client.configuration_ready() {
+        assert!(
+            Instant::now() < deadline,
+            "the configuration retry must be acknowledged"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!guard.client.configuration_rejected());
+    assert_eq!(guard.client.query("report", 10, None).len(), 1);
+    guard.client.stop();
+    assert!(!guard.client.configuration_ready());
+    assert!(!guard.client.configuration_rejected());
+}

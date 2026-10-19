@@ -182,16 +182,16 @@ impl EngineState {
         // A bad config is reported and then ignored rather than fatal. Refusing
         // to start because `max_results` is misspelled would be a worse outcome
         // than starting with the default and saying so.
-        let config = match Config::load_with_issues() {
+        let (config, config_readable) = match Config::load_with_issues() {
             Ok((config, issues)) => {
                 let _ = compass_ui::theme::load_default_user_themes();
                 crate::config_watch::log_issues(&crate::config_watch::check(&config, issues));
-                config
+                (config, true)
             }
             Err(err) => {
                 let fallback = Config::default();
                 tracing::warn!(error = %err, "using default configuration");
-                fallback
+                (fallback, false)
             }
         };
         let max_results = config.launcher().max_results();
@@ -241,12 +241,18 @@ impl EngineState {
 
         // Started with the engine, as `FileExtension::initialized` starts
         // it, so the index is warm by the time anyone searches it.
-        let files = crate::file_search::FileSearch::start(
-            compass_core::file_search::IndexingSettings::from_preferences(
-                config.provider_preferences(compass_core::file_search::PREFERENCES_PROVIDER_ID),
-                compass_core::xdg_dirs::home_dir().as_deref(),
-            ),
-        );
+        let file_settings = if config_readable {
+            settings::file_indexing_settings(&config)
+        } else {
+            Err("the configuration could not be read".to_owned())
+        };
+        let files = match file_settings {
+            Ok(settings) => crate::file_search::FileSearch::start(settings),
+            Err(reason) => {
+                tracing::warn!(%reason, "file indexing is disabled until its configuration is valid");
+                crate::file_search::FileSearch::without_indexer()
+            }
+        };
 
         Self {
             index,

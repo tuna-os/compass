@@ -166,19 +166,23 @@ pub async fn app(socket: &SocketPath, command: AppCommand) -> Result<ExitCode> {
     Ok(ExitCode::from(EXIT_OK))
 }
 
-/// `compass fs query`.
+/// `compass fs query` and the offline, read-only `compass fs stats`.
 ///
 /// # Errors
 ///
 /// A query under three characters, an engine that cannot be reached, or an
-/// index that is not running.
+/// index that is not running. Stats can also fail to resolve the cache directory
+/// or run its worker; unavailable measurements are printed with exit code 1.
 pub async fn fs(socket: &SocketPath, command: FsCommand) -> Result<ExitCode> {
-    let FsCommand::Query {
-        query,
-        limit,
-        category,
-        json,
-    } = command;
+    let (query, limit, category, json) = match command {
+        FsCommand::Query {
+            query,
+            limit,
+            category,
+            json,
+        } => (query, limit, category, json),
+        FsCommand::Stats { json } => return crate::index_stats::run(json).await,
+    };
     if query.chars().count() < 3 {
         bail!("Query should be at least 3 characters long");
     }

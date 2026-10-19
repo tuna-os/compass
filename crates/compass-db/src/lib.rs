@@ -45,6 +45,7 @@
 pub mod db_writer;
 pub mod file_indexer;
 pub mod incremental_scanner;
+pub mod index_stats;
 pub mod indexer_scanner;
 pub mod query_engine;
 pub mod query_policy;

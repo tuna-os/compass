@@ -5,6 +5,8 @@
 //! late result is discarded, and how the category filter is stored and read
 //! back.
 
+use std::path::{Path, PathBuf};
+
 use crate::file_category::FileCategory;
 
 /// How many recently-accessed files the empty query shows.
@@ -339,10 +341,16 @@ impl IndexingSettings {
     /// Like the C++'s `toArray` walk, a non-string entry in a path list is
     /// skipped rather than failing the whole list. A value of the wrong type
     /// falls back to its default, the way the merged default would.
+    ///
+    /// `~` and `~/` expand only against the supplied home. Other tilde forms,
+    /// environment variables and shell syntax are literal path components.
+    /// Paths are made absolute against the process working directory (the
+    /// helper's existing relative-path behavior), then normalized lexically
+    /// and deduplicated. No filesystem lookup or symlink resolution is done.
     #[must_use]
     pub fn from_preferences(
         preferences: Option<&serde_json::Map<String, serde_json::Value>>,
-        home: Option<&std::path::Path>,
+        home: Option<&Path>,
     ) -> Self {
         let get = |key: &str| preferences.and_then(|map| map.get(key));
         let strings = |key: &str| {
@@ -356,17 +364,44 @@ impl IndexingSettings {
                         .collect::<Vec<_>>()
                 })
         };
+        let paths = strings("indexingPaths").unwrap_or_else(|| {
+            home.map(|home| vec![home.to_string_lossy().into_owned()])
+                .unwrap_or_default()
+        });
         Self {
             enabled: get("autoIndexing")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(true),
-            paths: strings("indexingPaths").unwrap_or_else(|| {
-                home.map(|home| vec![home.to_string_lossy().into_owned()])
-                    .unwrap_or_default()
-            }),
-            excluded_paths: strings("excludedIndexingPaths").unwrap_or_default(),
+            paths: indexing_paths(paths, home),
+            excluded_paths: indexing_paths(
+                strings("excludedIndexingPaths").unwrap_or_default(),
+                home,
+            ),
         }
     }
+}
+
+fn indexing_paths(paths: Vec<String>, home: Option<&Path>) -> Vec<String> {
+    let expanded = paths
+        .into_iter()
+        .map(|path| {
+            if let Some(home) = home {
+                if path == "~" {
+                    return home.to_path_buf();
+                }
+                if let Some(relative) = path.strip_prefix("~/") {
+                    return home.join(relative.trim_start_matches('/'));
+                }
+            }
+            PathBuf::from(path)
+        })
+        .collect();
+    crate::scan_roots::normalize_paths(expanded, |path| {
+        std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+    })
+    .into_iter()
+    .map(|path| path.to_string_lossy().into_owned())
+    .collect()
 }
 
 /// The filter key for a category: the stable, untranslated name the filter
@@ -583,5 +618,78 @@ mod tests {
         let settings = IndexingSettings::from_preferences(wrong.as_object(), None);
         assert!(settings.enabled);
         assert!(settings.paths.is_empty());
+    }
+
+    #[test]
+    fn indexing_paths_expand_home_and_normalize_without_reading_the_filesystem() {
+        let home = Path::new("/home/test-user");
+        let stored = serde_json::json!({
+            "indexingPaths": ["~/code/./src/..", "/home/test-user/code", "/data/../srv"],
+            "excludedIndexingPaths": ["~//code/build/../private", "/srv/cache/./"],
+        });
+        let settings = IndexingSettings::from_preferences(stored.as_object(), Some(home));
+        assert_eq!(settings.paths, ["/home/test-user/code", "/srv"]);
+        assert_eq!(
+            settings.excluded_paths,
+            ["/home/test-user/code/private", "/srv/cache"]
+        );
+        let stored = serde_json::json!({"indexingPaths": ["~", "/"]});
+        assert_eq!(
+            IndexingSettings::from_preferences(stored.as_object(), Some(home)).paths,
+            ["/", "/home/test-user"]
+        );
+    }
+
+    #[test]
+    fn relative_indexing_paths_keep_the_helpers_working_directory_contract() {
+        let cwd = std::env::current_dir().unwrap();
+        let stored = serde_json::json!({
+            "indexingPaths": ["./missing/../docs"],
+            "excludedIndexingPaths": ["../../private"],
+        });
+        let settings = IndexingSettings::from_preferences(
+            stored.as_object(),
+            Some(Path::new("/different/home")),
+        );
+        assert_eq!(
+            settings.paths,
+            [cwd.join("docs").to_string_lossy().into_owned()]
+        );
+        assert_eq!(
+            settings.excluded_paths,
+            [
+                crate::scan_roots::lexically_normal(&cwd.join("../../private"))
+                    .to_string_lossy()
+                    .into_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn indexing_paths_do_not_interpolate_shell_or_environment_syntax() {
+        let cwd = std::env::current_dir().unwrap();
+        for path in [
+            "$HOME/docs",
+            "${HOME}/docs",
+            "~someone/docs",
+            "$(pwd)/docs",
+            "docs/*",
+        ] {
+            let stored = serde_json::json!({"indexingPaths": [path]});
+            let settings = IndexingSettings::from_preferences(
+                stored.as_object(),
+                Some(Path::new("/different/home")),
+            );
+            assert_eq!(
+                settings.paths,
+                [cwd.join(path).to_string_lossy().into_owned()]
+            );
+        }
+        let stored = serde_json::json!({"indexingPaths": ["~/docs"]});
+        assert_eq!(
+            IndexingSettings::from_preferences(stored.as_object(), None).paths,
+            [cwd.join("~/docs").to_string_lossy().into_owned()],
+            "without a home, a tilde stays a literal relative component"
+        );
     }
 }

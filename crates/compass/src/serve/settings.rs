@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use compass_core::Config;
+use compass_core::file_search::IndexingSettings;
 use compass_core::settings_catalog::{self, Kind};
 use compass_ipc::{ErrorKind, ProtocolError, Request, Response};
 use tokio::sync::RwLock;
@@ -115,6 +116,25 @@ async fn apply_live(state: &Arc<RwLock<EngineState>>, config: &Config, key: &str
         }
         state.expander.clone()
     };
+    if key.starts_with("providers.files.") {
+        let files = Arc::clone(&state.read().await.files);
+        let applied = tokio::task::spawn_blocking(move || {
+            files.reload_settings(|| {
+                let latest = Config::load().map_err(|error| error.to_string())?;
+                file_indexing_settings(&latest)
+            })
+        })
+        .await;
+        match applied {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => {
+                tracing::warn!(%reason, "keeping the file indexing settings in use");
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not apply file indexing settings");
+            }
+        }
+    }
     if key == "tray.enabled" {
         state
             .read()
@@ -131,6 +151,38 @@ async fn apply_live(state: &Arc<RwLock<EngineState>>, config: &Config, key: &str
     }
 }
 
+/// A malformed hand edit must not turn a restricted index into the default
+/// home-wide index. Validate the raw values, which Config preserves even when
+/// it cannot deserialize an ancestor, before taking a new live snapshot.
+pub(super) fn file_indexing_settings(config: &Config) -> Result<IndexingSettings, String> {
+    for key in [
+        "providers",
+        "providers.files",
+        "providers.files.preferences",
+    ] {
+        if config
+            .get_path(key)
+            .is_some_and(|value| !value.is_null() && !value.is_object())
+        {
+            return Err(format!("{key} must be an object"));
+        }
+    }
+    let mut preferences = serde_json::Map::new();
+    for name in ["autoIndexing", "indexingPaths", "excludedIndexingPaths"] {
+        let key = format!("providers.files.preferences.{name}");
+        if let Some(value) = config.get_path(&key) {
+            let setting = settings_catalog::find(&key).expect("a file indexing setting");
+            if let Some(value) = settings_catalog::validate(&setting, value)? {
+                preferences.insert(name.to_owned(), value);
+            }
+        }
+    }
+    Ok(IndexingSettings::from_preferences(
+        Some(&preferences),
+        compass_core::xdg_dirs::home_dir().as_deref(),
+    ))
+}
+
 /// `compass.json` changed on disk (a hand edit, `compass theme set`, another
 /// window's settings): everything the engine holds of it is brought in line,
 /// as [`apply_live`] does for one key.
@@ -138,6 +190,7 @@ pub async fn apply_all(state: &Arc<RwLock<EngineState>>, config: &Config) {
     for key in [
         "launcher.max_results",
         "providers.clipboard.",
+        "providers.files.",
         &format!(".{}.", crate::programs::ENTRYPOINT),
         "tray.enabled",
         "input_server.enabled",
@@ -175,4 +228,65 @@ async fn set_provider_enabled(
         .index
         .apply_root_config(&config.root_config());
     Response::Ack
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(value: serde_json::Value) -> Config {
+        Config::parse_layered(
+            &value.to_string(),
+            std::path::Path::new("compass.json"),
+            None,
+        )
+        .unwrap()
+        .0
+    }
+
+    #[test]
+    fn malformed_file_preferences_are_not_a_reset_to_defaults() {
+        for value in [
+            serde_json::json!({"providers": false}),
+            serde_json::json!({"providers": {"files": []}}),
+            serde_json::json!({"providers": {"files": {"preferences": false}}}),
+            serde_json::json!({"providers": {"files": {"preferences": {
+                "autoIndexing": "yes"
+            }}}}),
+            serde_json::json!({"providers": {"files": {"preferences": {
+                "indexingPaths": "/data"
+            }}}}),
+            serde_json::json!({"providers": {"files": {"preferences": {
+                "excludedIndexingPaths": ["/data/private", 7]
+            }}}}),
+        ] {
+            assert!(
+                file_indexing_settings(&config(value.clone())).is_err(),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_and_null_file_preferences_still_reset_to_defaults() {
+        let defaults = file_indexing_settings(&Config::default()).unwrap();
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"providers": {"files": {"preferences": null}}}),
+            serde_json::json!({"providers": {"files": {"preferences": {
+                "autoIndexing": null, "indexingPaths": null, "excludedIndexingPaths": null
+            }}}}),
+        ] {
+            assert_eq!(file_indexing_settings(&config(value)).unwrap(), defaults);
+        }
+        let empty = config(serde_json::json!({"providers": {"files": {"preferences": {
+            "autoIndexing": false, "indexingPaths": [], "excludedIndexingPaths": []
+        }}}}));
+        let settings = file_indexing_settings(&empty).unwrap();
+        assert!(!settings.enabled);
+        assert!(
+            settings.paths.is_empty(),
+            "an explicit empty list stays empty"
+        );
+    }
 }
