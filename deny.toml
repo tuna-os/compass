@@ -36,6 +36,16 @@ ignore = [
   # smartstring: through rhai 1.26.1 (latest), for compass-script.
   # https://rustsec.org/advisories/RUSTSEC-2026-0249
   { id = "RUSTSEC-2026-0249", reason = "unmaintained smartstring via rhai 1.26.1 (latest), compass-script's engine" },
+  # zvariant and zvariant_derive: folded into zbus 6 as its `wire` module, so
+  # the only fix is the whole D-Bus stack moving to zbus 6. compass-worker-host
+  # asks for zbus 5, but so do ashpd 0.12 and 0.13, ksni, mundy, notify-rust,
+  # oo7 and system-tray, and the latest release of each still requires ^5.
+  # Bumping our own dependency alone would only add a second zbus to the tree.
+  # Both go when those crates move.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0370
+  # https://rustsec.org/advisories/RUSTSEC-2026-0372
+  { id = "RUSTSEC-2026-0370", reason = "unmaintained zvariant 5 via zbus 5, which ashpd, ksni, mundy, notify-rust, oo7 and system-tray all pin; merged into zbus 6's wire module" },
+  { id = "RUSTSEC-2026-0372", reason = "unmaintained zvariant_derive 5 via zbus 5, which ashpd, ksni, mundy, notify-rust, oo7 and system-tray all pin; merged into zbus 6" },
 ]
 
 [bans]
