@@ -124,21 +124,20 @@ pub fn open_read_only(path: &Path, key: &[u8], immutable: bool) -> rusqlite::Res
     Ok(conn)
 }
 
-/// `path` as a `file:` URI with `immutable=1`. Every byte outside the
-/// characters a URI path may hold unescaped is percent-encoded, which SQLite
-/// decodes, so a non-UTF-8 path survives the trip through a `String`.
+/// Every byte a `file:` URI path may not hold as it is: all but the unreserved
+/// characters and `/`.
+const URI_PATH: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'/')
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// `path` as a `file:` URI with `immutable=1`, percent-encoded so that `?`,
+/// `#` and `%` in a name, and a non-UTF-8 path, reach SQLite intact.
 fn immutable_uri(path: &Path) -> String {
-    use std::fmt::Write as _;
-    let mut uri = String::from("file:");
-    for &byte in path.as_os_str().as_encoded_bytes() {
-        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
-            uri.push(char::from(byte));
-        } else {
-            write!(uri, "%{byte:02x}").expect("writing to a String cannot fail");
-        }
-    }
-    uri.push_str("?immutable=1");
-    uri
+    let encoded = percent_encoding::percent_encode(path.as_os_str().as_encoded_bytes(), URI_PATH);
+    format!("file:{encoded}?immutable=1")
 }
 
 /// Set the SQLCipher key from raw bytes.
