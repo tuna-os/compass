@@ -1,8 +1,9 @@
 # Performance regression gates
 
 §8.8 asks for Suite 4 to be "every PR informational; **blocking on `main`**". #127 asks for a
-per-commit idle-RSS gate. Both use one comparator, [`scripts/ci/perf-gate.py`](../../scripts/ci/perf-gate.py),
-and one workflow, [`perf.yaml`](../../.github/workflows/perf.yaml) (#306, #307).
+per-commit idle-RSS gate, and #310 for comparable actions to be no worse than upstream Vicinae. All
+three use one comparator, [`scripts/ci/perf-gate.py`](../../scripts/ci/perf-gate.py), and one
+workflow, [`perf.yaml`](../../.github/workflows/perf.yaml) (#306, #307, #310).
 
 ## What is measured, and under which name
 
@@ -15,6 +16,7 @@ and one workflow, [`perf.yaml`](../../.github/workflows/perf.yaml) (#306, #307).
 | `engine.idle_rss_kb` (profile `flatpak`) | one reading, kB | VM tier, `launcher-rss` | recorded only |
 | `window.idle_rss_kb` (renderer `llvmpipe`) | one reading, kB | VM tier, `launcher-rss` | recorded only |
 | `window.idle_rss_kb` (a hardware renderer) | one reading, kB | `perf-gate.py measure-rss`, by hand | **not yet recorded** |
+| `versus.*`, five actions | Compass's and upstream's medians from one run | `perf.yaml`, `scripts/bench/compare.py` | yes, on `main`, against upstream ([below](#against-upstream-vicinae)) |
 
 The engine and the resident window process have separate names. The engine draws nothing, so its
 figure means the same thing in a VM and on a real machine. The window's figure is mostly the
@@ -165,6 +167,93 @@ PR that causes it:
 
 Points recorded before `after` no longer count. The metric is reported, not judged, until 30 new
 points exist. At the scheduled rate that takes about eleven days for the commonest CPU model.
+
+## Against upstream Vicinae
+
+#310 asks that every action Compass and upstream can both perform is no slower and no larger in
+Compass than in the pinned upstream release. The `upstream-compare` job in `perf.yaml` runs
+`just bench-compare` ([`scripts/bench/compare.sh`](../../scripts/bench/compare.sh)) on a hosted
+runner, and the `upstream-gate` job runs `perf-gate.py versus` on what it measured.
+
+### Same machine, same session, same action
+
+`compare.sh` verifies the v0.29.0 AppImage named in
+[`baseline.json`](../../scripts/bench/baseline.json) against its SHA-256 and builds this commit in
+release mode. `compare.py` then starts one headless Sway and cold-starts each engine in turn, five
+times each, alternating which engine goes first. Both engines index the same corpus, run under the
+same network setting and are timed by the same code. [BENCHMARKS.md](./BENCHMARKS.md) defines each
+measurement. The gated actions are `GATED` in `compare.py`:
+
+| metric | action | Compass and upstream both |
+|---|---|---|
+| `versus.ping` | warm IPC ping, ns | are timed by `head-to-head` from `compass-testkit`: one client, persistent sockets, AB/BA order, 1,000 samples after 100 warm-ups, once per run |
+| `versus.query_keystroke` | `wtype fire` until the next changed frame, ms | are timed from screenshots |
+| `versus.launch_first_frame` | exec until the first frame, ms | are timed from screenshots |
+| `versus.launch_populated` | exec until the launcher stops changing, ms | are timed from screenshots |
+| `versus.idle_rss` | process-tree RSS 5 s after the first frame, KiB | are read from `smaps_rollup` |
+
+Everything else `compare.py` measures is listed in `EXCLUDED`, with the reason it is not gated. The
+gate report prints that list on every run. Engine readiness is excluded because the probes differ:
+Compass is polled through `compass ping`, which spawns a process each time. Search over IPC is
+excluded because unmodified v0.29.0 has no `Ipc/rootQuery`, which [HEAD-TO-HEAD.md](./HEAD-TO-HEAD.md)
+explains. The fuzzy scorers are excluded because they accept different match sets and so do
+unequal work.
+
+### A point, and its series
+
+One point per action and run. Its `value` is Compass's median. Its `upstream` field holds
+upstream's median from the same run, with the repository, tag, commit and AppImage SHA-256. Its
+`env` adds `network` and `corpus` to the usual key, because upstream fetches currency rates at start
+when it has a network, and because a different corpus is a different workload. A hosted runner
+cannot run `unshare --net`, so CI's series has `network=host` for both engines. The report says so.
+
+Points are compared only when the environment key, the network, the corpus digest and the upstream
+artifact all match. Changing `baseline.json` therefore starts a new series. The artifact is
+`upstream-points-<head sha>`, and it carries `compare.py`'s `report.json` as well. The gate job
+fetches the series from up to 150 earlier `perf.yaml` runs on `main` with
+`perf-gate.py fetch --pattern 'upstream-points-*'`.
+
+### The tolerance
+
+Each point gives a ratio: Compass's median over upstream's, both from the same run. An action fails
+when this run's ratio is above
+
+$$1 + \max(4 \times 1.4826 \times \text{MAD} / \text{median},\ 1\%)$$
+
+where the median and the MAD are the ratio's, over the last **30** compatible runs on `main`. The
+gate does not judge until it has 30 such runs. That is "Compass median ≤ upstream median × (1 +
+tolerance)", with the tolerance taken from the measured run-to-run spread of the comparison itself.
+
+The ratio is used rather than either engine's own series because both engines ran on the same
+machine within minutes of each other. A slower runner slows both engines, so its effect largely
+cancels in the ratio, and the ratio's spread is the noise that remains in the comparison. Upstream's
+own series would also include the machine-to-machine spread, which would make the tolerance looser
+than the comparison needs. K = 4, the window of 30 and the 1% minimum are the regression gate's,
+for the reasons given [above](#the-tolerance-and-the-analysis-behind-it). The window includes
+Compass's own changes. That only widens the tolerance, and the regression gate covers those
+changes.
+
+`perf-gate.py analyse` replays a `versus` series in the same way, using the ratios. Rerun it once
+the hosted series has 30 runs per CPU model, before trusting the first red `main`.
+
+### What blocks
+
+The policy is the regression gate's. On a push to `main`, an action that is behind upstream by more
+than the tolerance fails `upstream-gate`. On any other event it is a warning. A run that is missing
+one of the five actions fails on any event. Until `main` has 30 compatible runs, every action is
+reported and not judged.
+
+A reset in `perf-resets.json` works for a `versus.*` metric as it does for any other metric. It
+restarts that action's ratio window. It does not let Compass stay behind upstream: once 30 new runs
+exist, the action is judged against a ratio of 1 again.
+
+The first run of `compare.py` with the gate was a local one, with three runs of each engine on a
+shared 12-core AMD EPYC with a load average of 7 to 14, so its figures are noisy. Compass was ahead
+on `ping`, at a ratio of 0.58, and on `query_keystroke`, at 0.21. It was behind on both launch
+actions, at 2.5 and 1.5, and level on `idle_rss`, at 1.004. Compass's first frame ranged from 0.5 s
+to 19 s across its three runs. This is why the gate does not judge before it has a series: one run
+on a busy machine cannot tell a real gap from noise. If the hosted series confirms the launch gap,
+`main` turns red on those two actions as soon as the series is long enough to judge.
 
 ## The resident window on real hardware
 
