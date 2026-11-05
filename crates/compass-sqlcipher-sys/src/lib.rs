@@ -95,6 +95,52 @@ pub fn open(path: &Path, key: &[u8]) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Open an existing database at `path` for reading only, keyed with `key`,
+/// with `fuzzy_trigram` registered — for diagnostics that must not change the
+/// file.
+///
+/// Unlike [`open`] this never creates the file and applies none of the
+/// clipboard pragmas: switching the journal mode is a write. With `immutable`
+/// set SQLite takes no locks and neither reads nor creates the `-wal` and
+/// `-shm` sidecars; that is only right while no writer has the file open,
+/// which a caller knows from the sidecars being absent. Without it, an existing
+/// `-shm` may be updated for reader coordination, as any reader does.
+///
+/// # Errors
+///
+/// As [`open`]; a missing file is `SQLITE_CANTOPEN`.
+pub fn open_read_only(path: &Path, key: &[u8], immutable: bool) -> rusqlite::Result<Connection> {
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = if immutable {
+        Connection::open_with_flags(immutable_uri(path), flags | OpenFlags::SQLITE_OPEN_URI)?
+    } else {
+        Connection::open_with_flags(path, flags)?
+    };
+    conn.busy_timeout(BUSY_TIMEOUT)?;
+    if !key.is_empty() {
+        set_key(&conn, key)?;
+    }
+    register_tokenizer(&conn)?;
+    Ok(conn)
+}
+
+/// `path` as a `file:` URI with `immutable=1`. Every byte outside the
+/// characters a URI path may hold unescaped is percent-encoded, which SQLite
+/// decodes, so a non-UTF-8 path survives the trip through a `String`.
+fn immutable_uri(path: &Path) -> String {
+    use std::fmt::Write as _;
+    let mut uri = String::from("file:");
+    for &byte in path.as_os_str().as_encoded_bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            write!(uri, "%{byte:02x}").expect("writing to a String cannot fail");
+        }
+    }
+    uri.push_str("?immutable=1");
+    uri
+}
+
 /// Set the SQLCipher key from raw bytes.
 ///
 /// `PRAGMA` does not accept bound parameters, so the key has to be part of the
