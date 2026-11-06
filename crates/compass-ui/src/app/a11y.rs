@@ -242,6 +242,11 @@ impl LauncherApp {
             };
         }
         if self.results.is_empty() {
+            // Typing clears the list and the engine answers later; what is
+            // described meanwhile is what was there (`Semantics::settle`).
+            if self.search_task.is_some() {
+                return (Body::Pending, None);
+            }
             let status = if self.query.is_empty() {
                 "Type to search"
             } else {

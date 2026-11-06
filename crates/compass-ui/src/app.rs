@@ -11302,6 +11302,42 @@ mod tests {
         }
     }
 
+    /// Found by the Orca gate (#305): typing empties the list until the
+    /// engine answers, and the status line said "No results" in between, so
+    /// a screen reader announced it on every keystroke before the count, and
+    /// the list was taken off the bus and put back each time. Meanwhile the
+    /// window says it is waiting, and the tree keeps what it last said.
+    #[test]
+    fn a_search_the_engine_has_not_answered_keeps_the_last_description() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["applications:alpha".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let pending = app.update(Message::QueryChanged("Alpha".to_owned()));
+        let before = crate::semantics::Semantics {
+            status: Some("2 results".to_owned()),
+            ..crate::semantics::Semantics::default()
+        };
+        let semantics = app.semantics();
+        assert_eq!(semantics.body, crate::semantics::Body::Pending);
+        assert_eq!(semantics.status, None);
+        let settled = semantics.settle(Some(&before));
+        assert_eq!(settled.status.as_deref(), Some("2 results"));
+        assert_eq!(settled.search.unwrap().value, "Alpha");
+        for message in task_messages(pending) {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.semantics().status.as_deref(), Some("1 result"));
+        let _pending = app.update(Message::QueryChanged("Nothing".to_owned()));
+        let _ = app.update(Message::SearchCompleted {
+            generation: app.search_generation,
+            result: Ok(Vec::new()),
+        });
+        assert_eq!(app.semantics().status.as_deref(), Some("No results"));
+    }
+
     #[test]
     fn opening_or_clearing_an_attached_window_requests_initial_suggestions() {
         let dir = tempfile::tempdir().unwrap();
