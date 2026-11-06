@@ -1443,7 +1443,7 @@ extension host rows were green); the tests are `compass_sandbox::home::tests::*`
 `a_link_to_a_key_or_out_of_the_list_grants_nothing`, `a_link_to_another_listed_place_is_followed`,
 `a_home_that_is_itself_a_link_is_followed`, `the_wrong_kind_is_refused`,
 `the_list_is_the_decided_five_and_only_ssh_config_is_a_file`),
-`extension_runner::tests::the_policy_reads_only_the_allowlisted_home_paths_and_never_writes_them`
+`extension_runner::sandbox::tests::the_policy_reads_only_the_allowlisted_home_paths_and_never_writes_them`
 and, through the real `compass-sandbox-exec`,
 `an_extension_reads_the_home_allowlist_and_nothing_else_of_home` (the allowed files read; the key
 beside `~/.ssh/config`, another file of `$HOME` and the target of a linked-out `~/.config/sway`
