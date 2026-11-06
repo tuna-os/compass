@@ -526,3 +526,555 @@ pub(super) fn launch_task(
         Message::Launched,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::flags::AppFlags;
+    use crate::app::test_support::{
+        LaunchedEntries, RecordingLaunchTarget, TestBackend, app, click, extension_app, index,
+        settle, shortcuts_app, store_backend, task_messages,
+    };
+    use crate::message::Direction;
+    use compass_core::{AppIndex, AppItem};
+    use iced::window;
+    use std::fs;
+
+    #[test]
+    fn a_moved_catalog_generation_rescans_and_the_same_one_does_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        fs::write(
+            dir.path().join("zephyr.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Zephyr\nExec=/bin/true\n",
+        )
+        .expect("write entry");
+        let _ = app.update(Message::CatalogGeneration(Ok(0)));
+        assert!(app.app_index.get("zephyr.desktop").is_none(), "unchanged");
+
+        let _ = app.update(Message::CatalogGeneration(Ok(1)));
+        assert!(app.app_index.get("zephyr.desktop").is_some());
+        let _ = app.update(Message::QueryChanged("zeph".into()));
+        assert_eq!(
+            app.selected_item().map(AppItem::key),
+            Some("zephyr.desktop")
+        );
+
+        fs::remove_file(dir.path().join("zephyr.desktop")).expect("remove");
+        let _ = app.update(Message::CatalogGeneration(Ok(1)));
+        assert!(
+            app.app_index.get("zephyr.desktop").is_some(),
+            "same generation"
+        );
+        let _ = app.update(Message::CatalogGeneration(Err("no engine".into())));
+        let _ = app.update(Message::CatalogGeneration(Ok(2)));
+        assert!(app.app_index.get("zephyr.desktop").is_none());
+    }
+
+    fn deliver(app: &mut LauncherApp, messages: Vec<Message>) {
+        for message in messages {
+            let task = app.update(message);
+            settle(app, task);
+        }
+    }
+
+    /// The desktop entries launched, by name.
+    /// Four applications, all matching "Application", the first selected.
+    fn four_applications(dir: &std::path::Path) -> LauncherApp {
+        for i in 0..4 {
+            fs::write(
+                dir.join(format!("app-{i:02}.desktop")),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName=Application {i:02}\nExec=/bin/true\n"
+                ),
+            )
+            .expect("write entry");
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        app.query = "Application".into();
+        app.search();
+        assert!(app.results.len() >= 4, "{}", app.state_line());
+        assert_eq!(app.selected, 0);
+        app
+    }
+
+    #[test]
+    fn clicking_a_root_row_launches_that_row_not_the_selected_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = Arc::new(LaunchedEntries::default());
+        let mut app = four_applications(dir.path()).with_launcher(launcher.clone());
+        let (position, name) = app
+            .results
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(position, row)| match row {
+                RootRow::App(index) => {
+                    Some((position, app.app_index.items()[*index].name().to_owned()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no application below the first row: {}", app.state_line()));
+
+        let messages = click(&app, &name);
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::ResultClicked(p) if *p == position)),
+            "{messages:?}"
+        );
+        deliver(&mut app, messages);
+        assert_eq!(launcher.0.lock().unwrap().as_slice(), [name]);
+    }
+
+    #[test]
+    fn clicking_a_root_command_opens_it_and_a_store_row_opens_that_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = store_backend(dir.path());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        app.view.view_memory.set(
+            crate::compass_pages::intro_key(crate::backend::Store::Vicinae),
+            "true",
+        );
+        app.query = "extension store".into();
+        app.search();
+        let title = app
+            .results
+            .iter()
+            .find_map(|row| match row {
+                RootRow::Command(command) if command.id() == "commands:store" => {
+                    Some(command.title)
+                }
+                _ => None,
+            })
+            .expect("the store is a root result");
+
+        let messages = click(&app, title);
+        deliver(&mut app, messages);
+        let Page::Store(page) = &app.page else {
+            panic!("the click did not open the store: {}", app.state_line());
+        };
+        assert_eq!(page.selected, 0);
+        assert_eq!(page.rows[1].title, "Timer");
+
+        let messages = click(&app, "Timer");
+        deliver(&mut app, messages);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("the click did not open the row: {}", app.state_line());
+        };
+        assert_eq!(detail.title, "Vicinae Store - Timer");
+    }
+
+    /// Hovering sends nothing and selects nothing: the C++ list moves its
+    /// selection only on a click or a key (`SelectableDelegate.qml`).
+    #[test]
+    fn hovering_a_root_row_does_not_move_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = four_applications(dir.path());
+        let RootRow::App(index) = app.results[1] else {
+            panic!("the second row is not an application: {}", app.state_line())
+        };
+        let name = app.app_index.items()[index].name().to_owned();
+        let mut ui = iced_test::simulator(app.view());
+        let centre = ui
+            .find(name.as_str())
+            .expect("the row is drawn")
+            .bounds()
+            .center();
+        ui.point_at(centre);
+        ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position: centre,
+        })]);
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(messages.is_empty(), "{messages:?}");
+        assert_eq!(app.selected, 0);
+    }
+
+    fn backend_app(dir: &std::path::Path, backend: Arc<TestBackend>) -> LauncherApp {
+        for (id, name) in [("alpha", "Alpha Editor"), ("beta", "Beta Editor")] {
+            std::fs::write(
+                dir.join(format!("{id}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName={name}\nExec=unused\n"),
+            )
+            .unwrap();
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        app.apply(AppFlags {
+            backend: Some(backend),
+            ..AppFlags::default()
+        });
+        app
+    }
+
+    #[test]
+    fn backend_order_is_used_and_old_queries_cannot_replace_new_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec![
+                "applications:beta".to_owned(),
+                "applications:alpha".to_owned(),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let old = app.update(Message::QueryChanged("Ed".to_owned()));
+        let old_generation = app.search_generation;
+        let current = app.update(Message::QueryChanged("Editor".to_owned()));
+        assert!(
+            task_messages(old).is_empty(),
+            "superseded request is aborted"
+        );
+        assert!(
+            app.selected_item().is_none(),
+            "old results cannot be launched while pending"
+        );
+        for message in task_messages(current) {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let _ = app.update(Message::SearchCompleted {
+            generation: old_generation,
+            result: Ok(vec!["applications:alpha".to_owned()]),
+        });
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let generation = app.search_generation;
+        let _ = app.update(Message::QueryChanged(String::new()));
+        let _ = app.update(Message::SearchCompleted {
+            generation,
+            result: Ok(vec!["applications:alpha".to_owned()]),
+        });
+        assert!(app.results.is_empty());
+    }
+
+    #[test]
+    fn backend_errors_or_unknown_keys_do_not_restore_stale_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = backend_app(dir.path(), Arc::new(TestBackend::default()));
+        for result in [
+            Err("offline".to_owned()),
+            Ok(vec!["applications:missing".to_owned()]),
+        ] {
+            let _pending = app.update(Message::QueryChanged("Editor".to_owned()));
+            let _ = app.update(Message::SearchCompleted {
+                generation: app.search_generation,
+                result,
+            });
+            assert!(app.results.is_empty());
+            assert!(app.error.is_some());
+        }
+    }
+
+    /// Found by the Orca gate (#305): typing empties the list until the
+    /// engine answers, and the status line said "No results" in between, so
+    /// a screen reader announced it on every keystroke before the count, and
+    /// the list was taken off the bus and put back each time. Meanwhile the
+    /// window says it is waiting, and the tree keeps what it last said.
+    #[test]
+    fn a_search_the_engine_has_not_answered_keeps_the_last_description() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["applications:alpha".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let pending = app.update(Message::QueryChanged("Alpha".to_owned()));
+        let before = crate::semantics::Semantics {
+            status: Some("2 results".to_owned()),
+            ..crate::semantics::Semantics::default()
+        };
+        let semantics = app.semantics();
+        assert_eq!(semantics.body, crate::semantics::Body::Pending);
+        assert_eq!(semantics.status, None);
+        let settled = semantics.settle(Some(&before));
+        assert_eq!(settled.status.as_deref(), Some("2 results"));
+        assert_eq!(settled.search.unwrap().value, "Alpha");
+        let _ = app.update(Message::SearchCompleted {
+            generation: app.search_generation,
+            result: Ok(vec!["applications:alpha".to_owned()]),
+        });
+        drop(pending);
+        // Answered, but not yet stood long enough to be announced.
+        assert_eq!(app.semantics().body, crate::semantics::Body::Pending);
+        let _ = app.update(Message::ResultsSettled(app.search_generation));
+        assert_eq!(app.semantics().status.as_deref(), Some("1 result"));
+        let _pending = app.update(Message::QueryChanged("Nothing".to_owned()));
+        let _ = app.update(Message::SearchCompleted {
+            generation: app.search_generation,
+            result: Ok(Vec::new()),
+        });
+        // A timer from an earlier answer does not release this one.
+        let _ = app.update(Message::ResultsSettled(
+            app.search_generation.wrapping_sub(1),
+        ));
+        assert_eq!(app.semantics().body, crate::semantics::Body::Pending);
+        let _ = app.update(Message::ResultsSettled(app.search_generation));
+        assert_eq!(app.semantics().status.as_deref(), Some("No results"));
+    }
+
+    #[test]
+    fn opening_or_clearing_an_attached_window_requests_initial_suggestions() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec![
+                "applications:beta".to_owned(),
+                "applications:alpha".to_owned(),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let opened = app.update(Message::Opened(window::Id::unique()));
+        for message in task_messages(opened) {
+            let _ = app.update(message);
+        }
+        assert!(app.query.is_empty());
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let pending = app.update(Message::QueryChanged("Ed".to_owned()));
+        let cleared = app.update(Message::QueryChanged(String::new()));
+        assert!(task_messages(pending).is_empty());
+        for message in task_messages(cleared) {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.results.len(), 2);
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+    }
+
+    #[test]
+    fn only_successful_launches_report_the_captured_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["applications:beta".to_owned()],
+            fail_history: true,
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend.clone());
+        let query = app.update(Message::QueryChanged("Editor".to_owned()));
+        for message in task_messages(query) {
+            let _ = app.update(message);
+        }
+        let failed = app.update(Message::LaunchSelected);
+        assert!(matches!(
+            &task_messages(failed)[0],
+            Message::Launched(Err(_))
+        ));
+        assert!(backend.recorded.lock().unwrap().is_empty());
+        app.launcher = Arc::new(RecordingLaunchTarget::default());
+        let launched = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::QueryChanged(String::new()));
+        assert!(
+            matches!(&task_messages(launched)[0], Message::Launched(Ok(()))),
+            "history failure is not a launch failure"
+        );
+        assert_eq!(*backend.recorded.lock().unwrap(), ["beta.desktop"]);
+    }
+
+    #[test]
+    fn typing_ranks_and_selects_the_first_row() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fire".to_owned()));
+        assert_eq!(app.selected, 0);
+        assert_eq!(
+            app.selected_item().map(compass_core::AppItem::name),
+            Some("Firefox")
+        );
+    }
+
+    #[test]
+    fn a_new_query_resets_the_selection() {
+        // Otherwise the old position points into a different list and the user
+        // launches something they never looked at.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        // "fi" matches Files and Firefox. A single "e" matches nothing at all:
+        // the coherence rule (ADR-0006) drops a one-character query that is not
+        // a word prefix, which is correct and cost this test a first draft.
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        let _ = app.update(Message::MoveSelection(Direction::Down));
+        assert_ne!(app.selected, 0, "precondition: the selection moved");
+        let _ = app.update(Message::QueryChanged("fire".to_owned()));
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn an_empty_query_shows_nothing_and_selects_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fire".to_owned()));
+        let _ = app.update(Message::QueryChanged("   ".to_owned()));
+        assert!(app.results.is_empty());
+        assert!(app.selected_item().is_none());
+    }
+
+    #[test]
+    fn launching_with_no_results_does_nothing_rather_than_panicking() {
+        // Enter on an empty list is the most ordinary way to reach this.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("zzzznotathing".to_owned()));
+        assert!(app.results.is_empty());
+        let _ = app.update(Message::LaunchSelected);
+    }
+
+    #[test]
+    fn a_failed_launch_is_shown_and_cleared_by_the_next_keystroke() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::Launched(Err("no Exec key".to_owned())));
+        assert_eq!(app.error.as_deref(), Some("could not launch: no Exec key"));
+        let _ = app.update(Message::QueryChanged("f".to_owned()));
+        assert!(app.error.is_none(), "a new query should clear the error");
+    }
+
+    #[test]
+    fn fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.fallbacks = vec![
+            "shortcuts:sct-news".into(),
+            "shortcuts:sct-docs".into(),
+            "files:search".into(),
+        ];
+        app.query = "serde".into();
+        app.search();
+        let fallbacks: Vec<RootRow> = app
+            .results
+            .iter()
+            .copied()
+            .filter(|row| matches!(row, RootRow::Fallback(_)))
+            .collect();
+        let docs = app
+            .app_index
+            .shortcuts()
+            .iter()
+            .position(|shortcut| shortcut.id == "sct-docs")
+            .unwrap();
+        assert!(
+            matches!(
+                fallbacks.as_slice(),
+                [
+                    RootRow::Fallback(Fallback::Shortcut(at)),
+                    RootRow::Fallback(Fallback::Command(_)),
+                ] if *at == docs
+            ),
+            "a shortcut without exactly one argument is no fallback: {fallbacks:?}"
+        );
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| *row == fallbacks[0])
+            .unwrap();
+        assert!(
+            app.state_line()
+                .contains("selected_title=\"Crate Docs\" fallback")
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().last(),
+            Some(&("sct-docs".to_owned(), vec!["serde".to_owned()]))
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.fallbacks = vec!["@someone/hello:write".into()];
+        app.query = "zzzz".into();
+        app.search();
+        assert_eq!(
+            app.results.last(),
+            Some(&RootRow::Fallback(Fallback::Extension(0)))
+        );
+        app.selected = app.results.len() - 1;
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.launched.lock().unwrap().as_slice(),
+            [("@someone/hello:write".to_owned(), Some("zzzz".to_owned()))]
+        );
+    }
+
+    #[test]
+    fn a_calculation_that_matches_nothing_is_answered_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("12*3+6".to_owned()));
+        assert_eq!(app.results, [RootRow::Calculator], "{}", app.state_line());
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("42").is_ok() && ui.find("12*3+6").is_ok());
+        }
+        assert!(app.state_line().contains("selected_title=\"42\""));
+
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        assert!(
+            !app.results.contains(&RootRow::Calculator),
+            "a query that matches applications is not a calculation"
+        );
+        let _ = app.update(Message::QueryChanged("=2^10".to_owned()));
+        assert_eq!(app.results.first(), Some(&RootRow::Calculator));
+    }
+
+    #[test]
+    fn moving_the_selection_lands_on_the_item_that_gets_launched() {
+        // The property that matters: what the caret points at in the view is
+        // what LaunchSelected resolves. A off-by-one here launches the wrong
+        // application, silently and every time.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        let expected: Vec<String> = app
+            .results
+            .iter()
+            .filter_map(|row| match row {
+                RootRow::App(i) => app.app_index.items().get(*i),
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
+                | RootRow::Calculator
+                | RootRow::Update => None,
+            })
+            .map(|item| item.name().to_owned())
+            .collect();
+        assert!(expected.len() > 1, "need several rows: {expected:?}");
+
+        for (position, name) in expected.iter().enumerate() {
+            assert_eq!(app.selected, position);
+            assert_eq!(
+                app.selected_item().map(compass_core::AppItem::name),
+                Some(name.as_str())
+            );
+            let _ = app.update(Message::MoveSelection(Direction::Down));
+        }
+        // Commands rank after the applications here; walk past them too.
+        for _ in expected.len()..app.results.len() {
+            let _ = app.update(Message::MoveSelection(Direction::Down));
+        }
+        assert_eq!(
+            app.selected,
+            app.results.len() - 1,
+            "and it stayed on the last row, because wrap_navigation is off by default"
+        );
+    }
+
+    #[test]
+    fn a_backend_answer_naming_a_command_becomes_a_command_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec![
+                "commands:clipboard-history".into(),
+                "applications:alpha".into(),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let task = app.update(Message::QueryChanged("a".into()));
+        settle(&mut app, task);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(matches!(app.results.first(), Some(RootRow::Command(_))));
+        assert!(matches!(app.results.get(1), Some(RootRow::App(_))));
+    }
+}

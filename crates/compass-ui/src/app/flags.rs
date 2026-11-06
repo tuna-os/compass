@@ -310,3 +310,142 @@ impl LauncherApp {
         app.config_link = flags.config_link;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::{app, theme_name};
+    use crate::message::Message;
+    use compass_core::AppItem;
+
+    #[test]
+    fn standalone_search_respects_startup_root_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        for provider_enabled in [true, false] {
+            let config = compass_core::Config::parse(
+                &format!(
+                    r#"{{"providers":{{"applications":{{"enabled":{provider_enabled},"entrypoints":{{
+                        "firefox":{{"enabled":false}},
+                        "terminal":{{"enabled":true,"alias":"shellwork"}}
+                    }}}}}}}}"#
+                ),
+                &dir.path().join("config.json"),
+            )
+            .unwrap();
+            app.apply(AppFlags {
+                root_config: config.root_config(),
+                ..AppFlags::default()
+            });
+            app.query = "Firefox".into();
+            app.search();
+            assert!(app.results.is_empty());
+            let _ = app.update(Message::QueryChanged("shellwork".into()));
+            assert_eq!(app.results.len(), usize::from(provider_enabled));
+            if provider_enabled {
+                assert_eq!(app.selected_item().map(AppItem::name), Some("Terminal"));
+            }
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                for appearance in Appearance::ALL {
+                    app.view.appearance = appearance;
+                    let mut ui = iced_test::Simulator::with_size(
+                        iced::Settings::default(),
+                        iced::Size::new(800.0, 320.0),
+                        app.view(),
+                    );
+                    assert!(
+                        ui.snapshot(&app.theme())
+                            .unwrap()
+                            .matches_image(std::path::PathBuf::from(&directory).join(format!(
+                                "{}-standalone-provider-{provider_enabled}.png",
+                                appearance.name()
+                            )))
+                            .unwrap()
+                    );
+                }
+            }
+        }
+        app.apply(AppFlags::default());
+        let _ = app.update(Message::QueryChanged("shellwork".into()));
+        assert!(
+            app.results.is_empty(),
+            "clearing settings removes the alias"
+        );
+        app.query = "Firefox".into();
+        app.search();
+        assert_eq!(app.results.len(), 1);
+    }
+
+    #[test]
+    fn the_starting_appearance_is_what_the_flags_say() {
+        for appearance in Appearance::ALL {
+            let (app, _task) = LauncherApp::new(AppFlags {
+                appearance,
+                ..AppFlags::default()
+            });
+            assert_eq!(theme_name(&app), design::theme(appearance).to_string());
+        }
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+    use crate::preset;
+    use crate::preset::Preset;
+    use compass_core::AppIndex;
+
+    /// A launcher built from flags, through the code `compass` uses.
+    ///
+    /// `apply` rather than a hand-written assignment list: a helper that set
+    /// the fields itself would pass while the real copying silently stopped,
+    /// which is the whole mutation these tests exist to catch. It was written
+    /// that way first and the control caught it.
+    fn app_with(preset_name: &str, icons: Option<bool>) -> LauncherApp {
+        let resolved = preset::resolve(Some(preset_name), icons, None);
+        let mut app = LauncherApp::with_index(AppIndex::builder().build());
+        app.apply(AppFlags {
+            icons: resolved.icons,
+            appearance_preset: resolved,
+            ..AppFlags::default()
+        });
+        app
+    }
+
+    #[test]
+    fn the_preset_reaches_the_state_that_draws() {
+        // The wiring, not the resolver: `preset::resolve` is tested on its
+        // own, and this is the half that would silently do nothing if the
+        // flags stopped being copied across.
+        let rofi = app_with("rofi", None);
+        assert_eq!(rofi.geometry.row_height, Preset::Rofi.geometry().row_height);
+        assert_eq!(rofi.geometry.card_radius, 0);
+        assert!(!rofi.icons);
+        assert!(!rofi.field_rule);
+        assert!(!rofi.subtitles, "the dense preset draws one line per row");
+
+        let flow = app_with("flow", None);
+        assert!(flow.field_rule, "flow draws the rule under the field");
+        assert!(flow.icons);
+    }
+
+    #[test]
+    fn the_default_launcher_draws_the_shipped_geometry() {
+        // `with_index` is what every other test builds, so a preset layer that
+        // changed the default would change all of them -- and move the VM
+        // tier's containment box with no commit saying so.
+        let app = LauncherApp::with_index(AppIndex::builder().build());
+        assert_eq!(
+            format!("{:?}", app.geometry),
+            format!("{:?}", design::GEOMETRY)
+        );
+        assert!(!app.field_rule);
+    }
+
+    #[test]
+    fn a_preset_and_an_explicit_key_both_reach_the_app() {
+        // raycast turns icons on; the explicit key turns them back off.
+        assert!(app_with("raycast", None).icons);
+        assert!(!app_with("raycast", Some(false)).icons);
+    }
+}

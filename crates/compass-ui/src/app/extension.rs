@@ -735,3 +735,6 @@ impl LauncherApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

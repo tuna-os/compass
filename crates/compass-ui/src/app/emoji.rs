@@ -336,7 +336,10 @@ impl LauncherApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::RootRow;
+    use crate::app::test_support::{TestBackend, app, pressed, settle};
     use crate::semantics::Body;
+    use std::sync::Arc;
 
     #[test]
     fn the_picker_names_each_glyph_with_its_category_and_says_when_none_match() {
@@ -372,5 +375,166 @@ mod tests {
             semantics.status.as_deref(),
             Some("No matching emojis or symbols")
         );
+    }
+
+    #[test]
+    fn the_emoji_picker_opens_from_root_search_and_filters() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("emoji".to_owned()));
+        let position = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "search-emojis"))
+            .expect("the command is in root search");
+        app.selected = position;
+        let _ = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::EmojiQueryChanged("thumbs up".into()));
+        let Page::Emoji(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.selected_glyph().map(|g| g.character), Some("👍"));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("thumbs up").is_ok());
+    }
+
+    #[test]
+    fn the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file() {
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("emojis").join("emojis.json");
+        let mut app = app(dir.path());
+        app.glyph_path = Some(path.clone());
+        app.emoji_skin_tone = Some("dark".to_owned());
+        let command = compass_core::commands::by_id("commands:search-emojis").expect("command");
+        let _ = app.open_command(command);
+
+        // A pick is copied in the picker's tone and counted.
+        let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+        let copied: Vec<String> =
+            iced_winit::runtime::task::into_stream(app.update(pressed(Named::Enter)))
+                .map(|stream| {
+                    iced::futures::executor::block_on(iced::futures::StreamExt::collect::<Vec<_>>(
+                        stream,
+                    ))
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|action| match action {
+                    iced_winit::runtime::Action::Clipboard(
+                        iced_winit::runtime::clipboard::Action::Write { contents, .. },
+                    ) => Some(contents),
+                    _ => None,
+                })
+                .collect();
+        assert_eq!(copied, ["👋\u{1F3FF}"]);
+        let _ = app.open_command(command);
+        let Page::Emoji(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.recent, 1, "the pick is recently used");
+
+        // Pin from the panel.
+        let _ = app.update(Message::EmojiQueryChanged("pizza".into()));
+        let _ = app.update(Message::TogglePanel);
+        let pin = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Pin emoji"))
+            .expect("the panel offers to pin");
+        let _ = app.update(Message::PanelClicked(pin));
+
+        // A keyword of one's own, through the form and back to the picker.
+        let _ = app.update(Message::TogglePanel);
+        let edit = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Edit keyword"))
+            .expect("the panel offers the keyword form");
+        let _ = app.update(Message::PanelClicked(edit));
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::GlyphKeywords),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("qqsupper".into()),
+        ));
+        let _ = app.update(Message::PreferencesSubmit);
+        let Page::Emoji(page) = &app.page else {
+            panic!("back in the picker: {}", app.state_line());
+        };
+        assert_eq!(page.query, "pizza", "the picker comes back as it was");
+
+        let stored = compass_core::glyph_service::GlyphService::load_file(&path);
+        let pizza = stored.find("🍕").expect("pizza is remembered");
+        assert!(pizza.pinned_at.is_some());
+        assert_eq!(pizza.keyword.as_deref(), Some("qqsupper"));
+        assert_eq!(stored.find("👋").map(|wave| wave.visit_count), Some(1));
+    }
+
+    #[test]
+    fn the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot() {
+        use iced::keyboard::key::Named;
+        let command = compass_core::commands::by_id("commands:search-emojis").expect("command");
+        let picker = |backend: Arc<TestBackend>, default_action: &str| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let mut app = app(dir.path());
+            app.glyph_path = Some(dir.path().join("emojis.json"));
+            app.backend = Some(backend);
+            app.emoji_default_action = default_action.to_owned();
+            let _ = app.open_command(command);
+            let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+            (app, dir)
+        };
+
+        // Paste is the default: first in the panel, on Enter, and nothing is
+        // copied by the window.
+        let backend = Arc::new(TestBackend::default());
+        let (mut app, _dir) = picker(backend.clone(), "paste");
+        let _ = app.update(Message::TogglePanel);
+        let first = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.sections.first()?.actions.first().cloned())
+            .expect("an action");
+        assert_eq!(first.title, "Paste to active window");
+        assert_eq!(first.shortcut.as_deref(), Some("enter"));
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(pressed(Named::Enter));
+        let copied = settle(&mut app, task);
+        assert_eq!(backend.pasted.lock().unwrap().as_slice(), ["👋"]);
+        assert!(copied.is_empty(), "{copied:?}");
+        let Page::Root = app.page else {
+            panic!("the picker hides once pasted: {}", app.state_line());
+        };
+
+        // Refused (no Shell extension): the glyph is copied instead.
+        let backend = Arc::new(TestBackend {
+            refuse_paste: true,
+            ..TestBackend::default()
+        });
+        let (mut app, _dir) = picker(backend.clone(), "paste");
+        let task = app.update(pressed(Named::Enter));
+        assert_eq!(settle(&mut app, task), ["👋"]);
+        assert!(backend.pasted.lock().unwrap().is_empty());
+
+        // `defaultAction: copy` puts copy first and on Enter.
+        let backend = Arc::new(TestBackend::default());
+        let (mut app, _dir) = picker(backend.clone(), "copy");
+        let task = app.update(pressed(Named::Enter));
+        assert_eq!(settle(&mut app, task), ["👋"]);
+        assert!(backend.pasted.lock().unwrap().is_empty());
+        let _ = app.open_command(command);
+        let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(titles[..2], ["Copy", "Paste to active window"]);
     }
 }

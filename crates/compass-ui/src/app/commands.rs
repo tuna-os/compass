@@ -157,3 +157,91 @@ impl LauncherApp {
         Task::batch([task, focus_search()])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::RootRow;
+    use crate::app::test_support::{TestBackend, extension_app, pressed, task_messages};
+    use std::sync::Arc;
+
+    #[test]
+    fn a_power_command_asks_first_and_only_a_yes_runs_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:reboot".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let open = |app: &mut LauncherApp| {
+            for message in task_messages(app.update(Message::QueryChanged("reboot".into()))) {
+                let _ = app.update(message);
+            }
+            app.selected = app
+                .results
+                .iter()
+                .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "reboot"))
+                .expect("Reboot System is in root search");
+            let _ = app.update(Message::LaunchSelected);
+        };
+        open(&mut app);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Enter: Reboot System    Esc: cancel").is_ok());
+        }
+        let cancelled = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.power_confirm.is_none());
+        assert!(
+            cancelled.units() > 0,
+            "Escape gives the search field its focus back (P-03)"
+        );
+        assert!(
+            backend.powered.lock().unwrap().is_empty(),
+            "Escape runs nothing"
+        );
+
+        open(&mut app);
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+    }
+
+    #[test]
+    fn the_confirm_preference_decides_whether_a_power_command_asks() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:reboot".to_owned(), "commands:lock".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.power_asks = [("reboot".to_owned(), false), ("lock".to_owned(), true)].into();
+        let launch = |app: &mut LauncherApp, query: &str, entrypoint: &str| {
+            for message in task_messages(app.update(Message::QueryChanged(query.into()))) {
+                let _ = app.update(message);
+            }
+            app.selected = app
+                .results
+                .iter()
+                .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == entrypoint))
+                .expect("the command is in root search");
+            let mut pending = task_messages(app.update(Message::LaunchSelected));
+            while let Some(message) = pending.pop() {
+                pending.extend(task_messages(app.update(message)));
+            }
+        };
+
+        launch(&mut app, "reboot", "reboot");
+        assert!(app.power_confirm.is_none(), "reboot was told not to ask");
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+
+        launch(&mut app, "lock", "lock");
+        assert_eq!(
+            app.power_confirm.map(|power| power.id),
+            Some("lock"),
+            "lock was told to ask, though by default it does not"
+        );
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+    }
+}

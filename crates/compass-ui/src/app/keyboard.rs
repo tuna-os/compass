@@ -614,3 +614,311 @@ pub(super) fn extension_chord(
     }
     Some((mods, name))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::{app, app_with_rows, chord, index, pressed, with_resident_hud};
+
+    #[test]
+    fn escape_clears_the_search_text_before_it_hides() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let _ = app.update(Message::QueryChanged("fire".into()));
+        app.window_focused = true;
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert_eq!(app.query, "", "the first Escape clears the text");
+        assert!(app.window_focused, "and does not hide");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.window_focused, "the second hides");
+    }
+
+    /// Builds a `KeyPressed` for a named key, as the subscription delivers it.
+    /// A `Ctrl`+`digit` press. `chord` below builds it; this names the intent.
+    pub(super) fn ctrl_digit(digit: &str) -> Message {
+        chord(digit, iced::keyboard::Modifiers::CTRL)
+    }
+
+    #[test]
+    fn the_vim_chords_move_the_selection_because_they_are_the_linux_default() {
+        // `KeyBindingService::getMode` falls back to vim off macOS, so a user
+        // who has configured nothing still expects Ctrl+J and Ctrl+K to work.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+        assert_eq!(app.selected, 0);
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "Ctrl+J moved down");
+
+        let _ = app.update(chord("k", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0, "and Ctrl+K moved back");
+    }
+
+    #[test]
+    fn a_bare_letter_is_not_a_chord() {
+        // The negative that matters most: a handler that ignored modifiers
+        // would make the search field unusable, because every `j` typed would
+        // also move the selection.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::empty()));
+        assert_eq!(app.selected, 0, "a bare `j` moved the selection");
+    }
+
+    #[test]
+    fn a_chord_from_another_scheme_does_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Emacs;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0, "Ctrl+J is vim's, not emacs'");
+
+        let _ = app.update(chord("n", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "Ctrl+N is emacs' down");
+    }
+
+    #[test]
+    fn the_horizontal_chords_do_nothing_in_a_one_column_list() {
+        // Recognised by `compass-core`, dropped here on purpose rather than
+        // bound to something they do not mean.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("l", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(chord("h", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn the_arrows_move_the_selection_through_the_keyboard_subscription() {
+        // Goes through `Message::Keyboard` rather than `Message::MoveSelection`
+        // on purpose: the direct path is covered above, and what this covers is
+        // the match arm that routes a key to it. That arm is what a change to
+        // the subscription puts at risk.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        assert!(app.results.len() > 1, "need several rows to move between");
+        assert_eq!(app.selected, 0);
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(app.selected, 1, "ArrowDown moved down");
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(app.selected, 0, "and ArrowUp moved back");
+    }
+
+    #[test]
+    fn a_printable_key_from_the_subscription_does_not_also_type() {
+        // THE CONTROL FOR HANDLING A KEY TWICE.
+        //
+        // `subscription` reads every keyboard event, including ones the search
+        // field consumed, so that Escape survives the field being focused. The
+        // risk that buys is double handling: if `update` ever grew an arm that
+        // appended printable keys to the query, every character would arrive
+        // twice -- once here and once through the field's `on_input` -- and
+        // "fi" would be typed as "ffii".
+        //
+        // Nothing here can observe `on_input`, which Iced calls; what it can
+        // observe is that this path contributes nothing on its own.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        let before = app.query.clone();
+
+        let _ = app.update(Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Character("x".into()),
+            modified_key: iced::keyboard::Key::Character("x".into()),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::default(),
+            text: Some("x".into()),
+            repeat: false,
+        }));
+
+        assert_eq!(app.query, before, "the query is the field's to change");
+    }
+}
+
+#[cfg(test)]
+mod quick_launch_tests {
+    use super::*;
+    use crate::app::RootRow;
+    use crate::app::flags::AppFlags;
+    use iced::keyboard::{Key, Modifiers};
+
+    #[test]
+    fn ctrl_one_through_nine_are_positions_counting_from_zero() {
+        for (digit, want) in [("1", 0), ("2", 1), ("5", 4), ("9", 8)] {
+            assert_eq!(
+                quick_launch_position(Key::Character(digit), Modifiers::CTRL),
+                Some(want),
+                "Ctrl+{digit}"
+            );
+        }
+    }
+
+    #[test]
+    fn there_is_no_ctrl_zero() {
+        // The digits are one-based because the rows are. A zero would have to
+        // mean either "the first" or "the tenth" and neither is what anyone
+        // presses it for.
+        assert_eq!(
+            quick_launch_position(Key::Character("0"), Modifiers::CTRL),
+            None
+        );
+    }
+
+    #[test]
+    fn a_digit_without_control_is_somebody_elses() {
+        // Typing "3" into the search field must reach the field.
+        assert_eq!(
+            quick_launch_position(Key::Character("3"), Modifiers::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn control_plus_another_modifier_is_a_different_chord() {
+        // Not ours to claim: the desktop may already bind these, and on many
+        // layouts Ctrl+Shift+1 is not a digit at all.
+        for extra in [Modifiers::SHIFT, Modifiers::ALT, Modifiers::LOGO] {
+            assert_eq!(
+                quick_launch_position(Key::Character("1"), Modifiers::CTRL | extra),
+                None,
+                "{extra:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_digit_character_is_not_a_quick_launch() {
+        for text in ["b", "-", "", "1x", "12"] {
+            assert_eq!(
+                quick_launch_position(Key::Character(text), Modifiers::CTRL),
+                None,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_n_selects_and_launches_the_nth_visible_row() {
+        // THE BUG THIS IS HERE FOR: `results` holds indices into the
+        // application index, and the selection is a position within `results`.
+        // Ctrl+3 means the third ROW, not item 3. Confusing the two launches
+        // something plausible and wrong, which is the worst kind to have here
+        // because nothing looks broken.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = crate::app::test_support::app_with_rows(dir.path());
+
+        let rows: Vec<String> = app
+            .results
+            .iter()
+            .filter_map(|row| match row {
+                RootRow::App(i) => app.app_index.items().get(*i),
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
+                | RootRow::Calculator
+                | RootRow::Update => None,
+            })
+            .map(|item| item.name().to_owned())
+            .collect();
+        assert!(rows.len() >= 2, "need several rows: {rows:?}");
+
+        for (position, name) in rows.iter().enumerate().take(9) {
+            let digit = (position + 1).to_string();
+            let _ = app.update(super::tests::ctrl_digit(&digit));
+            assert_eq!(
+                app.selected_item().map(compass_core::AppItem::name),
+                Some(name.as_str()),
+                "Ctrl+{digit} must resolve to row {position}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_that_is_not_there_does_nothing_at_all() {
+        // THE BOUNDS ARE THE ROWS', NOT THE INDEX'S. A query filters the list,
+        // so `results` is shorter than `app_index.items()` -- and a check
+        // against the wrong one accepts a position that has no row, then
+        // selects it. The fixture is queried precisely so the two lengths
+        // differ: a control that swapped them was SILENT until this test did.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = crate::app::test_support::app_with_rows(dir.path());
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+
+        let rows = app.results.len();
+        let items = app.app_index.items().len();
+        assert!(
+            rows < items,
+            "the query must narrow the list: {rows} of {items}"
+        );
+        assert!(rows < 9, "and leave fewer than nine rows: {rows}");
+
+        let before = app.selected;
+        // A position with no row, but well inside the item index.
+        let _ = app.update(super::tests::ctrl_digit(&(rows + 1).to_string()));
+        assert_eq!(app.selected, before, "the selection must not move either");
+    }
+
+    #[test]
+    fn the_setting_turns_it_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = crate::app::test_support::app_with_rows(dir.path());
+        app.quick_launch = false;
+        app.selected = 1;
+
+        let _ = app.update(super::tests::ctrl_digit("1"));
+        assert_eq!(
+            app.selected, 1,
+            "with quick_launch off, Ctrl+1 must not move the selection"
+        );
+    }
+
+    #[test]
+    fn it_is_on_by_default() {
+        // #87 asks for on by default: it costs nothing when unused, because
+        // the chords are otherwise unbound.
+        assert!(compass_core::config::LauncherConfig::default().quick_launch());
+        assert!(AppFlags::default().quick_launch);
+    }
+
+    #[test]
+    fn the_panel_takes_the_chord_while_it_is_open() {
+        // While the panel is open the list is not what a keystroke is aimed
+        // at, and launching a row out from under an open action panel would be
+        // a surprise.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = crate::app::test_support::app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        assert!(app.panel.is_some(), "precondition");
+        app.selected = 1;
+
+        let _ = app.update(super::tests::ctrl_digit("1"));
+        assert_eq!(app.selected, 1, "the row under the panel did not move");
+        assert!(app.panel.is_some(), "and the panel is still open");
+    }
+
+    #[test]
+    fn a_named_key_is_not_a_quick_launch() {
+        assert_eq!(
+            quick_launch_position(
+                Key::Named(iced::keyboard::key::Named::Enter),
+                Modifiers::CTRL
+            ),
+            None
+        );
+    }
+}

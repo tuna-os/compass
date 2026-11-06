@@ -177,3 +177,172 @@ impl LauncherApp {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::{
+        FakeWindows, chord, open_windows, pressed, settle, window_row, windows_app,
+    };
+    use std::sync::Arc;
+
+    #[test]
+    fn switching_windows_lists_others_and_enter_focuses_one_then_hides() {
+        let dir = tempfile::tempdir().unwrap();
+        let own = std::process::id();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![
+                window_row(7, "Downloads", "Files", 1),
+                window_row(8, "Compass", "Compass", own),
+                window_row(9, "notes.txt", "Text Editor", 2),
+                // Inside the Flatpak the Shell reports a host pid the
+                // launcher cannot see, so its window is known by app id.
+                crate::backend::WindowRow {
+                    wm_class: crate::APP_ID.to_owned(),
+                    ..window_row(10, "Compass", "Compass", 4_000_000)
+                },
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, backend) = windows_app(dir.path(), Some(windows.clone()));
+        open_windows(&mut app);
+        assert!(app.showing_windows());
+        let Page::Windows(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.all.len(), 2, "the launcher's own window is left out");
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["commands:switch-windows"]
+        );
+
+        let task = app.update(Message::WindowsQueryChanged("notes".into()));
+        settle(&mut app, task);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(windows.activated.lock().unwrap().as_slice(), [9]);
+        assert!(
+            !app.showing_windows(),
+            "hidden, and back at the root next time"
+        );
+    }
+
+    #[test]
+    fn control_q_closes_the_selected_window_and_reloads_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![window_row(3, "Old tab", "Browser", 1)],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+        open_windows(&mut app);
+        let before = windows.listed.load(std::sync::atomic::Ordering::SeqCst);
+        let task = app.update(chord("q", iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(windows.closed.lock().unwrap().as_slice(), [3]);
+        assert_eq!(
+            windows.listed.load(std::sync::atomic::Ordering::SeqCst),
+            before + 1,
+            "the list is asked for again"
+        );
+        assert!(
+            app.showing_windows(),
+            "closing a window keeps the switcher open"
+        );
+    }
+
+    #[test]
+    fn a_failed_switch_says_why_and_stays_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![window_row(3, "Gone", "Browser", 1)],
+            fail_activate: true,
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        open_windows(&mut app);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Windows(page) = &app.page else {
+            panic!("a failed switch must not hide the launcher")
+        };
+        assert_eq!(page.notice.as_deref(), Some("that window has gone"));
+    }
+
+    #[test]
+    fn switching_windows_without_an_engine_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = windows_app(dir.path(), None);
+        open_windows(&mut app);
+        let Page::Windows(page) = &app.page else {
+            unreachable!()
+        };
+        assert!(
+            matches!(&page.status, crate::windows_page::Status::Failed(r) if r.contains("engine")),
+            "{:?}",
+            page.status
+        );
+    }
+}
+
+#[cfg(test)]
+mod semantics_tests {
+    use super::*;
+    use crate::backend::WindowRow;
+    use crate::semantics::Body;
+    use compass_core::AppIndex;
+
+    fn app() -> LauncherApp {
+        LauncherApp::with_index(AppIndex::builder().build())
+    }
+
+    fn window(id: u32, title: &str, app: &str) -> WindowRow {
+        WindowRow {
+            id,
+            title: title.into(),
+            app: app.into(),
+            wm_class: app.to_lowercase(),
+            pid: Some(id + 10),
+            can_close: true,
+            app_known: true,
+        }
+    }
+
+    #[test]
+    fn the_switcher_names_each_window_and_its_application() {
+        let mut app = app();
+        let mut page = crate::windows_page::WindowsPage::default();
+        assert_eq!(
+            app.windows_semantics(&page).status.as_deref(),
+            Some("Loading windows…")
+        );
+        page.apply(
+            Ok(vec![
+                window(1, "Downloads", "Files"),
+                window(2, "", "Text Editor"),
+            ]),
+            99,
+        );
+        page.selected = 1;
+        let semantics = app.windows_semantics(&page);
+        let Body::List(list) = &semantics.body else {
+            panic!("expected a list, got {:?}", semantics.body);
+        };
+        assert_eq!(list.label, "Windows");
+        assert_eq!(list.items[0].name, "Downloads");
+        assert_eq!(list.items[0].description.as_deref(), Some("Files"));
+        assert_eq!(
+            list.items[1].name, "Text Editor",
+            "untitled: its application"
+        );
+        assert_eq!(list.selected, Some(1));
+        assert_eq!(semantics.status, None);
+
+        page.query = "zzzz".into();
+        page.refilter();
+        app.page = Page::Windows(page);
+        let semantics = app.semantics();
+        assert_eq!(semantics.body, Body::Empty);
+        assert_eq!(semantics.status.as_deref(), Some("No matching windows"));
+    }
+}

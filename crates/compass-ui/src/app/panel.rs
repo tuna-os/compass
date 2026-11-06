@@ -750,3 +750,369 @@ pub(super) fn extension_panel_sections(
         })
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::RootRow;
+    use crate::app::test_support::{
+        RecordingLaunchTarget, TestBackend, app, app_with_rows, chord, pressed,
+    };
+    use compass_core::AppIndex;
+    use iced::window;
+
+    fn clipboard_writes(task: Task<Message>) -> Vec<String> {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, clipboard, task};
+
+        let Some(stream) = task::into_stream(task) else {
+            return Vec::new();
+        };
+        block_on(
+            stream
+                .filter_map(|action| async move {
+                    match action {
+                        Action::Clipboard(clipboard::Action::Write { contents, .. }) => {
+                            Some(contents)
+                        }
+                        // A copy that hides the launcher exits one with no engine.
+                        Action::Widget(_) | Action::Exit => None,
+                        other => panic!("copy issued an unexpected action: {other:?}"),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn recorded_launch(action: bool) -> Vec<Option<String>> {
+        use iced::futures::{StreamExt, executor::block_on};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        let index = AppIndex::builder().dir(dir.path()).build();
+        let selected = index
+            .items()
+            .iter()
+            .position(|item| item.is_action() == action)
+            .unwrap();
+        let launcher = Arc::new(RecordingLaunchTarget::default());
+        let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
+        app.results = vec![RootRow::App(selected)];
+        let task = app.update(Message::LaunchSelected);
+        let stream = iced_winit::runtime::task::into_stream(task).expect("launch task");
+        let _outputs = block_on(stream.collect::<Vec<_>>());
+        launcher.0.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn selecting_a_desktop_action_dispatches_its_id_not_the_parent() {
+        assert_eq!(recorded_launch(true), [Some("private".to_owned())]);
+    }
+
+    #[test]
+    fn selecting_an_application_still_dispatches_the_parent() {
+        assert_eq!(recorded_launch(false), [None]);
+    }
+
+    #[test]
+    fn a_desktop_link_is_searchable_without_application_actions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manual.desktop"), "[Desktop Entry]\nType=Link\nName=Manual\nURL=file:///manual.pdf\nActions=invalid;\n[Desktop Action invalid]\nName=Invalid\nExec=wrong\n").unwrap();
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        let _ = app.update(Message::QueryChanged("Manual".to_owned()));
+        assert_eq!(app.results.len(), 1);
+        let item = app.selected_item().unwrap();
+        assert_eq!(item.entry().url(), Some("file:///manual.pdf"));
+        let sections = actions_for_app(item);
+        assert_eq!(sections[0].actions.len(), 1);
+        assert_eq!(sections[0].actions[0].id.as_deref(), Some(APP_OPEN));
+    }
+
+    #[test]
+    fn a_root_application_exposes_and_dispatches_its_desktop_action_in_the_panel() {
+        use iced::futures::{StreamExt, executor::block_on};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Webbrowser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        let index = AppIndex::builder().dir(dir.path()).build();
+        let launcher = Arc::new(RecordingLaunchTarget::default());
+        let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
+        let _ = app.update(Message::QueryChanged("Webbrowser".to_owned()));
+        // Set Default Browser's subtitle matches too; only the application
+        // rows are in question here.
+        assert_eq!(
+            app.results
+                .iter()
+                .filter(|row| matches!(row, RootRow::App(_)))
+                .count(),
+            1,
+            "actions are not duplicate root rows"
+        );
+        assert!(matches!(app.results[0], RootRow::App(_)));
+        let backend = Arc::new(TestBackend::default());
+        app.backend = Some(backend.clone());
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("Private".to_owned()));
+        assert_eq!(
+            app.panel
+                .as_ref()
+                .unwrap()
+                .selected_action()
+                .unwrap()
+                .id
+                .as_deref(),
+            Some("app.desktop:private")
+        );
+        let task = app.update(Message::PanelActivate);
+        assert!(app.panel.is_none());
+        let stream = iced_winit::runtime::task::into_stream(task).unwrap();
+        let _ = block_on(stream.collect::<Vec<_>>());
+        assert_eq!(*launcher.0.lock().unwrap(), [Some("private".to_owned())]);
+        assert_eq!(*backend.recorded.lock().unwrap(), ["browser.desktop"]);
+    }
+
+    #[test]
+    fn filtered_copy_actions_write_the_selected_apps_name_and_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected_name = app.selected_item().expect("selected").name().to_owned();
+        let expected_path = app
+            .selected_item()
+            .expect("selected")
+            .path()
+            .expect("desktop path")
+            .to_string_lossy()
+            .into_owned();
+        for (filter, expected) in [("name", expected_name), ("path", expected_path)] {
+            let _ = app.update(Message::TogglePanel);
+            let _ = app.update(Message::PanelFilterChanged(filter.to_owned()));
+            let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+            assert_eq!(clipboard_writes(task), vec![expected]);
+            assert!(app.panel.is_none());
+            assert_eq!(app.query, "fi");
+        }
+    }
+
+    #[test]
+    fn dispatch_uses_identity_even_when_the_label_changes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected = app.selected_item().expect("selected").name().to_owned();
+        let _ = app.update(Message::TogglePanel);
+        let panel = app.panel.as_mut().expect("panel");
+        panel.sections[1].actions[0].title = "Copier le nom".to_owned();
+        panel.set_filter("Copier le nom".to_owned());
+        let task = app.update(Message::PanelActivate);
+        assert_eq!(clipboard_writes(task), vec![expected]);
+    }
+
+    #[test]
+    fn an_empty_filter_result_cannot_launch_or_copy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("zzzznotanaction".to_owned()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(iced_winit::runtime::task::into_stream(task).is_none());
+        assert!(app.panel.is_some());
+    }
+
+    #[test]
+    fn changing_the_root_query_invalidates_its_panel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::QueryChanged("terminal".to_owned()));
+        assert!(app.panel.is_none());
+        assert_eq!(app.selected_item().expect("selected").name(), "Terminal");
+        assert!(clipboard_writes(app.update(Message::PanelActivate)).is_empty());
+    }
+
+    #[test]
+    fn clicking_an_action_copies_but_clicking_a_heading_does_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected = app.selected_item().expect("selected").name().to_owned();
+        let _ = app.update(Message::TogglePanel);
+        assert!(clipboard_writes(app.update(Message::PanelClicked(2))).is_empty());
+        assert!(app.panel.is_some());
+        let messages = {
+            let mut ui = iced_test::simulator(app.view());
+            ui.click("Copy name").expect("click the action");
+            ui.into_messages().collect::<Vec<_>>()
+        };
+        assert_eq!(messages.len(), 1);
+        let writes: Vec<_> = messages
+            .into_iter()
+            .flat_map(|message| clipboard_writes(app.update(message)))
+            .collect();
+        assert_eq!(writes, vec![expected]);
+    }
+
+    #[test]
+    fn typing_in_the_panel_emits_only_panel_edits_and_no_submit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let mut ui = iced_test::simulator(app.view());
+        ui.click(iced_test::selector::id(PANEL_INPUT))
+            .expect("panel input");
+        ui.typewrite("n");
+        ui.tap_key(iced::keyboard::key::Named::Enter);
+        let messages: Vec<_> = ui.into_messages().collect();
+        assert!(
+            matches!(messages.as_slice(), [Message::PanelFilterChanged(filter)] if filter == "n")
+        );
+    }
+
+    #[test]
+    fn the_action_panel_is_not_bound_to_the_vim_chord() {
+        // Ctrl+K is "move up" in the default Linux scheme. The C++ binds the
+        // panel to Ctrl+K on macOS only and Ctrl+B everywhere else, and this
+        // is why -- taking Ctrl+K here would break navigation for every user
+        // who has configured nothing.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "precondition: Ctrl+J moved down");
+
+        let _ = app.update(chord("k", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none(), "Ctrl+K must not open the panel");
+        assert_eq!(app.selected, 0, "Ctrl+K still moves up");
+    }
+
+    #[test]
+    fn ctrl_b_opens_and_closes_the_panel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_some(), "Ctrl+B opened it");
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none(), "and Ctrl+B closed it again");
+    }
+
+    #[test]
+    fn the_panel_does_not_open_over_nothing() {
+        // A panel of actions for no selected row is a panel whose every action
+        // fails.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("zzzzzzzz".to_owned()));
+        assert!(
+            app.selected_item().is_none(),
+            "precondition: nothing selected"
+        );
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn the_panel_takes_the_arrow_keys_while_it_is_open() {
+        // Otherwise the list underneath moves out from under a panel whose
+        // actions are for the row that was selected when it opened.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let before = app.selected;
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(app.selected, before, "the list did not move");
+        // Row 1 is the divider and row 2 the heading, so the next selectable
+        // row is 3. Expecting 1 would have been expecting the selection to
+        // land on a divider.
+        assert_eq!(
+            app.panel.as_ref().map(|panel| panel.selected),
+            Some(3),
+            "the panel did"
+        );
+    }
+
+    #[test]
+    fn typing_the_panels_letter_without_ctrl_does_not_open_it() {
+        // The search field takes ordinary characters, and a launcher whose
+        // search box opens a panel when someone types `b` is unusable.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::default()));
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn escape_closes_the_panel_rather_than_the_launcher() {
+        // A panel opened by mistake should cost one key, not the whole window.
+        // The window has to be open for this to mean anything -- with no
+        // window, "the window did not close" is true however Escape is routed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::Opened(window::Id::unique()));
+        assert!(app.window.is_some(), "precondition: a window is open");
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.panel.is_none(), "the panel closed");
+        assert!(app.window.is_some(), "and the window did not");
+
+        // HALF OF THIS IS NOT CONTROL-BACKED, and it is worth saying which.
+        //
+        // "The panel closed" fires under a mutation. "The window did not"
+        // does not: `conceal` closes the window through a Task and clears
+        // `self.window` only when `Message::Closed` comes back, and with no
+        // engine link `on_dismiss` returns `Exit`, so a mutation that made
+        // Escape dismiss as well as close the panel changes nothing this test
+        // can see. Proving it would need an app built around a live
+        // `EngineLink`, which is a harness this crate does not have yet.
+        //
+        // Recorded rather than left looking covered.
+    }
+
+    #[test]
+    fn the_panel_stops_intercepting_once_it_is_closed() {
+        // The follow-on from the test above: with the panel gone, Escape is
+        // the launcher's again. What it *does* then is `conceal`, which closes
+        // the window through a Task and so is not observable from here — so
+        // this asserts the routing rather than the closing, and the test above
+        // asserts that the routing was different while the panel was open.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::Opened(window::Id::unique()));
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.panel.is_none(), "the panel closed");
+
+        // Arrows reach the list again, which the panel was taking.
+        let before = app.selected;
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_ne!(app.selected, before, "the list moved again");
+    }
+
+    #[test]
+    fn the_vim_chords_move_the_panel_while_it_is_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let before = app.selected;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, before, "the list did not move");
+        assert_eq!(app.panel.as_ref().map(|panel| panel.selected), Some(3));
+    }
+
+    #[test]
+    fn running_an_action_closes_the_panel() {
+        // An action that ran and one that is not wired up both leave the panel
+        // with nothing more to say, and leaving it open would look like the key
+        // had not registered.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.panel.is_none());
+    }
+}

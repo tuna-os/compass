@@ -219,3 +219,190 @@ impl LauncherApp {
         line
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::app::test_support::app;
+    use crate::message::{Direction, Message};
+
+    /// The log every test in this binary writes into, installed once.
+    ///
+    /// A thread-local `with_default` subscriber was the obvious way to do this
+    /// and does not work here: `tracing` keeps a PROCESS-GLOBAL max-level
+    /// hint, so with tests running in parallel a `debug!` can be filtered out
+    /// while a thread-local DEBUG subscriber is active. The test passed alone
+    /// and failed in the suite -- 38/38 pass under `--test-threads=1`, which
+    /// is how that was pinned down rather than guessed.
+    ///
+    /// Installing one global subscriber at DEBUG raises that hint for the
+    /// whole run and keeps it raised, so there is no race to lose.
+    fn log() -> &'static std::sync::Mutex<Vec<u8>> {
+        use std::sync::{Mutex, OnceLock};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        static LOG: OnceLock<&'static Mutex<Vec<u8>>> = OnceLock::new();
+
+        #[derive(Clone, Copy)]
+        struct Writer(&'static Mutex<Vec<u8>>);
+
+        impl std::io::Write for Writer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Writer {
+            type Writer = Self;
+            fn make_writer(&'a self) -> Self::Writer {
+                *self
+            }
+        }
+
+        LOG.get_or_init(|| {
+            let buffer: &'static Mutex<Vec<u8>> = Box::leak(Box::new(Mutex::new(Vec::new())));
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::DEBUG)
+                .with_writer(Writer(buffer))
+                .without_time()
+                .finish();
+            // Another test binary in the same process may have got here first;
+            // either way a DEBUG subscriber is installed, which is what this
+            // needs.
+            let _ = tracing::subscriber::set_global_default(subscriber);
+            buffer
+        })
+    }
+
+    fn logged() -> String {
+        let bytes = log()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    #[test]
+    fn every_message_leaves_its_state_in_the_log() {
+        // A query no other test uses, so the lines below are this test's even
+        // though every test in the binary shares one log. Counting lines that
+        // merely say `compass_ui::state` would race with whatever else is
+        // running.
+        const QUERY: &str = "compass-log-state-sentinel";
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("log-state.desktop"),
+            format!("[Desktop Entry]\nType=Application\nName={QUERY}\nExec=true\n"),
+        )
+        .expect("log-state fixture");
+        let _ = log();
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged(QUERY.to_owned()));
+        let _ = app.update(Message::TogglePanel);
+
+        let log = logged();
+        let mine: Vec<&str> = log
+            .lines()
+            .filter(|line| line.contains(&format!(r#"query="{QUERY}""#)))
+            .collect();
+
+        // If `update` stops emitting, this fails here in milliseconds instead
+        // of in a 25-minute VM run against a line the launcher no longer
+        // writes. A control confirmed the other state-line tests do NOT catch
+        // that: deleting the `tracing::debug!` left all of them green.
+        assert_eq!(
+            mine.len(),
+            2,
+            "one line per message, no more and no fewer:\n{log}"
+        );
+        assert!(mine[0].contains("compass_ui::state"), "{:?}", mine[0]);
+        assert!(mine[0].contains("panel=closed"), "{:?}", mine[0]);
+        assert!(mine[1].contains("panel=open"), "{:?}", mine[1]);
+    }
+
+    #[test]
+    fn the_state_line_names_what_is_on_screen() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+        let line = app.state_line();
+        // Everything the VM tier wants to assert, in one greppable line.
+        assert!(line.contains(r#"query="fir""#), "{line}");
+        assert!(line.contains("results=1"), "{line}");
+        assert!(line.contains("selected=0"), "{line}");
+        assert!(line.contains(r#"selected_title="Firefox""#), "{line}");
+        assert!(line.contains("panel=closed"), "{line}");
+    }
+
+    #[test]
+    fn the_state_line_follows_the_selection_rather_than_the_index_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+
+        // A query matching more than one row, so moving down has somewhere to
+        // go. Not the empty query: the launcher shows nothing for that, which
+        // this test discovered. The title is what makes "selected=1" mean
+        // anything.
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        let first = app.state_line();
+        let _ = app.update(Message::MoveSelection(Direction::Down));
+        let second = app.state_line();
+
+        assert!(first.contains("selected=0"), "{first}");
+        assert!(second.contains("selected=1"), "{second}");
+        assert_ne!(
+            first
+                .split_once("selected_title=")
+                .map(|(_, rest)| rest.to_owned()),
+            second
+                .split_once("selected_title=")
+                .map(|(_, rest)| rest.to_owned()),
+            "the title must move with the selection, not just the number"
+        );
+    }
+
+    #[test]
+    fn the_state_line_describes_the_panel_when_it_is_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+
+        assert!(app.state_line().contains("panel=closed"));
+
+        let _ = app.update(Message::TogglePanel);
+        let line = app.state_line();
+        assert!(line.contains("panel=open"), "{line}");
+        assert!(line.contains("panel_selected=0"), "{line}");
+        // The first SELECTABLE row, which is the thing the VM frame had to be
+        // read by eye to confirm. Now it is a string.
+        assert!(line.contains(r#"panel_title="Open""#), "{line}");
+
+        let _ = app.update(Message::PanelFilterChanged("copy".to_owned()));
+        let filtered = app.state_line();
+        assert!(filtered.contains(r#"panel_filter="copy""#), "{filtered}");
+        assert!(filtered.contains(r#"panel_title="Copy"#), "{filtered}");
+
+        let _ = app.update(Message::TogglePanel);
+        assert!(app.state_line().contains("panel=closed"));
+    }
+
+    #[test]
+    fn the_state_line_says_when_nothing_matched() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("zzzz".to_owned()));
+        let line = app.state_line();
+        // "results=0" and "no window" are different failures and the tier has
+        // to be able to tell them apart from a log.
+        assert!(line.contains("results=0"), "{line}");
+        assert!(line.contains("selected_title=none"), "{line}");
+    }
+}

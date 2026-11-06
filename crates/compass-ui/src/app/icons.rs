@@ -681,3 +681,514 @@ pub(super) fn clipboard_url(
         ImageUrl::new(ImageUrlType::Favicon, host).with_fallback(&ImageUrl::builtin("link"))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::icons::icon_tests::{app_with_icons, asked, recording};
+    use crate::app::test_support::{
+        FakeWindows, TestBackend, index, open_builtin, open_windows, script_item, window_row,
+        windows_app,
+    };
+    use crate::icons::IconArt;
+    use compass_core::AppIndex;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn repo_builtin_icons() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../extra/builtin-icons")
+            .canonicalize()
+            .expect("the builtin icon set is in the repository")
+    }
+
+    #[test]
+    fn a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.query = "clipboard history".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Command(_))));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(
+                ui.find("C").is_ok(),
+                "with no builtin icon set installed the row keeps its initial"
+            );
+        }
+        app.builtin_icons = Some(repo_builtin_icons());
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Clipboard History").is_ok());
+        assert!(
+            ui.find("C").is_err(),
+            "the builtin icon replaces the initial"
+        );
+    }
+
+    #[test]
+    fn search_files_rows_draw_their_file_type_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = tempfile::tempdir().unwrap();
+        let photo = files.path().join("photo.png");
+        fs::write(&photo, b"x").unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        let (log, lookup) = recording(&["image-png"]);
+        app.icon_lookup = lookup;
+        let page = crate::files_page::FilesPage::default();
+        let generation = page.generation;
+        app.page = Page::Files(page);
+        let row = |path: &Path, category: &str| crate::backend::FileRow {
+            path: path.to_string_lossy().into_owned(),
+            name: path.file_name().unwrap().to_string_lossy().into_owned(),
+            category: category.into(),
+        };
+        let _ = app.update(Message::FilesLoaded {
+            generation,
+            result: Ok(crate::backend::FileResults {
+                heading: "Files".into(),
+                files: vec![row(&photo, "Images"), row(files.path(), "Folders")],
+            }),
+        });
+        assert_eq!(
+            app.file_glyphs.cached(&photo.to_string_lossy()),
+            Some(&crate::icons::Glyph::Art(IconArt::Vector(PathBuf::from(
+                "/i/image-png.svg"
+            ))))
+        );
+        assert_eq!(
+            app.file_glyphs.cached(&files.path().to_string_lossy()),
+            Some(&crate::icons::Glyph::builtin("folder")),
+            "a folder no theme has an icon for draws the builtin folder"
+        );
+        assert!(asked(&log).contains(&"inode-directory".to_owned()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("photo.png").is_ok());
+        assert!(ui.find("P").is_err(), "no initial on a file row");
+    }
+
+    #[test]
+    fn a_window_row_draws_its_applications_icon_or_the_app_window_builtin() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![
+                window_row(7, "Downloads", "Firefox", 1),
+                crate::backend::WindowRow {
+                    app_known: false,
+                    ..window_row(9, "xterm", "XTerm", 2)
+                },
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        let fresh = app_with_icons(dir.path());
+        app.app_index = fresh.app_index;
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        open_windows(&mut app);
+        assert!(asked(&log).contains(&"firefox".to_owned()));
+        let Page::Windows(page) = &app.page else {
+            panic!("not the window switcher: {}", app.state_line());
+        };
+        let firefox = page.all.iter().find(|w| w.id == 7).unwrap();
+        let xterm = page.all.iter().find(|w| w.id == 9).unwrap();
+        assert_eq!(
+            app.window_app(firefox).and_then(|item| app.row_art(item)),
+            Some(&IconArt::Vector(PathBuf::from("/i/firefox.svg")))
+        );
+        assert!(app.window_app(xterm).is_none());
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("X").is_err(), "the unknown window draws AppWindow");
+        assert!(ui.find("F").is_err());
+    }
+
+    #[test]
+    fn the_default_pickers_mark_is_the_green_check_icon() {
+        use crate::backend::DefaultAppRow;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            default_apps: vec![DefaultAppRow {
+                id: "firefox.desktop".into(),
+                name: "Firefox".into(),
+                description: "Browse the web".into(),
+                is_default: true,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        app.builtin_icons = Some(repo_builtin_icons());
+        open_builtin(
+            &mut app,
+            "set default browser",
+            "commands:set-default-browser",
+        );
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Firefox").is_ok());
+        assert!(
+            ui.find("✓ Default").is_err(),
+            "the check icon replaces the text mark"
+        );
+    }
+
+    #[test]
+    fn clipboard_rows_draw_the_builtin_for_their_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.builtin_icons = Some(repo_builtin_icons());
+        let page = crate::clipboard_page::ClipboardPage {
+            rows: vec![crate::backend::ClipboardRow {
+                id: "1".into(),
+                preview: "hello".into(),
+                kind: crate::backend::ClipboardRowKind::Text,
+                pinned: false,
+                url_host: None,
+            }],
+            status: crate::clipboard_page::Status::Ready,
+            ..crate::clipboard_page::ClipboardPage::default()
+        };
+        app.page = Page::Clipboard(page);
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("hello").is_ok());
+        assert!(ui.find("T").is_err(), "the text builtin, not an initial");
+    }
+
+    #[test]
+    fn extension_script_and_shortcut_rows_draw_their_icons_in_root_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let ext = dir.path().join("extensions/hello");
+        fs::create_dir_all(ext.join("assets")).unwrap();
+        fs::write(ext.join("assets/hello.png"), b"png").unwrap();
+        fs::write(
+            ext.join("package.json"),
+            r#"{"name": "hello", "title": "Hello", "author": "someone", "icon": "hello.png",
+                "commands": [{"name": "write", "title": "Write Greeting", "mode": "no-view"}]}"#,
+        )
+        .unwrap();
+        index(dir.path());
+        let mut app = LauncherApp::with_index(
+            AppIndex::builder()
+                .dir(dir.path())
+                .extension_dirs([dir.path().join("extensions")])
+                .build(),
+        );
+        app.backend = Some(backend);
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        app.query = "greeting".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Extension(0)));
+        let extension_icon = ext.join("assets/hello.png");
+        let key =
+            compass_core::image_url::ImageUrl::local(extension_icon.to_string_lossy()).to_url();
+        assert_eq!(
+            app.url_glyphs.get(&key),
+            Some(&Some(crate::icons::Glyph::Art(IconArt::Raster(
+                extension_icon
+            )))),
+            "the extension's own icon, from its assets"
+        );
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Write Greeting").is_ok());
+            assert!(ui.find("W").is_err(), "the icon replaces the initial");
+        }
+
+        // A script whose header names an emoji.
+        app.app_index.set_scripts(vec![script_item(
+            "party.sh",
+            "Party Time",
+            compass_core::script_command::OutputMode::Silent,
+            0,
+        )]);
+        let _ = app.update(Message::ScriptIconsLoaded(Ok(vec![(
+            "party.sh".into(),
+            "icon://emoji/🎉".into(),
+        )])));
+        app.query = "party time".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Script(_))));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("🎉").is_ok(), "the emoji is drawn as text");
+            assert!(ui.find("P").is_err());
+        }
+
+        // A shortcut with a builtin icon: on a purple tile.
+        app.app_index
+            .set_shortcuts(vec![compass_core::shortcut_service::CachedShortcut {
+                id: "s1".into(),
+                name: "Docs Search".into(),
+                icon: "icon://omnicast/link".into(),
+                link: compass_core::shortcut::parse_link("https://docs.rs/{query}"),
+                app: "default".into(),
+                open_count: 0,
+                created_at: 0,
+                updated_at: 0,
+                last_opened_at: None,
+            }]);
+        app.query = "docs search".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Shortcut(_))));
+        let key = "icon://omnicast/link?bg_tint=purple";
+        let Some(Some(crate::icons::Glyph::Builtin { name, tile, .. })) = app.url_glyphs.get(key)
+        else {
+            panic!("no glyph for {key}: {:?}", app.url_glyphs.keys());
+        };
+        assert_eq!(name, "link");
+        assert!(tile.is_some(), "a shortcut's builtin sits on a purple tile");
+    }
+
+    #[test]
+    fn a_favicon_is_fetched_once_into_the_cache_and_then_drawn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        app.favicon_service = compass_core::favicon::Service::Twenty;
+        let row = crate::backend::ClipboardRow {
+            id: "1".into(),
+            preview: "https://example.com/page".into(),
+            kind: crate::backend::ClipboardRowKind::Link,
+            pinned: false,
+            url_host: Some("example.com".into()),
+        };
+        let page = crate::clipboard_page::ClipboardPage::default();
+        let generation = page.generation;
+        app.page = Page::Clipboard(page);
+        let load = |app: &mut LauncherApp| {
+            let _ = app.update(Message::ClipboardLoaded {
+                generation,
+                result: Ok(vec![row.clone()]),
+            });
+        };
+        let favicon = clipboard_url(&row).expect("a link has a favicon").to_url();
+        let favicon = favicon.as_str();
+        assert!(favicon.starts_with("icon://favicon/example.com?fallback="));
+
+        // Without remote icons (every test's default) nothing is fetched and
+        // the link builtin stands in.
+        load(&mut app);
+        assert!(app.remote_requested.is_empty());
+        assert_eq!(
+            app.url_glyphs.get(favicon),
+            Some(&Some(crate::icons::Glyph::builtin("link")))
+        );
+
+        app.remote_icons = true;
+        app.url_glyphs.clear();
+        load(&mut app);
+        let wanted = "https://twenty-icons.com/example.com/128";
+        assert_eq!(
+            app.remote_requested.iter().collect::<Vec<_>>(),
+            [wanted],
+            "the favicon is asked of the configured service"
+        );
+        load(&mut app);
+        assert_eq!(app.remote_requested.len(), 1, "and asked for once");
+
+        let cached = dir.path().join("favicon.png");
+        fs::write(&cached, b"png").unwrap();
+        let _ = app.update(Message::ExtensionImageFetched {
+            url: wanted.into(),
+            result: Ok(cached.clone()),
+        });
+        assert_eq!(
+            app.url_glyphs.get(favicon),
+            Some(&Some(crate::icons::Glyph::Art(IconArt::Raster(cached)))),
+            "once in the cache, the favicon is drawn"
+        );
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+    use crate::app::flags::AppFlags;
+    use crate::icons::IconArt;
+    use compass_core::AppIndex;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    /// Three entries, two of which name an icon.
+    pub(super) fn app_with_icons(dir: &std::path::Path) -> LauncherApp {
+        for (file, name, icon) in [
+            ("firefox.desktop", "Firefox", Some("firefox")),
+            ("files.desktop", "Files", Some("system-file-manager")),
+            ("terminal.desktop", "Terminal", None),
+        ] {
+            let icon_line = icon.map_or_else(String::new, |value| format!("Icon={value}\n"));
+            fs::write(
+                dir.join(file),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName={name}\nExec=/bin/true\n{icon_line}"
+                ),
+            )
+            .expect("write entry");
+        }
+        LauncherApp::with_index(AppIndex::builder().dir(dir).build())
+    }
+
+    /// A lookup that answers for `hits` and records every name it is asked.
+    pub(super) fn recording(hits: &[&str]) -> (Arc<Mutex<Vec<String>>>, IconLookup) {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&asked);
+        let hits: Vec<String> = hits.iter().map(|hit| (*hit).to_owned()).collect();
+        let lookup = IconLookup::new(move |name: &str| {
+            log.lock().expect("lock").push(name.to_owned());
+            hits.iter()
+                .any(|hit| hit == name)
+                .then(|| PathBuf::from(format!("/i/{name}.svg")))
+        });
+        (asked, lookup)
+    }
+
+    pub(super) fn asked(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+        log.lock().expect("lock").clone()
+    }
+
+    fn row<'a>(app: &'a LauncherApp, name: &str) -> &'a AppItem {
+        app.results
+            .iter()
+            .filter_map(|row| match row {
+                RootRow::App(index) => app.app_index.items().get(*index),
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
+                | RootRow::Calculator
+                | RootRow::Update => None,
+            })
+            .find(|item| item.name() == name)
+            .unwrap_or_else(|| panic!("{name} is not a row"))
+    }
+
+    #[test]
+    fn icons_off_looks_nothing_up_at_all() {
+        // Explicitly disabling icons must cost nothing: not a directory walk,
+        // not even a cached miss.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = false;
+
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+
+        assert!(!app.results.is_empty(), "precondition: there are rows");
+        assert!(asked(&log).is_empty(), "{:?}", asked(&log));
+        assert!(app.icon_cache.is_empty());
+    }
+
+    #[test]
+    fn icons_on_warms_only_the_rows_on_screen() {
+        // Bounded by the visible list rather than by the index: that is the
+        // whole reason resolution happens in `update` and not in `view`.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("firefox".to_owned()));
+
+        assert_eq!(asked(&log), ["firefox"], "{:?}", asked(&log));
+    }
+
+    #[test]
+    fn an_entry_with_no_icon_key_is_never_looked_up() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (log, lookup) = recording(&[]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("terminal".to_owned()));
+
+        assert!(!app.results.is_empty(), "precondition: Terminal is a row");
+        assert!(asked(&log).is_empty(), "{:?}", asked(&log));
+    }
+
+    #[test]
+    fn the_same_name_is_resolved_once_however_many_keystrokes() {
+        // A launcher re-ranks on every keystroke. Without the cache this is
+        // one theme walk per character typed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        for query in ["f", "fi", "fir", "fire", "firef"] {
+            let _ = app.update(Message::QueryChanged(query.to_owned()));
+        }
+
+        let names = asked(&log);
+        assert_eq!(
+            names.iter().filter(|name| *name == "firefox").count(),
+            1,
+            "{names:?}"
+        );
+    }
+
+    #[test]
+    fn a_resolved_row_draws_its_icon_and_an_unresolved_one_falls_back() {
+        // The ordinary state of a mixed desktop: the theme has one of them.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (_log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("f".to_owned()));
+
+        assert_eq!(
+            app.row_art(row(&app, "Firefox")),
+            Some(&IconArt::Vector(PathBuf::from("/i/firefox.svg")))
+        );
+        assert_eq!(
+            app.row_art(row(&app, "Files")),
+            None,
+            "an icon the theme does not have must fall back to the initial"
+        );
+    }
+
+    #[test]
+    fn a_resolved_icon_is_still_not_drawn_once_icons_are_turned_off() {
+        // The cache outlives the toggle, so the gate has to be at the draw and
+        // not only at the warm.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (_log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("firefox".to_owned()));
+
+        assert!(
+            app.row_art(row(&app, "Firefox")).is_some(),
+            "precondition: resolved"
+        );
+
+        app.icons = false;
+        assert_eq!(app.row_art(row(&app, "Firefox")), None);
+    }
+
+    #[test]
+    fn native_app_icons_are_on_by_default() {
+        assert!(
+            compass_core::config::LauncherConfig::default()
+                .appearance()
+                .icons()
+        );
+        assert!(AppFlags::default().icons);
+    }
+}

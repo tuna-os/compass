@@ -702,3 +702,324 @@ pub(super) fn keyboard_events(
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::flags::AppFlags;
+    use crate::app::test_support::{app, closes, pressed, shown};
+    use crate::resident::EngineLink;
+
+    #[test]
+    fn pending_window_is_reused_and_escape_dismisses_after_it_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.open_window();
+        let id = app.pending_window.unwrap();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert_eq!(app.pending_window, Some(id));
+        assert!(outcomes.try_recv().is_err(), "opening is not yet shown");
+        let _ = app.update(Message::Opened(id));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Shown);
+        let close = app.update(pressed(iced::keyboard::key::Named::Escape));
+        {
+            use iced::futures::{StreamExt, executor::block_on};
+            use iced_winit::runtime::{Action, task, window as runtime_window};
+            let mut stream = task::into_stream(close).expect("Escape must request a close");
+            assert!(matches!(
+                block_on(stream.next()),
+                Some(Action::Window(runtime_window::Action::Close(closed))) if closed == id
+            ));
+        }
+        let _ = app.update(Message::Closed(id));
+        assert!(!app.is_visible());
+        assert!(app.pending_window.is_none());
+    }
+
+    #[test]
+    fn only_app_grid_sessions_exit_when_the_engine_disconnects() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, task};
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        assert!(task::into_stream(app.update(Message::EngineDisconnected)).is_none());
+        app.apply(AppFlags {
+            exit_on_engine_disconnect: true,
+            ..AppFlags::default()
+        });
+        let mut exit = task::into_stream(app.update(Message::EngineDisconnected)).unwrap();
+        assert!(matches!(block_on(exit.next()), Some(Action::Exit)));
+    }
+
+    #[test]
+    fn describe_answers_whether_the_window_is_open_and_changes_nothing() {
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (mut app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            ..AppFlags::default()
+        });
+        let _ = app.update(Message::Command(UiCommand::Describe));
+        assert_eq!(outcomes.try_recv(), Ok(UiOutcome::Hidden));
+        assert!(app.pending_window.is_none(), "asking opened nothing");
+        assert!(!app.is_awaiting());
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let _ = app.update(Message::Command(UiCommand::Describe));
+        assert_eq!(
+            outcomes.try_recv(),
+            Ok(UiOutcome::Shown),
+            "a window on its way counts as open"
+        );
+    }
+
+    #[test]
+    fn hide_during_initial_open_waits_until_the_window_is_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.open_window();
+        let id = app.pending_window.unwrap();
+        let _ = app.update(Message::Command(UiCommand::Hide));
+        assert!(app.pending_hide);
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Opened(id));
+        assert!(outcomes.try_recv().is_err(), "must not acknowledge shown");
+        let _ = app.update(Message::Closed(id));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Hidden);
+        assert!(!app.is_visible());
+    }
+
+    #[test]
+    fn show_during_dismissal_waits_for_close_before_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let old = window::Id::unique();
+        let _ = app.update(Message::Opened(old));
+        let _ = app.update(Message::Dismiss);
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert!(app.pending_window.is_none());
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Closed(old));
+        let next = app.pending_window.unwrap();
+        assert_ne!(old, next);
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Opened(next));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Shown);
+        let _ = app.update(Message::Opened(old));
+        assert_eq!(
+            app.window,
+            Some(next),
+            "stale open cannot replace the current window"
+        );
+    }
+
+    #[test]
+    fn toggling_a_launcher_left_behind_another_window_brings_it_back_instead_of_hiding_it() {
+        // TIL-03: with `close_on_focus_loss` off, a click on another window
+        // leaves the launcher open behind it, and the next toggle hid what the
+        // user could not see. It comes back as a new window, which the
+        // compositor focuses as it does every summon.
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        let _ = app.update(Message::WindowFocusChanged(true));
+        let _ = app.update(Message::WindowFocusChanged(false));
+        assert!(app.is_visible(), "close_on_focus_loss is off");
+
+        assert!(
+            closes(app.obey(UiCommand::Toggle), id),
+            "the old window goes"
+        );
+        assert!(app.reopen_after_close, "and a new one is on its way");
+        let _ = app.update(Message::Closed(id));
+        let reopened = app.pending_window.expect("a new window is opening");
+        assert_ne!(reopened, id);
+    }
+
+    #[test]
+    fn toggling_a_focused_launcher_hides_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        let _ = app.update(Message::WindowFocusChanged(true));
+        assert!(closes(app.obey(UiCommand::Toggle), id));
+        assert!(!app.reopen_after_close);
+    }
+
+    #[test]
+    fn toggling_a_launcher_that_never_reported_the_focus_hides_it() {
+        // A seat with no keyboard reports no focus at all; the launcher must
+        // still toggle closed there.
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        assert!(closes(app.obey(UiCommand::Toggle), id));
+        assert!(!app.reopen_after_close);
+    }
+
+    #[test]
+    fn a_click_on_the_backdrop_hides_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        assert!(closes(app.update(Message::BackdropPressed), id));
+    }
+
+    #[test]
+    fn a_toplevel_larger_than_its_monitor_is_shrunk_to_fit_and_opens_fitted_next_time() {
+        // TIL-04 on the toplevel path: 1280×800 at 200 % is 640×400.
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        let wanted = app.window_config.size;
+        let _ = app.update(Message::WindowSized {
+            id,
+            size: wanted,
+            opened: true,
+        });
+        let resize = app.update(Message::MonitorSized(
+            id,
+            Some(iced::Size::new(640.0, 400.0)),
+        ));
+        assert!(resize.units() > 0, "the window is resized to fit");
+        assert_eq!(app.wanted_window_size(), iced::Size::new(624.0, 384.0));
+        // A monitor with room changes nothing.
+        let _ = app.update(Message::WindowSized {
+            id,
+            size: iced::Size::new(624.0, 384.0),
+            opened: false,
+        });
+        let _ = app.update(Message::MonitorSized(
+            id,
+            Some(iced::Size::new(1920.0, 1080.0)),
+        ));
+        assert_eq!(app.wanted_window_size(), wanted);
+    }
+}
+
+#[cfg(test)]
+mod cold_start_tests {
+    use super::*;
+    use compass_core::AppIndex;
+
+    #[test]
+    fn the_first_frame_is_recorded_once_and_only_once() {
+        // The latch is the whole mechanism. Without it the figure would be
+        // rewritten at the refresh rate and report the time between the last
+        // two frames rather than the time to the first.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        app.started_at = Some(std::time::Instant::now());
+
+        assert!(app.first_frame_at.is_none(), "nothing drawn yet");
+
+        let _ = app.update(Message::FrameDrawn);
+        let first = app.first_frame_at.expect("the first frame was recorded");
+
+        for _ in 0..5 {
+            let _ = app.update(Message::FrameDrawn);
+        }
+        assert_eq!(
+            app.first_frame_at,
+            Some(first),
+            "a later frame must not overwrite the first"
+        );
+    }
+
+    // NOT TESTED, AND RECORDED RATHER THAN FAKED: that `subscription` stops
+    // asking for frames once the first has arrived.
+    //
+    // `window::frames()` yields at the refresh rate, so leaving it subscribed
+    // would push a message sixty times a second for the life of the process.
+    // The guard in `subscription` is what prevents that, and removing it is a
+    // mutation no test here catches: `iced::Subscription` is opaque -- its
+    // `Debug` is the bare string "Subscription" -- so a test cannot see which
+    // streams a batch contains. Asserting on a predicate extracted from the
+    // guard would test the predicate, not the guard, and would pass with the
+    // guard deleted.
+    //
+    // The cost of the miss is wasted work rather than wrong behaviour: the
+    // latch below keeps a late frame from overwriting the figure either way.
+
+    fn hidden_app() -> (tempfile::TempDir, LauncherApp) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        app.first_frame_at = Some(std::time::Instant::now());
+        app.window = None;
+        app.pending_window = None;
+        (dir, app)
+    }
+
+    #[test]
+    fn a_summon_is_timed_from_show_to_the_new_windows_first_frame() {
+        let (_dir, mut app) = hidden_app();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let pending = app.pending_window.expect("Show opened a window");
+
+        // Nothing drawn yet: the window has not opened.
+        let _ = app.update(Message::FrameDrawn);
+        assert!(
+            app.last_summon_draw.is_none(),
+            "a frame before Opened is not the summoned one"
+        );
+
+        let _ = app.update(Message::Opened(pending));
+        let _ = app.update(Message::FrameDrawn);
+        let first = app.last_summon_draw.expect("the summon was timed");
+        assert!(app.summoned_at.is_none(), "the latch closed");
+
+        let _ = app.update(Message::FrameDrawn);
+        assert_eq!(
+            app.last_summon_draw,
+            Some(first),
+            "a later frame does not re-time it"
+        );
+    }
+
+    #[test]
+    fn show_on_a_visible_window_and_hide_time_nothing() {
+        let (_dir, mut app) = hidden_app();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let pending = app.pending_window.expect("opened");
+        let _ = app.update(Message::Opened(pending));
+        let _ = app.update(Message::FrameDrawn);
+        let first = app.last_summon_draw.expect("timed");
+
+        // Already on screen: raising it is not a summon.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert!(
+            app.summoned_at.is_none(),
+            "a visible window is not summoned"
+        );
+
+        // Hide cancels a pending measurement rather than leaving it to be
+        // closed by whatever frame comes next.
+        app.window = None;
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert!(app.summoned_at.is_some());
+        let _ = app.update(Message::Command(UiCommand::Hide));
+        assert!(app.summoned_at.is_none(), "hide drops the pending summon");
+        assert_eq!(app.last_summon_draw, Some(first));
+    }
+
+    #[test]
+    fn without_a_start_time_nothing_is_claimed() {
+        // A test, or any caller that is not timing, sets no start. The frame
+        // is still latched -- that is what stops the subscription -- but no
+        // figure is logged, because there would be nothing to measure from.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        assert!(app.started_at.is_none(), "precondition");
+
+        let _ = app.update(Message::FrameDrawn);
+        assert!(
+            app.first_frame_at.is_some(),
+            "the latch still closes, or the subscription would never stop"
+        );
+    }
+}

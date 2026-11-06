@@ -800,9 +800,15 @@ fn clipboard_detail_document(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::RootRow;
+    use crate::app::flags::AppFlags;
+    use crate::app::test_support::{
+        FakeClipboard, TestBackend, choose, chord, clip_row, index, panel_titles, pressed, settle,
+    };
     use crate::backend::{ClipboardDetail, ClipboardMonitoring, ClipboardRow, ClipboardRowKind};
     use crate::clipboard_page::Status;
     use crate::semantics::Body;
+    use std::sync::Arc;
 
     fn entry(id: &str, preview: &str, pinned: bool) -> ClipboardRow {
         ClipboardRow {
@@ -892,5 +898,500 @@ mod tests {
         assert_eq!(semantics.body, Body::Empty);
         assert_eq!(semantics.status.as_deref(), Some("Nothing copied yet"));
         assert_eq!(semantics.detail, None);
+    }
+
+    fn clipboard_app(
+        dir: &std::path::Path,
+        clipboard: Option<Arc<FakeClipboard>>,
+    ) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir));
+        app.apply(AppFlags {
+            clipboard: clipboard.map(|c| c as Arc<dyn crate::backend::ClipboardBackend>),
+            ..AppFlags::default()
+        });
+        // The ranking backend only for `record_launch`; search stays local so
+        // the command row comes from the real index.
+        app.backend = Some(backend.clone());
+        (app, backend)
+    }
+
+    fn open_clipboard(app: &mut LauncherApp) -> Vec<String> {
+        app.query = "clipboard".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Command(
+                compass_core::commands::by_id("commands:clipboard-history").unwrap()
+            )),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(app, task)
+    }
+
+    #[test]
+    fn enter_on_the_command_opens_clipboard_history_and_records_the_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "newest"), clip_row("2", "older")],
+            ..FakeClipboard::default()
+        });
+        let (mut app, backend) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+
+        assert!(app.showing_clipboard());
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.status, crate::clipboard_page::Status::Ready);
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["commands:clipboard-history"]
+        );
+        assert!(
+            app.state_line().contains("page=clipboard"),
+            "{}",
+            app.state_line()
+        );
+    }
+
+    #[test]
+    fn a_copied_link_opens_and_opens_with_a_chosen_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut link = clip_row("1", "https://docs.rs/serde");
+        link.kind = crate::backend::ClipboardRowKind::Link;
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![link],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"https://docs.rs/serde".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, backend) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let titles = panel_titles(&app);
+        assert_eq!(
+            titles[..4],
+            [
+                "Paste to active window",
+                "Copy to clipboard",
+                "Open",
+                "Open with..."
+            ]
+        );
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::OpenWith(_)),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(
+            backend.opener_lookups.lock().unwrap().as_slice(),
+            ["https://docs.rs/serde"]
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Clipboard(_)),
+            "Escape returns to the history: {}",
+            app.state_line()
+        );
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Open");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            ["https://docs.rs/serde"]
+        );
+    }
+
+    #[test]
+    fn plain_text_offers_no_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "some text")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"some text".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(!panel_titles(&app).iter().any(|t| t.starts_with("Open")));
+    }
+
+    #[test]
+    fn the_kind_filter_the_pane_keywords_remove_all_and_monitoring() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut image = clip_row("2", "Image");
+        image.kind = crate::backend::ClipboardRowKind::Image;
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "some text"), image],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"some text".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        app.view.view_memory = crate::view_memory::ViewMemory::load(None);
+        open_clipboard(&mut app);
+
+        // The pane shows the selected entry, its text and its metadata.
+        {
+            let Page::Clipboard(page) = &app.page else {
+                unreachable!()
+            };
+            let detail = page.detail.as_ref().expect("the pane is loaded");
+            assert_eq!(detail.id, "1");
+            assert_eq!(
+                detail.pane,
+                Some(crate::clipboard_page::DetailContent::Text(
+                    "some text".into()
+                ))
+            );
+            assert!(matches!(&detail.info, Some(Ok(info)) if info.size == 1536));
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("1.50 KB").is_ok(), "the size is in the pane");
+        }
+
+        // The filter asks the engine for one kind, and is remembered.
+        let task = app.update(Message::ClipboardKindChanged("Images".into()));
+        settle(&mut app, task);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            clipboard.kinds.lock().unwrap().last(),
+            Some(&Some(crate::backend::ClipboardRowKind::Image))
+        );
+        assert_eq!(
+            app.view
+                .view_memory
+                .get(crate::clipboard_page::FILTER_MEMORY_KEY),
+            Some("image")
+        );
+        let task = app.update(Message::ClipboardKindChanged("All".into()));
+        settle(&mut app, task);
+
+        // Ctrl+E opens the keyword form with what is stored; saving it goes
+        // back to the history.
+        let task = app.update(chord("e", iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::ClipboardKeywords
+                    && form.command_id == "1"),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("invoice".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert!(app.showing_clipboard());
+        assert!(
+            clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"keywords 1 invoice".to_owned())
+        );
+
+        // Remove-all asks first; Escape leaves everything, Enter removes.
+        let _ = app.update(Message::TogglePanel);
+        let remove_all = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Remove all"))
+            .expect("the panel offers remove-all");
+        let _ = app.update(Message::PanelClicked(remove_all));
+        assert!(app.confirm.is_some());
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.confirm.is_none());
+        assert!(
+            !clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"remove-all".to_owned())
+        );
+        let _ = app.update(chord(
+            "x",
+            iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT,
+        ));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"remove-all".to_owned())
+        );
+
+        // The panel pauses recording, and then offers to resume it.
+        let _ = app.update(Message::TogglePanel);
+        let pause = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Pause clipboard"))
+            .expect("recording can be paused");
+        let task = app.update(Message::PanelClicked(pause));
+        settle(&mut app, task);
+        assert_eq!(*clipboard.monitoring.lock().unwrap(), Some(false));
+        let _ = app.update(Message::TogglePanel);
+        assert!(
+            app.panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Resume clipboard"))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn typing_filters_arrows_move_and_escape_goes_back_not_away() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![
+                clip_row("1", "alpha one"),
+                clip_row("2", "alpha two"),
+                clip_row("3", "beta"),
+            ],
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+
+        let task = app.update(Message::ClipboardQueryChanged("alpha".into()));
+        settle(&mut app, task);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(
+            clipboard.queries.lock().unwrap().last().map(String::as_str),
+            Some("alpha")
+        );
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.selected, 1);
+
+        let back = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.showing_clipboard(), "Escape leaves the view");
+        assert_eq!(app.query, "clipboard", "and the root query is where it was");
+        // Leaving the view by hiding the window would also reset it, so the
+        // state alone cannot tell "back" from "away": the task can.
+        let actions: Vec<_> = iced_winit::runtime::task::into_stream(back)
+            .map(|stream| {
+                iced::futures::executor::block_on(iced::futures::StreamExt::collect::<Vec<_>>(
+                    stream,
+                ))
+            })
+            .unwrap_or_default();
+        assert!(
+            !actions.iter().any(|action| matches!(
+                action,
+                iced_winit::runtime::Action::Exit | iced_winit::runtime::Action::Window(_)
+            )),
+            "Escape in a command view must not hide or quit the launcher"
+        );
+    }
+
+    #[test]
+    fn enter_pastes_through_the_engine_and_hides_without_copying() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "newest"), clip_row("2", "older")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"older".to_vec(),
+            }),
+            can_paste: true,
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(clipboard.pasted.lock().unwrap().as_slice(), ["2"]);
+        assert!(
+            writes.is_empty(),
+            "the engine put it on the clipboard; the launcher must not race it"
+        );
+        assert!(
+            !app.showing_clipboard(),
+            "and the launcher got out of the way"
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_p_toggles_the_pin_and_ctrl_x_removes_then_the_list_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let pinned = crate::backend::ClipboardRow {
+            pinned: true,
+            ..clip_row("2", "pinned one")
+        };
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "loose one"), pinned],
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+        let loads = clipboard.queries.lock().unwrap().len();
+
+        let ctrl = iced::keyboard::Modifiers::CTRL;
+        let ctrl_shift = iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT;
+        let task = app.update(chord("P", ctrl_shift));
+        settle(&mut app, task);
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(chord("P", ctrl_shift));
+        settle(&mut app, task);
+        let task = app.update(chord("x", ctrl));
+        settle(&mut app, task);
+
+        assert_eq!(
+            clipboard.changes.lock().unwrap().as_slice(),
+            ["pin 1 true", "pin 2 false", "remove 2"],
+            "the pin flips each entry's own state, and the selection stays on its entry \
+             through each reload, so Ctrl+X removes the entry the person was on"
+        );
+        assert_eq!(
+            clipboard.queries.lock().unwrap().len(),
+            loads + 3,
+            "every change reloads the list"
+        );
+        assert!(app.showing_clipboard(), "and the view stays open");
+    }
+
+    #[test]
+    fn a_refused_change_says_why_and_keeps_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "only one")],
+            fail_changes: true,
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let task = app.update(chord("x", iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.notice.as_deref(), Some("That entry is already gone"));
+        assert_eq!(page.rows.len(), 1);
+    }
+
+    #[test]
+    fn enter_copies_the_whole_entry_and_hides_when_the_engine_cannot_paste() {
+        let dir = tempfile::tempdir().unwrap();
+        let whole = "the whole entry, not its preview ".repeat(10);
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "the whole entry…")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: whole.clone().into_bytes(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, [whole]);
+        assert!(
+            !app.showing_clipboard(),
+            "hiding resets the view for the next summon"
+        );
+    }
+
+    #[test]
+    fn an_image_is_not_copied_as_text_and_the_view_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "Image")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "image/png".into(),
+                data: vec![0x89, b'P', b'N', b'G'],
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(settle(&mut app, task).is_empty(), "nothing written");
+        let Page::Clipboard(page) = &app.page else {
+            panic!("the view stays open to show the reason")
+        };
+        assert!(page.notice.as_deref().is_some_and(|n| n.contains("images")));
+    }
+
+    #[test]
+    fn without_an_engine_the_view_says_so_instead_of_showing_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = clipboard_app(dir.path(), None);
+        open_clipboard(&mut app);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert!(
+            matches!(&page.status, crate::clipboard_page::Status::Failed(reason) if reason.contains("engine")),
+            "{:?}",
+            page.status
+        );
+    }
+
+    #[test]
+    fn clicking_a_clipboard_row_copies_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "first"), clip_row("2", "second entry")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"second entry".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let mut ui = iced_test::simulator(app.view());
+        ui.click("second entry").expect("the row is drawn");
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::ClipboardSelected(1))),
+            "{messages:?}"
+        );
+        let mut writes = Vec::new();
+        for message in messages {
+            let task = app.update(message);
+            writes.extend(settle(&mut app, task));
+        }
+        assert_eq!(writes, ["second entry"]);
     }
 }
