@@ -118,8 +118,8 @@ impl ExchangeRateService {
     }
 
     /// The rates, fetched first when they are missing or stale, unless
-    /// automatic fetching is off or a fetch failed in the last
-    /// [`RETRY_AFTER_FAILURE_SECS`]. A failed fetch answers with what is held.
+    /// automatic fetching is off or a fetch failed in the last 15 minutes.
+    /// A failed fetch answers with what is held.
     pub async fn wanted(&self) -> Option<ExchangeRates> {
         if self.auto_refresh_disabled || !self.due(now()).await {
             return self.current().await;
