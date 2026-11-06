@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 
 import compare
@@ -38,6 +39,15 @@ class UpstreamGateTests(unittest.TestCase):
         del broken["type_ms"]
         with self.assertRaises(KeyError):
             compare.gate({"compass": broken, "upstream": summary()}, UPSTREAM, WORKLOAD)
+
+
+class EngineLogTests(unittest.TestCase):
+    def test_an_exit_error_quotes_the_end_of_the_engine_log(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".log") as log:
+            log.write("starting\n")
+            log.write("vicinae-server: error while loading shared libraries: libOpenGL.so.0\n")
+            quoted = compare.tail(log, lines=1)
+        self.assertEqual(quoted, "\n  | vicinae-server: error while loading shared libraries: libOpenGL.so.0")
 
 
 if __name__ == "__main__":

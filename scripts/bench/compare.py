@@ -240,6 +240,13 @@ def kill_tag(tag):
     raise RuntimeError(f"processes tagged {tag} survived SIGKILL")
 
 
+def tail(logfile, lines=20):
+    """The end of an engine's log, so a CI failure shows why it exited, not only where to look."""
+    logfile.flush()
+    text = pathlib.Path(logfile.name).read_text(errors="replace").splitlines()[-lines:]
+    return "".join(f"\n  | {line}" for line in text)
+
+
 # --- compositor ------------------------------------------------------------
 
 class Screen:
@@ -378,7 +385,7 @@ def measure_one(kind, args, base, run, screen, wayland, bus):
         end = start + DEADLINE_S
         while (seen_ready is None or seen_frame is None) and time.monotonic() < end:
             if child.poll() is not None and not tagged(tag):
-                raise RuntimeError(f"{kind} exited {child.returncode}; see {logfile.name}")
+                raise RuntimeError(f"{kind} exited {child.returncode}; see {logfile.name}{tail(logfile)}")
             if seen_frame is None and not screen.blank():
                 seen_frame = time.monotonic()
             if seen_ready is None and ready():
@@ -440,7 +447,8 @@ def warm_ping(args, base, out, screen, wayland, bus, identity):
 
             def answering(kind=kind, tag=tag, child=child, ready=ready):
                 if child.poll() is not None and not tagged(tag):
-                    raise RuntimeError(f"{kind} exited {child.returncode} before answering a ping")
+                    raise RuntimeError(f"{kind} exited {child.returncode} before answering a ping; "
+                                       f"see {logfile.name}{tail(logfile)}")
                 return ready()
 
             wait(answering, f"{kind} to answer pings")

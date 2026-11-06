@@ -16,7 +16,10 @@ just bench-compare                 # or: scripts/bench/compare.sh [OUTPUT_DIR] [
 ```
 
 It needs the pinned Rust toolchain, a C++23 compiler, `python3`, `sway`, `grim`, `wtype`,
-`dbus-daemon` and binutils. No GPU and no running desktop are needed. The script:
+`dbus-daemon` and binutils. The upstream AppImage bundles Qt but loads GL dispatch, font and X client
+libraries from the host. On Ubuntu these are `libopengl0`, `libglx0`, `libegl1`, `libfontconfig1`,
+`libfreetype6` and `libx11-xcb1`, and the script names any that are missing before it builds
+anything. No GPU and no running desktop are needed. The script:
 
 1. Downloads the upstream **Vicinae v0.29.0** x86_64 AppImage named in
    [`scripts/bench/baseline.json`](../../scripts/bench/baseline.json) and refuses it unless its

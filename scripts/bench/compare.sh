@@ -34,6 +34,16 @@ rm -rf "$out/upstream"
 mkdir -p "$out/upstream"
 (cd "$out/upstream" && "$appimage" --appimage-extract >/dev/null)
 
+# The AppImage bundles Qt but takes GL dispatch, font and X client libraries from the
+# host. Name the missing ones here, not as an exit 127 in the middle of the first run.
+server="$out/upstream/squashfs-root/usr/bin/vicinae-server"
+missing=$(LD_LIBRARY_PATH="$out/upstream/squashfs-root/usr/lib" ldd "$server" | awk '/not found/ {print $1}' | sort -u)
+if [ -n "$missing" ]; then
+  echo "upstream's vicinae-server needs host libraries this machine lacks: ${missing//$'\n'/ }" >&2
+  echo "On Debian or Ubuntu: apt install libopengl0 libglx0 libegl1 libfontconfig1 libfreetype6 libx11-xcb1" >&2
+  exit 1
+fi
+
 cargo build --release --locked -p compass -p compass-testkit -p compass-sandbox \
   --bin compass --bin compass-file-indexer --bin fuzzy-throughput --bin compass-sandbox-exec \
   --bin head-to-head

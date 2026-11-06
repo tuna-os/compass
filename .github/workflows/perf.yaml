@@ -259,12 +259,18 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # compare.sh's own list: a headless compositor, a screenshot tool, a virtual
-      # keyboard and a private bus. The xkbcommon headers are for the build.
-      - name: Install the session tools and the xkbcommon headers
+      # keyboard and a private bus. The xkbcommon headers are for the build. The
+      # AppImage bundles Qt but expects the host's GL dispatch, font and X client
+      # libraries; the hosted image lacks libOpenGL.so.0, and without it
+      # vicinae-server exits 127 before it starts. Mesa is the software renderer
+      # both engines draw with.
+      - name: Install the session tools, the xkbcommon headers and upstream's host libraries
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
-            sway grim wtype dbus-daemon libxkbcommon-dev
+            sway grim wtype dbus-daemon libxkbcommon-dev \
+            libopengl0 libglx0 libegl1 libegl-mesa0 libgl1-mesa-dri \
+            libfontconfig1 libfreetype6 libx11-xcb1
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
