@@ -5,10 +5,11 @@
 
 use iced::keyboard::{Key, Modifiers};
 
+use super::icons::clipboard_url;
 use super::{
     Alignment, Confirm, ConfirmAction, Element, LauncherApp, Length, Message, Padding, Page,
-    PanelSection, PanelState, Space, Task, clipboard_url, column, container, focus_search, hud,
-    image, mouse_area, preview, row, scrollable, text,
+    PanelSection, PanelState, Space, Task, column, container, focus_search, hud, image, mouse_area,
+    preview, row, scrollable, text,
 };
 use crate::action_panel::Action;
 use crate::backend::{PreferenceInput, PreferenceInputKind};

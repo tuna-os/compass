@@ -6,11 +6,12 @@
 //! them -- opening and closing, filtering, moving the selection, the
 //! shortcuts an action advertises, and drawing the panel over the card.
 
+use super::view::query_input_style;
 use super::{
     Action, Alignment, AppItem, Arc, Border, Color, Direction, Element, LauncherApp, Length,
     Message, PANEL_INPUT, Padding, Page, PanelSection, Row, RowKind, Space, Step, Task, Theme,
     action_panel, chord_direction, column, container, design, focus_search, launch_task,
-    mouse_area, query_input_style, row, scrollable, text, text_input,
+    mouse_area, row, scrollable, text, text_input,
 };
 
 pub(super) const APP_OPEN: &str = "app.open";
