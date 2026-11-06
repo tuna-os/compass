@@ -1243,8 +1243,9 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
     # So VmRSS is no longer held to a fixed number: it is judged against the
     # VM tier's own nightly series, in its own environment, as #339 judges the
     # per-commit figure. The fixed ceiling stays where it measures the engine,
-    # on RssAnon + RssShmem, at the same 20 MB: about double the 9.4 MB it
-    # reads now and two-thirds of the #13 SLA, for the reasons it was 20 before
+    # on RssAnon + RssShmem, at the same 20 MB: about double the 10.6 MB it
+    # read in this tier (run 42131817713; 9.4 MB locally) and two-thirds of the
+    # #13 SLA, for the reasons it was 20 before
     # -- loose enough that another application set or Bluefin rebase does not
     # turn the run red, tight enough that the engine cannot double unnoticed.
     #
@@ -1271,7 +1272,7 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
     fi
     if [ "$engine_mb" -ge "$ENGINE_ANON_CEILING_MB" ]; then
       echo "FAIL: engine idle RssAnon+RssShmem is ${engine_mb} MB, at or over the ${ENGINE_ANON_CEILING_MB} MB ceiling" >&2
-      echo "      (9.4 MB from run 42007055217's bundle when the ceiling moved to it in #345; the #13 SLA is 30 MB)" >&2
+      echo "      (10.6 MB in run 42131817713, when the ceiling moved to it in #345; the #13 SLA is 30 MB)" >&2
       echo "      Find what grew. Do not raise the ceiling to fit." >&2
       exit 1
     fi

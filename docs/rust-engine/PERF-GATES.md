@@ -40,13 +40,14 @@ ceiling of 20 MB inside `launcher-rss`. `engine.idle_rss_kb` is VmRSS, and it us
 ceiling. #345 moved it here. Every nightly from 2026-09-26 on read 43–45 MB and failed, against
 9.8 and 10.2 MB in the two September runs the ceiling was set from. The Flatpak bundle of run
 42007055217, started locally the way `engine-start` starts it (`serve --no-hotkey`, a session bus,
-the network), reads 42–44 MB as well. `/proc` breaks it down like this:
+the network), reads 42–44 MB as well. `/proc` breaks it down like this, locally and in the VM tier
+on this change's own run (42131817713, 45.9 MB):
 
-| part | MB | what it is |
-|---|---|---|
-| `RssAnon + RssShmem` | 9.4 | the engine's own memory |
-| `RssFile`, `/app/bin/compass` | 25 | clean read-only pages of the 63 MB binary that the engine shares with the window. 18 MB of it is text |
-| `RssFile`, shared libraries | 8 | 5.4 MB of this is `libcrypto` |
+| part | MB, local | MB, VM | what it is |
+|---|---|---|---|
+| `RssAnon + RssShmem` | 9.4 | 10.6 | the engine's own memory |
+| `RssFile`, `/app/bin/compass` | 25 | 28 | clean read-only pages of the 63 MB binary that the engine shares with the window. 18 MB of it is text, locally |
+| `RssFile`, shared libraries | 8 | 7.2 | 5.4 MB (5.5 MB in the VM) of this is `libcrypto` |
 
 Most of the binary's share is the kernel's doing. The kernel maps file pages 64 kB around each
 fault (`fault_around_bytes`). With that set to 4 kB, the same engine maps 7.8 MB of text instead of
