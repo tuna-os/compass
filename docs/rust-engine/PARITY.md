@@ -3859,7 +3859,7 @@ The C++ CLI has no clipboard diagnostics or reset, and until this change the Rus
 keyring or database failure once and left clipboard history off for the session. Compass now
 reports it and offers a way out (#322, phase 3):
 
-- The engine answers `ClipboardStatus` (IPC v25): the backend in use (data-control and its
+- The engine answers `ClipboardStatus` (IPC v26): the backend in use (data-control and its
   protocol, or the GNOME Shell extension), whether it delivers copies, the monitoring switch, and
   whether the history is open, waiting for the keyring, or failed. `compass doctor` reports it in
   `clipboard.history`, and guesses from the session when no engine answers, naming an X11 session

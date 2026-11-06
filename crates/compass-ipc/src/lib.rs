@@ -65,11 +65,11 @@ pub use protocol::{
     FileHit, FontEntry, InputServerStatus, LONG_POLL_MARGIN, LauncherShortcutState,
     LocalStorageEntry, LoginStartState, LoginStartUnit, MediaPlayerAction, MediaPlayerEntry,
     OAuthTokenSetEntry, OpenerEntry, PROTOCOL_VERSION, PreferenceField, PreferenceFieldKind,
-    ProtocolError, QueryHit, Request, RequestEnvelope, Response, ResponseEnvelope,
-    RhaiScriptEntry, RootItemEdit, ScriptArgumentEntry, ScriptEntry,
-    ScriptGrantEntry, ShortcutEntry, SnippetEntry, StoreDetail, StoreEntry, StoreKind,
-    TrayItemInfo, TrayMenuEntry, UpdateOffer, WindowCommand, WindowInfo, WindowManagerCapabilities,
-    WindowOutcome, WindowToggle, WorkspaceApp, WorkspaceEntry, long_poll_deadline,
+    ProtocolError, QueryHit, Request, RequestEnvelope, Response, ResponseEnvelope, RhaiScriptEntry,
+    RootItemEdit, ScriptArgumentEntry, ScriptEntry, ScriptGrantEntry, ShortcutEntry, SnippetEntry,
+    StoreDetail, StoreEntry, StoreKind, TrayItemInfo, TrayMenuEntry, UpdateOffer, WindowCommand,
+    WindowInfo, WindowManagerCapabilities, WindowOutcome, WindowToggle, WorkspaceApp,
+    WorkspaceEntry, long_poll_deadline,
 };
 pub use transport::{
     Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,
