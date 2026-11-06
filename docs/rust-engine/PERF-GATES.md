@@ -247,13 +247,19 @@ A reset in `perf-resets.json` works for a `versus.*` metric as it does for any o
 restarts that action's ratio window. It does not let Compass stay behind upstream: once 30 new runs
 exist, the action is judged against a ratio of 1 again.
 
-The first run of `compare.py` with the gate was a local one, with three runs of each engine on a
-shared 12-core AMD EPYC with a load average of 7 to 14, so its figures are noisy. Compass was ahead
-on `ping`, at a ratio of 0.58, and on `query_keystroke`, at 0.21. It was behind on both launch
-actions, at 2.5 and 1.5, and level on `idle_rss`, at 1.004. Compass's first frame ranged from 0.5 s
-to 19 s across its three runs. This is why the gate does not judge before it has a series: one run
-on a busy machine cannot tell a real gap from noise. If the hosted series confirms the launch gap,
-`main` turns red on those two actions as soon as the series is long enough to judge.
+The first two runs show why the gate does not judge before it has a series.
+
+- **Local:** three runs of each engine on a shared 12-core AMD EPYC with a load average of 7 to 14.
+  Compass was ahead on `ping` (ratio 0.58) and `query_keystroke` (0.21). It was behind on both
+  launch actions (2.5 and 1.5), and level on `idle_rss` (1.004). Compass's first frame ranged from
+  0.5 s to 19 s across its three runs.
+- **Hosted,** in PR #346's run: five runs of each engine on a 4-core AMD EPYC 9V45 runner. Compass
+  was ahead on `ping` (0.60), `query_keystroke` (0.48), `launch_first_frame` (0.58) and
+  `launch_populated` (0.89), and level on `idle_rss` (1.000: 281,720 KiB against 281,724 KiB).
+  The one slow Compass first frame (4.8 s, in run 1) did not move the median.
+
+One run on a busy machine cannot tell a real gap from noise. `idle_rss` sits at parity, so its
+verdict depends on the spread that the series measures. With no spread, the 1% minimum applies.
 
 ## The resident window on real hardware
 
