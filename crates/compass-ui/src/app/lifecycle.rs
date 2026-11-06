@@ -13,8 +13,7 @@ use super::{
 };
 
 /// Set when the app asks its event loop to end.
-pub(super) static EXIT_REQUESTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,7 +255,7 @@ impl LauncherApp {
     }
 
     /// Hides or exits after [`Self::conceal`] has reset the view.
-    pub(super) fn hide_window(&mut self) -> Task<Message> {
+    fn hide_window(&mut self) -> Task<Message> {
         self.reopen_after_close = false;
         self.window_focused = false;
         if self.on_dismiss() == Dismissal::Exit {
@@ -428,7 +427,7 @@ impl LauncherApp {
 
     /// The visibility half of [`Self::obey`]: every command but `Hide`
     /// shows the window, `Toggle` depending on where it is.
-    pub(super) fn obey_visibility(&mut self, command: &UiCommand) -> Task<Message> {
+    fn obey_visibility(&mut self, command: &UiCommand) -> Task<Message> {
         let show = match command {
             UiCommand::Show
             | UiCommand::Dmenu(_)
@@ -544,7 +543,7 @@ impl LauncherApp {
     }
 
     /// Takes the backdrop down with the launcher.
-    pub(super) fn close_backdrop(&mut self) -> Task<Message> {
+    fn close_backdrop(&mut self) -> Task<Message> {
         self.backdrop_size = None;
         self.backdrop.take().map_or_else(Task::none, window::close)
     }
@@ -680,7 +679,7 @@ pub(crate) fn exit_requested() -> bool {
 /// A free function rather than a closure because [`iced::event::listen_with`]
 /// takes a plain `fn` pointer. See [`LauncherApp::subscription`] for why the
 /// stream is read at this level rather than through `iced::keyboard::listen`.
-pub(super) fn keyboard_events(
+fn keyboard_events(
     event: iced::Event,
     _status: iced::event::Status,
     window: window::Id,

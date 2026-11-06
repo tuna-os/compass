@@ -369,7 +369,7 @@ impl LauncherApp {
 
     /// Offers the fallbacks under the results for a non-empty query, as
     /// `RootFallbackSection` does.
-    pub(super) fn apply_fallbacks(&mut self) {
+    fn apply_fallbacks(&mut self) {
         self.results
             .retain(|row| !matches!(row, RootRow::Fallback(_)));
         if self.query.trim().is_empty() || self.provider_scope.is_some() {
@@ -400,7 +400,7 @@ impl LauncherApp {
     /// The fallback a `fallbacks` entry names here, when it names an item
     /// that can be one (`isSuitableForFallback`): Search Files, any
     /// extension command, or a quicklink with exactly one argument.
-    pub(super) fn resolve_fallback(&self, id: &str) -> Option<Fallback> {
+    fn resolve_fallback(&self, id: &str) -> Option<Fallback> {
         if let Some(command) = compass_core::commands::fallback(id) {
             return Some(Fallback::Command(command));
         }
@@ -439,7 +439,7 @@ impl LauncherApp {
     /// an extension command opens with it as its fallback text
     /// (`OpenBuiltinCommandAction::setForwardSearchText`), and a quicklink
     /// opens with it as its argument (`OpenShortcutFromSearchText`).
-    pub(super) fn open_fallback(&mut self, fallback: Fallback) -> Task<Message> {
+    fn open_fallback(&mut self, fallback: Fallback) -> Task<Message> {
         use compass_core::commands::CommandKind;
         self.panel = None;
         let query = self.query.clone();
@@ -460,7 +460,7 @@ impl LauncherApp {
     }
 
     /// Puts the calculator's answer to the query first, when there is one.
-    pub(super) fn apply_calculator(&mut self) {
+    fn apply_calculator(&mut self) {
         self.results.retain(|row| *row != RootRow::Calculator);
         self.calculator = compass_core::calculator::evaluate(&self.query, !self.results.is_empty());
         if self.calculator.is_some() {
@@ -483,7 +483,7 @@ impl LauncherApp {
     /// The engine rescanned applications or extensions: this window scans
     /// its own copy again, as the C++'s one process reloads its root items on
     /// `appsChanged`, and searches again so no row points at a moved entry.
-    pub(super) fn catalog_moved(&mut self, generation: u64) -> Task<Message> {
+    fn catalog_moved(&mut self, generation: u64) -> Task<Message> {
         if generation == self.catalog_generation {
             return Task::none();
         }

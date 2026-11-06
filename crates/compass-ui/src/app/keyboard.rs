@@ -569,7 +569,7 @@ pub fn quick_launch_position(
     Some(value as usize - 1)
 }
 
-pub(super) fn extension_chord(
+fn extension_chord(
     key: &iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
 ) -> Option<(Vec<compass_extension_api::action::KeyModifier>, String)> {

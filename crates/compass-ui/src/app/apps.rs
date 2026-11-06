@@ -7,10 +7,11 @@ use std::sync::Arc;
 
 use iced::keyboard::{Key, Modifiers, key::Named};
 
+use super::search::launch_task;
 use super::{
     Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
-    Task, chord_direction, column, container, focus_search, launch_task, mouse_area,
-    next_selection, scrollable, text,
+    Task, chord_direction, column, container, focus_search, mouse_area, next_selection, scrollable,
+    text,
 };
 use crate::action_panel::Action;
 use crate::apps_page::{self, AppRow, AppsKind, AppsPage};

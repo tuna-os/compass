@@ -58,7 +58,7 @@ impl LauncherApp {
         .into()
     }
 
-    pub(super) fn settings_sidebar<'a>(&'a self, page: &'a SettingsPage) -> Element<'a, Message> {
+    fn settings_sidebar<'a>(&'a self, page: &'a SettingsPage) -> Element<'a, Message> {
         let palette = self.palette();
         let mut list = column![].spacing(2);
         for (position, entry) in page.sidebar.rows().iter().enumerate() {
@@ -105,7 +105,7 @@ impl LauncherApp {
         .into()
     }
 
-    pub(super) fn settings_heading(&self, label: String) -> Element<'_, Message> {
+    fn settings_heading(&self, label: String) -> Element<'_, Message> {
         text(label)
             .font(iced::Font {
                 weight: iced::font::Weight::Bold,
@@ -117,7 +117,7 @@ impl LauncherApp {
 
     /// A preferences group's title (`AdwPreferencesGroup:title`): bold, in
     /// the text colour, over its boxed list.
-    pub(super) fn settings_group_title(&self, label: String) -> Element<'_, Message> {
+    fn settings_group_title(&self, label: String) -> Element<'_, Message> {
         container(
             text(label)
                 .font(iced::Font {
@@ -132,10 +132,7 @@ impl LauncherApp {
 
     /// Rows in a boxed list (`.boxed-list`): one card, 12 px corners, a
     /// hairline between rows.
-    pub(super) fn settings_boxed<'a>(
-        &self,
-        rows: Vec<Element<'a, Message>>,
-    ) -> Element<'a, Message> {
+    fn settings_boxed<'a>(&self, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
         let palette = self.palette();
         let mut list = column![];
         for (index, entry) in rows.into_iter().enumerate() {
@@ -154,7 +151,7 @@ impl LauncherApp {
     }
 
     /// A group: its title, if it has one, over its rows in a boxed list.
-    pub(super) fn settings_group<'a>(
+    fn settings_group<'a>(
         &'a self,
         title: Option<String>,
         rows: Vec<Element<'a, Message>>,
@@ -168,7 +165,7 @@ impl LauncherApp {
 
     /// One labelled row (`AdwActionRow`): the label and its description,
     /// the control on the right, at least 50 px tall.
-    pub(super) fn settings_row<'a>(
+    fn settings_row<'a>(
         &'a self,
         label: String,
         description: String,
@@ -200,7 +197,7 @@ impl LauncherApp {
     /// `target`. A field draws its own ring, so it only takes the room; the
     /// control with the keyboard is also what the page scrolls to, unless an
     /// open dropdown's highlighted option is.
-    pub(super) fn settings_ring<'a>(
+    fn settings_ring<'a>(
         &self,
         page: &SettingsPage,
         target: &Control,
@@ -223,7 +220,7 @@ impl LauncherApp {
 
     /// An open dropdown's options, under its row: the highlighted one in
     /// the selection's colours and the current one ticked.
-    pub(super) fn settings_menu<'a>(
+    fn settings_menu<'a>(
         &self,
         key: &str,
         options: Vec<(String, String)>,
@@ -299,7 +296,7 @@ impl LauncherApp {
 
     /// A row the search matched: tinted with the accent, and the best one is
     /// what the page scrolls to while the search field has the keyboard.
-    pub(super) fn settings_match<'a>(
+    fn settings_match<'a>(
         &self,
         page: &SettingsPage,
         key: &str,
@@ -331,11 +328,7 @@ impl LauncherApp {
     }
 
     /// A flat, Adwaita-style button.
-    pub(super) fn settings_button<'a>(
-        &self,
-        label: String,
-        size: f32,
-    ) -> iced::widget::Button<'a, Message> {
+    fn settings_button<'a>(&self, label: String, size: f32) -> iced::widget::Button<'a, Message> {
         let palette = self.palette();
         button(text(label).font(self.font()).size(size))
             .padding(adwaita::CONTROL_PADDING)
@@ -343,7 +336,7 @@ impl LauncherApp {
     }
 
     /// A setting's control, by its kind.
-    pub(super) fn settings_control<'a>(
+    fn settings_control<'a>(
         &'a self,
         page: &'a SettingsPage,
         setting: &Setting,
@@ -358,7 +351,7 @@ impl LauncherApp {
         self.settings_ring(page, &target, control, radius)
     }
 
-    pub(super) fn settings_bare_control<'a>(
+    fn settings_bare_control<'a>(
         &'a self,
         page: &'a SettingsPage,
         setting: &Setting,
@@ -517,7 +510,7 @@ impl LauncherApp {
     }
 
     /// Settings grouped under their section titles, one boxed list each.
-    pub(super) fn settings_list<'a>(
+    fn settings_list<'a>(
         &'a self,
         page: &'a SettingsPage,
         settings_shown: &[Setting],
@@ -537,7 +530,7 @@ impl LauncherApp {
         list.into()
     }
 
-    pub(super) fn settings_core_page<'a>(
+    fn settings_core_page<'a>(
         &'a self,
         page: &'a SettingsPage,
         core: CorePage,
@@ -651,10 +644,7 @@ impl LauncherApp {
     /// General's Start at login row: the switch, and what the engine says
     /// starts Compass at login, including a packaged systemd unit it leaves
     /// alone.
-    pub(super) fn settings_login_start<'a>(
-        &'a self,
-        page: &'a SettingsPage,
-    ) -> Element<'a, Message> {
+    fn settings_login_start<'a>(&'a self, page: &'a SettingsPage) -> Element<'a, Message> {
         let palette = self.palette();
         let on = self.login_start_on();
         let description = self.login_start_line(LOGIN_START_DEFAULT);
@@ -674,7 +664,7 @@ impl LauncherApp {
         )
     }
 
-    pub(super) fn settings_provider_page<'a>(
+    fn settings_provider_page<'a>(
         &'a self,
         page: &'a SettingsPage,
         provider: &'a ProviderEntry,
@@ -714,7 +704,7 @@ impl LauncherApp {
 
     /// One root item's rows: its switch, alias, shortcut and preferences
     /// button, then the settings that belong to it, indented under it.
-    pub(super) fn settings_item<'a>(
+    fn settings_item<'a>(
         &'a self,
         page: &'a SettingsPage,
         item: &'a ItemEntry,
@@ -794,10 +784,7 @@ impl LauncherApp {
         rows
     }
 
-    pub(super) fn settings_recorder<'a>(
-        &'a self,
-        recorder: &'a ShortcutRecorder,
-    ) -> Element<'a, Message> {
+    fn settings_recorder<'a>(&'a self, recorder: &'a ShortcutRecorder) -> Element<'a, Message> {
         let palette = self.palette();
         let badge = if recorder.tokens.is_empty() {
             "…".to_owned()

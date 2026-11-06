@@ -6,21 +6,22 @@
 //! them -- opening and closing, filtering, moving the selection, the
 //! shortcuts an action advertises, and drawing the panel over the card.
 
+use super::search::launch_task;
 use super::view::query_input_style;
 use super::{
     Action, Alignment, AppItem, Arc, Border, Color, Direction, Element, LauncherApp, Length,
     Message, PANEL_INPUT, Padding, Page, PanelSection, Row, RowKind, Space, Step, Task, Theme,
-    action_panel, chord_direction, column, container, design, focus_search, launch_task,
-    mouse_area, row, scrollable, text, text_input,
+    action_panel, chord_direction, column, container, design, focus_search, mouse_area, row,
+    scrollable, text, text_input,
 };
 
-pub(super) const APP_OPEN: &str = "app.open";
-pub(super) const APP_COPY_NAME: &str = "app.copy-name";
-pub(super) const APP_COPY_PATH: &str = "app.copy-path";
-pub(super) const APP_DESKTOP_ACTION: &str = "app.desktop:";
+const APP_OPEN: &str = "app.open";
+const APP_COPY_NAME: &str = "app.copy-name";
+const APP_COPY_PATH: &str = "app.copy-path";
+const APP_DESKTOP_ACTION: &str = "app.desktop:";
 
 /// Panel ids for an extension's actions: this prefix, then the handler.
-pub(super) const EXTENSION_ACTION: &str = "ext:";
+const EXTENSION_ACTION: &str = "ext:";
 
 /// The action panel's own state while it is open.
 ///
@@ -477,7 +478,7 @@ impl LauncherApp {
     /// The shortcut recorder in the panel's place (`ShortcutRecorderPanel`):
     /// the item's title, then the chord or the current shortcut, the status
     /// line and, while the item has a shortcut, how to remove it.
-    pub(super) fn view_recorder<'a>(
+    fn view_recorder<'a>(
         &'a self,
         recorder: &'a crate::shortcut_recorder::ShortcutRecorder,
     ) -> Element<'a, Message> {
@@ -658,7 +659,7 @@ pub fn actions_for_app(item: &AppItem) -> Vec<PanelSection> {
 /// A key's name as panel shortcuts spell it: a character lower-cased, or
 /// the named key (`enter`, `up`, `delete`, ...). `None` for a key no
 /// shortcut names.
-pub(super) fn pressed_key_name(key: &iced::keyboard::Key) -> Option<String> {
+fn pressed_key_name(key: &iced::keyboard::Key) -> Option<String> {
     use iced::keyboard::{Key, key::Named};
     Some(match key.as_ref() {
         Key::Character(c) => c.to_lowercase(),
@@ -714,9 +715,7 @@ pub(super) fn shortcut_label(shortcut: &compass_extension_api::action::Shortcut)
 
 /// An extension view's actions on offer, as panel sections. Submenus are
 /// flattened into their section for now.
-pub(super) fn extension_panel_sections(
-    page: &crate::extension_page::ExtensionPage,
-) -> Vec<PanelSection> {
+fn extension_panel_sections(page: &crate::extension_page::ExtensionPage) -> Vec<PanelSection> {
     use compass_extension_api::action::ActionItem;
     fn actions(items: &[ActionItem], out: &mut Vec<action_panel::Action>) {
         for item in items {

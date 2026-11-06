@@ -6,6 +6,30 @@
 //! makes this crate testable in a container with no display server — the
 //! selection and launch-target logic, which is where the bugs live, is exercised
 //! by ordinary unit tests, and only the drawing needs a compositor.
+//!
+//! # Where things are
+//!
+//! This file is the coordinator: [`LauncherApp`]'s state, building it, and
+//! `update`, which routes each [`Message`] to the module that owns it. The
+//! behaviour lives in the `app/` modules, each an `impl LauncherApp` block so
+//! it reaches the state without widening it:
+//!
+//! - the window: `lifecycle` (opening, hiding, the engine's commands),
+//!   `keyboard` (who gets a key press), `view` (drawing the card, its theme)
+//!   and `icons`;
+//! - the root search: `search` (ranking, selection, launching), `root` (its
+//!   favourites, aliases and history), `panel` (the action panel) and
+//!   `commands` (opening a builtin command);
+//! - one module per view a command opens: `clipboard`, `files`, `windows`,
+//!   `emoji`, `extension`, `preferences`, `settings_view` and the rest;
+//! - `state_line`, the log line every message leaves, and `flags`, what the
+//!   launcher starts with.
+//!
+//! Tests sit beside the module they exercise; fixtures more than one module
+//! uses are in `test_support`. The imports below double as the prelude the
+//! `app/` modules take through `super::`.
+
+use std::sync::Arc;
 
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
@@ -14,10 +38,6 @@ use iced::{
     },
     window,
 };
-use lifecycle::exit;
-use search::launch_task;
-
-use std::sync::Arc;
 
 use compass_core::{AppIndex, AppItem};
 use compass_platform::{AppLauncher, NullLauncher};
@@ -76,14 +96,12 @@ mod windows;
 mod workspaces;
 
 pub use flags::AppFlags;
-
 pub use icons::IconLookup;
-
+pub use keyboard::quick_launch_position;
+pub use lifecycle::Dismissal;
 pub use panel::{PanelState, actions_for_app};
 
-pub use keyboard::quick_launch_position;
-
-pub use lifecycle::Dismissal;
+use lifecycle::exit;
 pub(crate) use lifecycle::exit_requested;
 
 /// The search field's widget id.

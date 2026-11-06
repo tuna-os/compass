@@ -115,7 +115,7 @@ impl LauncherApp {
 
     /// A checkbox in a form, ringed in the accent colour while the keyboard
     /// is on it: it cannot take Iced's focus, so it draws none of its own.
-    pub(super) fn form_focus_ring<'a>(
+    fn form_focus_ring<'a>(
         &self,
         focused: bool,
         field: Element<'a, Message>,

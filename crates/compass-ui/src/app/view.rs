@@ -12,14 +12,14 @@ use super::{
 };
 
 /// The gap between the floating action panel and the card's edges.
-pub(super) const PANEL_MARGIN: f32 = 8.0;
+const PANEL_MARGIN: f32 = 8.0;
 
 /// The tallest the card grows to hold the action panel; a longer panel
 /// scrolls.
-pub(super) const PANEL_ROOM_CAP: f32 = 360.0;
+const PANEL_ROOM_CAP: f32 = 360.0;
 
 /// What the search field sends as the user types.
-pub(super) type OnInput = fn(String) -> Message;
+type OnInput = fn(String) -> Message;
 
 impl LauncherApp {
     /// The appearance the card is drawn in: the desktop's light or dark
@@ -74,8 +74,9 @@ impl LauncherApp {
     /// ones, which is what keeps the two renderings honest about each other.
     ///
     /// The appearance follows the desktop when something is feeding
-    /// [`AppFlags::appearance_link`], and otherwise stays on
-    /// [`AppFlags::appearance`] for the window's whole life.
+    /// [`AppFlags::appearance_link`](super::AppFlags::appearance_link), and
+    /// otherwise stays on [`AppFlags::appearance`](super::AppFlags::appearance)
+    /// for the window's whole life.
     pub(super) fn palette(&self) -> design::Palette {
         self.view.theme_choice.palette(self.view.appearance)
     }
@@ -879,7 +880,7 @@ impl LauncherApp {
 /// one set of colours: `tint` is a property of the window, not of the scheme,
 /// and a palette that changed with it would make every other surface's
 /// contrast depend on a background setting.
-pub(super) fn card_background(surface: design::Rgb, tint: bool) -> iced::Color {
+fn card_background(surface: design::Rgb, tint: bool) -> iced::Color {
     let colour = surface.to_iced();
     if tint {
         colour.scale_alpha(TINT_ALPHA)

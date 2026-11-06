@@ -13,18 +13,19 @@ use super::{
 
 /// The nominal pixel size asked of the icon theme.
 ///
-/// [`design::GEOMETRY`]'s `icon_size`, which is the square the row reserves.
+/// [`design::GEOMETRY`](crate::design::GEOMETRY)'s `icon_size`, which is the square the row reserves.
 /// Asking the theme for that size rather than a fixed 32 keeps the two from
 /// drifting: a design change that grows the slot asks for a larger icon
 /// instead of scaling a small one up.
-pub(super) const ICON_PIXELS: u32 = GEOMETRY.icon_size as u32;
+const ICON_PIXELS: u32 = GEOMETRY.icon_size as u32;
 
-pub(super) type IconFinder = dyn Fn(&str) -> Option<std::path::PathBuf> + Send + Sync;
+type IconFinder = dyn Fn(&str) -> Option<std::path::PathBuf> + Send + Sync;
 
-/// Resolves an `Icon=` name to a file. See [`AppFlags::icon_lookup`].
+/// Resolves an `Icon=` name to a file. See
+/// [`AppFlags::icon_lookup`](super::AppFlags::icon_lookup).
 ///
 /// A named type rather than a bare `Arc<dyn Fn…>` so it can carry a `Debug`
-/// impl: [`AppFlags`] derives `Debug`, and a closure does not.
+/// impl: [`AppFlags`](super::AppFlags) derives `Debug`, and a closure does not.
 #[derive(Clone)]
 pub struct IconLookup(Arc<IconFinder>);
 
@@ -219,7 +220,7 @@ impl LauncherApp {
     }
 
     /// The application a window belongs to, when the engine recognised it.
-    pub(super) fn window_app(&self, window: &crate::backend::WindowRow) -> Option<&AppItem> {
+    fn window_app(&self, window: &crate::backend::WindowRow) -> Option<&AppItem> {
         if !window.app_known {
             return None;
         }
@@ -483,8 +484,9 @@ impl LauncherApp {
     }
 
     /// Resolves `urls` into [`Self::url_glyphs`], asking for each remote
-    /// image not yet fetched (when [`AppFlags::remote_icons`] allows).
-    pub(super) fn warm_urls(&mut self, urls: Vec<compass_core::image_url::ImageUrl>) {
+    /// image not yet fetched (when
+    /// [`AppFlags::remote_icons`](super::AppFlags::remote_icons) allows).
+    fn warm_urls(&mut self, urls: Vec<compass_core::image_url::ImageUrl>) {
         let find = self.icon_lookup.clone();
         let find = |name: &str| find.find(name);
         for url in urls {

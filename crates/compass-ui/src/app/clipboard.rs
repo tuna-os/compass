@@ -679,7 +679,7 @@ impl LauncherApp {
     }
 
     /// Asks for clipboard history matching the view's filter.
-    pub(super) fn clipboard_search_task(&mut self) -> Task<Message> {
+    fn clipboard_search_task(&mut self) -> Task<Message> {
         let Page::Clipboard(page) = &mut self.page else {
             return Task::none();
         };
@@ -745,7 +745,7 @@ impl LauncherApp {
         )
     }
 
-    pub(super) fn copy_selected_clipboard_entry(&mut self) -> Task<Message> {
+    fn copy_selected_clipboard_entry(&mut self) -> Task<Message> {
         let Page::Clipboard(page) = &self.page else {
             return Task::none();
         };

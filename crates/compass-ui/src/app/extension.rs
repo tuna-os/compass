@@ -304,7 +304,7 @@ impl LauncherApp {
     }
 
     /// Asks the engine for `session`'s next state after `after`.
-    pub(super) fn extension_poll(&self, session: u64, after: u64) -> Task<Message> {
+    fn extension_poll(&self, session: u64, after: u64) -> Task<Message> {
         let Some(backend) = self.backend.clone() else {
             return Task::none();
         };
@@ -551,7 +551,7 @@ impl LauncherApp {
         column![body, container(footer).padding(Padding::new(6.0).left(14))].into()
     }
 
-    pub(super) fn extension_view_body<'a>(
+    fn extension_view_body<'a>(
         &'a self,
         page: &'a crate::extension_page::ExtensionPage,
     ) -> Element<'a, Message> {

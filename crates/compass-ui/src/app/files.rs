@@ -221,7 +221,7 @@ impl LauncherApp {
     }
 
     /// Asks Search Files' query: at once, or once its debounce runs out.
-    pub(super) fn files_query_task(&mut self) -> Task<Message> {
+    fn files_query_task(&mut self) -> Task<Message> {
         let Page::Files(page) = &self.page else {
             return Task::none();
         };
@@ -239,7 +239,7 @@ impl LauncherApp {
     }
 
     /// Sends Search Files' query `generation`, unless the text moved on.
-    pub(super) fn files_search_task(&mut self, generation: u64) -> Task<Message> {
+    fn files_search_task(&mut self, generation: u64) -> Task<Message> {
         let Page::Files(page) = &mut self.page else {
             return Task::none();
         };
