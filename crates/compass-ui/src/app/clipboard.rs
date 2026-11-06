@@ -1,14 +1,14 @@
-//! Clipboard history in the launcher, beyond search, copy, paste, pin and
-//! remove: the kind filter, the detail pane, keyword editing, remove-all and
-//! the monitoring switch (`ClipboardHistoryViewHost`,
+//! Clipboard history in the launcher: the list and its search, copy, paste,
+//! pin and remove, the kind filter, the detail pane, keyword editing,
+//! remove-all and the monitoring switch (`ClipboardHistoryViewHost`,
 //! `ClipboardHistorySection::actionPanel`).
 
 use iced::keyboard::{Key, Modifiers};
 
 use super::{
-    Alignment, ClipboardChange, Confirm, ConfirmAction, Element, LauncherApp, Length, Message,
-    Padding, Page, PanelSection, PanelState, Space, Task, column, container, focus_search, image,
-    row, scrollable, text,
+    Alignment, Confirm, ConfirmAction, Element, LauncherApp, Length, Message, Padding, Page,
+    PanelSection, PanelState, Space, Task, clipboard_url, column, container, focus_search, hud,
+    image, mouse_area, preview, row, scrollable, text,
 };
 use crate::action_panel::Action;
 use crate::backend::{PreferenceInput, PreferenceInputKind};
@@ -27,6 +27,13 @@ const OPEN_WITH: &str = "clipboard.open-with";
 
 /// `EditClipboardKeywordsAction`'s description, under the field.
 const KEYWORDS_DESCRIPTION: &str = "Additional keywords that will be used to index this selection.";
+
+/// A change to one clipboard history entry, from its keyboard shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClipboardChange {
+    TogglePin,
+    Remove,
+}
 
 impl LauncherApp {
     /// Opens Clipboard History with the filter it was left on, and asks
@@ -136,6 +143,60 @@ impl LauncherApp {
                     }
                 }
                 Task::none()
+            }
+            Message::ClipboardQueryChanged(query) => {
+                if let Page::Clipboard(page) = &mut self.page {
+                    page.query = query;
+                }
+                self.clipboard_search_task()
+            }
+            Message::ClipboardLoaded { generation, result } => {
+                if let Page::Clipboard(page) = &mut self.page {
+                    page.apply(generation, result);
+                }
+                self.warm_clipboard_icons();
+                Task::batch([
+                    crate::scroll::reveal_root_selection(),
+                    self.clipboard_detail_task(),
+                ])
+            }
+            Message::ClipboardSelected(index) => {
+                if let Page::Clipboard(page) = &mut self.page
+                    && index < page.rows.len()
+                {
+                    page.selected = index;
+                }
+                self.paste_selected_clipboard_entry()
+            }
+            Message::ClipboardPasted(Ok(())) => self.conceal(),
+            Message::ClipboardEntryChanged(Ok(())) => self.clipboard_search_task(),
+            Message::ClipboardEntryChanged(Err(reason)) => {
+                if let Page::Clipboard(page) = &mut self.page {
+                    page.notice = Some(reason);
+                }
+                Task::none()
+            }
+            Message::ClipboardPasted(Err(reason)) => {
+                tracing::debug!(%reason, "paste refused; copying instead");
+                self.copy_selected_clipboard_entry()
+            }
+            Message::ClipboardContentLoaded(result) => {
+                let Page::Clipboard(page) = &mut self.page else {
+                    return Task::none();
+                };
+                match result.and_then(|content| crate::clipboard_page::copyable_text(&content)) {
+                    Ok(text) => {
+                        // Copy, then get out of the way: the user copied it
+                        // to paste it somewhere else.
+                        let copy = hud::copy_text(self.backend.clone(), text);
+                        let hud = crate::hud::Hud::new("Selection copied to clipboard");
+                        Task::batch([copy, self.show_hud(hud)])
+                    }
+                    Err(reason) => {
+                        page.notice = Some(reason);
+                        Task::none()
+                    }
+                }
             }
             _ => Task::none(),
         }
@@ -549,6 +610,151 @@ impl LauncherApp {
             page.detail
                 .as_ref()
                 .map(|detail| clipboard_detail_document(page, detail)),
+        )
+    }
+
+    /// Clipboard history's body: its state, or its rows.
+    pub(super) fn clipboard_body<'a>(
+        &'a self,
+        page: &'a crate::clipboard_page::ClipboardPage,
+    ) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        let filter = self.clipboard_filter(page);
+        let status = page
+            .monitoring
+            .and_then(crate::clipboard_page::monitoring_notice)
+            .map(|line| self.section_heading(line.to_owned()));
+        if let Some(empty) = page.empty_notice() {
+            return column![filter].push(status).push(self.notice(empty)).into();
+        }
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        for (position, entry) in page.rows.iter().enumerate() {
+            let selected = position == page.selected;
+            let subtitle = self
+                .subtitles
+                .then(|| crate::clipboard_page::subtitle(entry));
+            let favicon =
+                clipboard_url(entry).and_then(|url| self.url_glyphs.get(&url.to_url())?.clone());
+            let row = self.list_row(
+                self.glyph_or_initial(
+                    self.icons
+                        .then(|| {
+                            favicon.unwrap_or_else(|| crate::icons::clipboard_glyph(entry.kind))
+                        })
+                        .as_ref(),
+                    crate::clipboard_page::subtitle(entry).as_str(),
+                    selected,
+                ),
+                entry.preview.clone(),
+                subtitle,
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::ClipboardSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        let rows: Element<Message> = match &page.detail {
+            Some(detail) => row![
+                container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
+                self.clipboard_detail_pane(detail, &page.query),
+            ]
+            .into(),
+            None => rows.into(),
+        };
+        let body = column![filter].push(status).push(rows);
+        match &page.notice {
+            Some(notice) => body.push(self.notice(notice)).into(),
+            None => body.into(),
+        }
+    }
+
+    /// Asks for clipboard history matching the view's filter.
+    pub(super) fn clipboard_search_task(&mut self) -> Task<Message> {
+        let Page::Clipboard(page) = &mut self.page else {
+            return Task::none();
+        };
+        page.generation = page.generation.wrapping_add(1);
+        page.notice = None;
+        let generation = page.generation;
+        let Some(clipboard) = self.clipboard.clone() else {
+            page.status = crate::clipboard_page::Status::Failed(
+                "Clipboard history needs the Compass engine, and this window is running \
+                 without one"
+                    .to_owned(),
+            );
+            return Task::none();
+        };
+        let (query, kind) = (page.query.clone(), page.kind);
+        Task::perform(
+            async move {
+                clipboard
+                    .clipboard_history_of_kind(query, crate::clipboard_page::PAGE_SIZE, kind)
+                    .await
+            },
+            move |result| Message::ClipboardLoaded { generation, result },
+        )
+    }
+
+    /// Fetches the selected entry's content, to copy it.
+    pub(super) fn change_selected_clipboard_entry(
+        &mut self,
+        change: ClipboardChange,
+    ) -> Task<Message> {
+        let Page::Clipboard(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
+            return Task::none();
+        };
+        let (id, pinned) = (row.id.clone(), row.pinned);
+        Task::perform(
+            async move {
+                match change {
+                    ClipboardChange::TogglePin => clipboard.clipboard_set_pinned(id, !pinned).await,
+                    ClipboardChange::Remove => clipboard.clipboard_remove(id).await,
+                }
+            },
+            Message::ClipboardEntryChanged,
+        )
+    }
+
+    /// Paste where the engine can, and copy where it cannot: the paste needs
+    /// the GNOME Shell extension, and without it the entry still goes on the
+    /// clipboard for the user's own Ctrl+V.
+    pub(super) fn paste_selected_clipboard_entry(&mut self) -> Task<Message> {
+        let Page::Clipboard(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
+            return Task::none();
+        };
+        let id = row.id.clone();
+        Task::perform(
+            async move { clipboard.clipboard_paste(id).await },
+            Message::ClipboardPasted,
+        )
+    }
+
+    pub(super) fn copy_selected_clipboard_entry(&mut self) -> Task<Message> {
+        let Page::Clipboard(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
+            return Task::none();
+        };
+        let id = row.id.clone();
+        Task::perform(
+            async move { clipboard.clipboard_content(id).await },
+            Message::ClipboardContentLoaded,
         )
     }
 }

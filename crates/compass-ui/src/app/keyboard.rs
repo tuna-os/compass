@@ -6,9 +6,10 @@
 //! selection, launches, or is a quick-launch chord. Text typed into a field
 //! is not handled here: it arrives through the field's `on_input`.
 
+use super::clipboard::ClipboardChange;
 use super::{
-    ClipboardChange, Direction, LauncherApp, Message, Page, Task, chord_direction, focus_search,
-    form_focus, next_selection,
+    Direction, LauncherApp, Message, Page, Task, chord_direction, focus_search, form_focus,
+    next_selection,
 };
 
 impl LauncherApp {

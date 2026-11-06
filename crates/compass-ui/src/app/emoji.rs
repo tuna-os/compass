@@ -1,11 +1,11 @@
-//! The emoji picker in the launcher: its keys, its action panel and the
-//! keyword form, over [`crate::emoji_page`].
+//! The emoji picker in the launcher: its list, its keys, its action panel
+//! and the keyword form, over [`crate::emoji_page`].
 
 use iced::keyboard::{Key, Modifiers, key::Named};
 
 use super::{
-    Direction, LauncherApp, Message, Page, PanelState, Task, chord_direction, focus_search,
-    next_selection,
+    Alignment, Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelState, Task,
+    chord_direction, column, container, focus_search, mouse_area, next_selection, scrollable, text,
 };
 use crate::backend::{PreferenceInput, PreferenceInputKind};
 use crate::emoji_page::{EmojiPage, actions};
@@ -15,6 +15,28 @@ use crate::preferences_page::{FieldValue, PreferencesPage, Purpose};
 const KEYWORDS_DESCRIPTION: &str = "Additional keywords that will be used to index this glyph";
 
 impl LauncherApp {
+    /// The picker's query and its selection.
+    pub(super) fn emoji_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::EmojiQueryChanged(query) => {
+                if let Page::Emoji(page) = &mut self.page {
+                    page.query = query;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::EmojiSelected(position) => {
+                if let Page::Emoji(page) = &mut self.page
+                    && position < page.shown.len()
+                {
+                    page.selected = position;
+                }
+                self.copy_selected_emoji()
+            }
+            _ => Task::none(),
+        }
+    }
+
     /// Opens Search Emojis & Symbols over what the person has done with it.
     pub(super) fn open_emoji_picker(&mut self) -> Task<Message> {
         let mut page = EmojiPage::open(self.glyph_path.clone(), self.emoji_skin_tone.as_deref());
@@ -257,6 +279,57 @@ impl LauncherApp {
             page.empty_notice(),
         )
         .with_status(page.notice.as_deref(), &page.query)
+    }
+
+    /// The emoji picker's rows: the character in the icon slot, its name.
+    pub(super) fn emoji_body<'a>(
+        &'a self,
+        page: &'a crate::emoji_page::EmojiPage,
+    ) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        if let Some(empty) = page.empty_notice() {
+            return self.notice(empty);
+        }
+        let glyphs = compass_core::glyph::glyphs();
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        if let Some(notice) = &page.notice {
+            list = list.push(self.section_heading(notice.clone()));
+        }
+        for (position, &index) in page.shown.iter().enumerate() {
+            let Some(glyph) = glyphs.get(index) else {
+                continue;
+            };
+            if let Some(heading) = page.heading_at(position) {
+                list = list.push(self.section_heading(heading.to_owned()));
+            }
+            let selected = position == page.selected;
+            let icon =
+                container(text(page.display(glyph)).size(f32::from(geometry.icon_size) * 0.75))
+                    .width(Length::Fixed(f32::from(geometry.icon_size)))
+                    .height(Length::Fixed(f32::from(geometry.icon_size)))
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into();
+            let row = self.list_row(
+                icon,
+                glyph.name.to_owned(),
+                self.subtitles.then(|| glyph.category.label().to_owned()),
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::EmojiSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink)
+            .into()
     }
 }
 

@@ -32,12 +32,14 @@ mod a11y;
 mod apps;
 mod calculator;
 mod clipboard;
+mod commands;
 mod compass_commands;
 mod developer;
 mod dmenu;
 mod emoji;
 mod extension;
 mod file_actions;
+mod files;
 mod fonts;
 mod global_shortcuts;
 mod grants;
@@ -65,6 +67,7 @@ mod snippets;
 mod stores;
 mod themes;
 mod tray;
+mod windows;
 mod workspaces;
 
 pub use panel::{PanelState, actions_for_app};
@@ -458,13 +461,6 @@ impl Default for AppFlags {
 
 /// What the search field sends as the user types.
 type OnInput = fn(String) -> Message;
-
-/// A change to one clipboard history entry, from its keyboard shortcut.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClipboardChange {
-    TogglePin,
-    Remove,
-}
 
 /// A question asked before an action that cannot be undone, as the C++
 /// `CallbackAlertWidget`s ask it: Enter confirms, Escape cancels.
@@ -1746,35 +1742,17 @@ impl LauncherApp {
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
             Message::EventOccurred(_) => Task::none(),
-            Message::ClipboardQueryChanged(query) => {
-                if let Page::Clipboard(page) = &mut self.page {
-                    page.query = query;
-                }
-                self.clipboard_search_task()
-            }
-            Message::ClipboardLoaded { generation, result } => {
-                if let Page::Clipboard(page) = &mut self.page {
-                    page.apply(generation, result);
-                }
-                self.warm_clipboard_icons();
-                Task::batch([
-                    crate::scroll::reveal_root_selection(),
-                    self.clipboard_detail_task(),
-                ])
-            }
             Message::ClipboardKindChanged(_)
             | Message::ClipboardDetailLoaded { .. }
             | Message::ClipboardDetailContent { .. }
             | Message::ClipboardKeywordsLoaded(_)
-            | Message::ClipboardMonitoringLoaded(_) => self.clipboard_message(message),
-            Message::ClipboardSelected(index) => {
-                if let Page::Clipboard(page) = &mut self.page
-                    && index < page.rows.len()
-                {
-                    page.selected = index;
-                }
-                self.paste_selected_clipboard_entry()
-            }
+            | Message::ClipboardMonitoringLoaded(_)
+            | Message::ClipboardQueryChanged(_)
+            | Message::ClipboardLoaded { .. }
+            | Message::ClipboardSelected(_)
+            | Message::ClipboardPasted(_)
+            | Message::ClipboardEntryChanged(_)
+            | Message::ClipboardContentLoaded(_) => self.clipboard_message(message),
             Message::PreferenceEdited(..)
             | Message::PreferenceTextEdited(..)
             | Message::PreferencesSubmit
@@ -1791,38 +1769,8 @@ impl LauncherApp {
             | Message::ExtensionFilesChosen { .. }
             | Message::ExtensionLinkClicked(_)
             | Message::ExtensionEventSent(_) => self.extension_message(message),
-            Message::ClipboardPasted(Ok(())) => self.conceal(),
             Message::EmojiPasted { text, result } => self.emoji_pasted(text, result),
-            Message::ClipboardEntryChanged(Ok(())) => self.clipboard_search_task(),
-            Message::ClipboardEntryChanged(Err(reason)) => {
-                if let Page::Clipboard(page) = &mut self.page {
-                    page.notice = Some(reason);
-                }
-                Task::none()
-            }
             Message::TextCopied { text, result } => Self::text_copied(text, result),
-            Message::ClipboardPasted(Err(reason)) => {
-                tracing::debug!(%reason, "paste refused; copying instead");
-                self.copy_selected_clipboard_entry()
-            }
-            Message::ClipboardContentLoaded(result) => {
-                let Page::Clipboard(page) = &mut self.page else {
-                    return Task::none();
-                };
-                match result.and_then(|content| crate::clipboard_page::copyable_text(&content)) {
-                    Ok(text) => {
-                        // Copy, then get out of the way: the user copied it
-                        // to paste it somewhere else.
-                        let copy = hud::copy_text(self.backend.clone(), text);
-                        let hud = crate::hud::Hud::new("Selection copied to clipboard");
-                        Task::batch([copy, self.show_hud(hud)])
-                    }
-                    Err(reason) => {
-                        page.notice = Some(reason);
-                        Task::none()
-                    }
-                }
-            }
             Message::ShortcutsLoaded(_)
             | Message::ShortcutSaved(_)
             | Message::ShortcutRemoved(_)
@@ -1963,100 +1911,20 @@ impl LauncherApp {
                 };
                 self.command_failed(&reason, "")
             }
-            Message::FilesQueryChanged(query) => {
-                if let Page::Files(page) = &mut self.page {
-                    page.set_query(query);
-                }
-                self.files_query_task()
+            Message::FilesQueryChanged(_)
+            | Message::FilesDebounced(_)
+            | Message::FilesCategoryChanged(_)
+            | Message::FilesLoaded { .. }
+            | Message::FilesSelected(_)
+            | Message::FileOpened(_) => self.files_message(message),
+            Message::EmojiQueryChanged(_) | Message::EmojiSelected(_) => {
+                self.emoji_message(message)
             }
-            Message::FilesDebounced(generation) => self.files_search_task(generation),
-            Message::FilesCategoryChanged(key) => {
-                let Page::Files(page) = &mut self.page else {
-                    return Task::none();
-                };
-                let generation = page.set_category(&key);
-                self.view
-                    .view_memory
-                    .set(crate::view_memory::FILE_CATEGORY, &key);
-                Task::batch([self.files_search_task(generation), focus_search()])
-            }
-            Message::FilesLoaded { generation, result } => {
-                if let Page::Files(page) = &mut self.page {
-                    page.apply(generation, result);
-                }
-                self.warm_file_icons();
-                crate::scroll::reveal_root_selection()
-            }
-            Message::FilesSelected(position) => {
-                if let Page::Files(page) = &mut self.page
-                    && position < page.rows.len()
-                {
-                    page.selected = position;
-                    page.refresh_preview();
-                }
-                self.open_selected_file(false)
-            }
-            Message::FileOpened(Ok(())) => self.conceal(),
-            Message::FileOpened(Err(reason)) => {
-                if let Page::Files(page) = &mut self.page {
-                    page.notice = Some(reason);
-                }
-                Task::none()
-            }
-            Message::EmojiQueryChanged(query) => {
-                if let Page::Emoji(page) = &mut self.page {
-                    page.query = query;
-                    page.refilter();
-                }
-                crate::scroll::reveal_root_selection()
-            }
-            Message::EmojiSelected(position) => {
-                if let Page::Emoji(page) = &mut self.page
-                    && position < page.shown.len()
-                {
-                    page.selected = position;
-                }
-                self.copy_selected_emoji()
-            }
-            Message::WindowsQueryChanged(query) => {
-                if let Page::Windows(page) = &mut self.page {
-                    page.query = query;
-                    page.notice = None;
-                    page.refilter();
-                }
-                crate::scroll::reveal_root_selection()
-            }
-            Message::WindowsLoaded(result) => {
-                if let Page::Windows(page) = &mut self.page {
-                    page.apply(result, std::process::id());
-                }
-                self.warm_window_icons();
-                crate::scroll::reveal_root_selection()
-            }
-            Message::WindowSelected(position) => {
-                if let Page::Windows(page) = &mut self.page
-                    && position < page.shown.len()
-                {
-                    page.selected = position;
-                }
-                self.activate_selected_window()
-            }
-            Message::WindowActivated(result) => match result {
-                // The window the user picked is in front now; get out of the way.
-                Ok(()) => self.conceal(),
-                Err(reason) => {
-                    if let Page::Windows(page) = &mut self.page {
-                        page.notice = Some(reason);
-                    }
-                    Task::none()
-                }
-            },
-            Message::ShellWindowClosed(result) => {
-                if let (Err(reason), Page::Windows(page)) = (&result, &mut self.page) {
-                    page.notice = Some(reason.clone());
-                }
-                self.list_windows_task()
-            }
+            Message::WindowsQueryChanged(_)
+            | Message::WindowsLoaded(_)
+            | Message::WindowSelected(_)
+            | Message::WindowActivated(_)
+            | Message::ShellWindowClosed(_) => self.windows_message(message),
             Message::Settings(message) => self.settings_message(message),
             Message::Keyboard(_) => self.keyboard_message(message),
         }
@@ -2638,321 +2506,6 @@ impl LauncherApp {
         .into()
     }
 
-    /// The emoji picker's rows: the character in the icon slot, its name.
-    fn emoji_body<'a>(&'a self, page: &'a crate::emoji_page::EmojiPage) -> Element<'a, Message> {
-        let geometry = self.geometry;
-        if let Some(empty) = page.empty_notice() {
-            return self.notice(empty);
-        }
-        let glyphs = compass_core::glyph::glyphs();
-        let mut list = column![].spacing(f32::from(geometry.row_spacing));
-        if let Some(notice) = &page.notice {
-            list = list.push(self.section_heading(notice.clone()));
-        }
-        for (position, &index) in page.shown.iter().enumerate() {
-            let Some(glyph) = glyphs.get(index) else {
-                continue;
-            };
-            if let Some(heading) = page.heading_at(position) {
-                list = list.push(self.section_heading(heading.to_owned()));
-            }
-            let selected = position == page.selected;
-            let icon =
-                container(text(page.display(glyph)).size(f32::from(geometry.icon_size) * 0.75))
-                    .width(Length::Fixed(f32::from(geometry.icon_size)))
-                    .height(Length::Fixed(f32::from(geometry.icon_size)))
-                    .align_x(Alignment::Center)
-                    .align_y(Alignment::Center)
-                    .into();
-            let row = self.list_row(
-                icon,
-                glyph.name.to_owned(),
-                self.subtitles.then(|| glyph.category.label().to_owned()),
-                selected,
-            );
-            let row: Element<Message> = mouse_area(row)
-                .on_press(Message::EmojiSelected(position))
-                .into();
-            let row: Element<Message> = if selected {
-                container(row).id(crate::scroll::ROOT_SELECTION).into()
-            } else {
-                row
-            };
-            list = list.push(row);
-        }
-        scrollable(container(list).padding(Padding::new(6.0).top(8)))
-            .id(crate::scroll::ROOT_RESULTS)
-            .height(Length::Shrink)
-            .into()
-    }
-
-    /// Hides the launcher, then runs `power` in the engine, as the C++ plan
-    /// does (the window closes first). A refusal is shown when it comes back.
-    fn run_power_command(
-        &mut self,
-        power: &'static compass_core::power_commands::PowerCommand,
-    ) -> Task<Message> {
-        self.power_confirm = None;
-        let Some(backend) = self.backend.clone() else {
-            self.error = Some(format!(
-                "{} needs the Compass engine, and this window is running without one",
-                power.name
-            ));
-            return Task::none();
-        };
-        let id = power.id.to_owned();
-        let run = Task::perform(
-            async move { backend.run_power_command(id).await },
-            Message::BuiltinCommandDone,
-        );
-        Task::batch([self.conceal(), run])
-    }
-
-    fn windows_body<'a>(
-        &'a self,
-        page: &'a crate::windows_page::WindowsPage,
-    ) -> Element<'a, Message> {
-        let geometry = self.geometry;
-        if let Some(empty) = page.empty_notice() {
-            return self.notice(empty);
-        }
-        let mut list = column![].spacing(f32::from(geometry.row_spacing));
-        for (position, &index) in page.shown.iter().enumerate() {
-            let Some(window) = page.all.get(index) else {
-                continue;
-            };
-            let selected = position == page.selected;
-            let title = crate::windows_page::title(window).to_owned();
-            let row = self.list_row(
-                self.window_icon(window, selected),
-                title,
-                self.subtitles.then(|| window.app.clone()),
-                selected,
-            );
-            let row: Element<Message> = mouse_area(row)
-                .on_press(Message::WindowSelected(position))
-                .into();
-            let row: Element<Message> = if selected {
-                container(row).id(crate::scroll::ROOT_SELECTION).into()
-            } else {
-                row
-            };
-            list = list.push(row);
-        }
-        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
-            .id(crate::scroll::ROOT_RESULTS)
-            .height(Length::Shrink);
-        match &page.notice {
-            Some(notice) => column![rows, self.notice(notice)].into(),
-            None => rows.into(),
-        }
-    }
-
-    /// The window switcher's list, for assistive technology.
-    fn windows_semantics(&self, page: &crate::windows_page::WindowsPage) -> a11y::PageSemantics {
-        let items = page
-            .shown
-            .iter()
-            .map(|&index| {
-                page.all
-                    .get(index)
-                    .map_or_else(crate::semantics::Item::default, |window| {
-                        a11y::item(crate::windows_page::title(window), Some(window.app.clone()))
-                    })
-            })
-            .collect();
-        a11y::PageSemantics::list("Windows", items, page.selected, page.empty_notice())
-            .with_status(page.notice.as_deref(), &page.query)
-    }
-
-    /// Search Files' body: its state, or its heading and rows.
-    fn files_body<'a>(&'a self, page: &'a crate::files_page::FilesPage) -> Element<'a, Message> {
-        let geometry = self.geometry;
-        let key = page
-            .category
-            .clone()
-            .unwrap_or_else(|| compass_core::file_search::CATEGORY_FILTER_KEYS[0].to_owned());
-        let filter = container(
-            iced::widget::pick_list(
-                compass_core::file_search::CATEGORY_FILTER_KEYS
-                    .iter()
-                    .map(|key| (*key).to_owned())
-                    .collect::<Vec<_>>(),
-                Some(key),
-                Message::FilesCategoryChanged,
-            )
-            .text_size(12)
-            .font(self.font())
-            .style({
-                let palette = self.palette();
-                move |_, status| crate::design::dropdown(palette, status)
-            })
-            .menu_style({
-                let palette = self.palette();
-                move |_| crate::design::dropdown_menu(palette)
-            }),
-        )
-        .width(Length::Fill)
-        .align_x(Alignment::End)
-        .padding(Padding::new(4.0).right(10));
-        // The loading indicator (`setLoading`): a query is out.
-        let indicator = container(
-            text(page.indicator().unwrap_or_default())
-                .font(self.font())
-                .size(12)
-                .color(self.palette().muted.to_iced()),
-        )
-        .padding(Padding::new(8.0).left(12));
-        let filter = row![indicator, filter];
-        if let Some(empty) = page.empty_notice() {
-            return column![filter, self.notice(empty)].into();
-        }
-        let home =
-            compass_core::xdg_dirs::home_dir().map(|home| home.to_string_lossy().into_owned());
-        let heading = text(page.heading.clone())
-            .font(self.font())
-            .size(12)
-            .color(self.palette().muted.to_iced());
-        let mut list = column![container(heading).padding(Padding::new(4.0).left(10))]
-            .spacing(f32::from(geometry.row_spacing));
-        for (position, file) in page.rows.iter().enumerate() {
-            let selected = position == page.selected;
-            let subtitle = self
-                .subtitles
-                .then(|| crate::files_page::subtitle(file, home.as_deref()));
-            let row = self.list_row(
-                self.glyph_or_initial(
-                    self.icons
-                        .then(|| self.file_glyphs.cached(&file.path))
-                        .flatten(),
-                    &file.name,
-                    selected,
-                ),
-                file.name.clone(),
-                subtitle,
-                selected,
-            );
-            let row: Element<Message> = mouse_area(row)
-                .on_press(Message::FilesSelected(position))
-                .into();
-            let row: Element<Message> = if selected {
-                container(row).id(crate::scroll::ROOT_SELECTION).into()
-            } else {
-                row
-            };
-            list = list.push(row);
-        }
-        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
-            .id(crate::scroll::ROOT_RESULTS)
-            .height(Length::Shrink);
-        let rows: Element<Message> = match &page.preview {
-            Some(preview) => row![
-                container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
-                self.file_preview_pane(preview, true),
-            ]
-            .into(),
-            None => rows.into(),
-        };
-        match &page.notice {
-            Some(notice) => column![filter, rows, self.notice(notice)].into(),
-            None => column![filter, rows].into(),
-        }
-    }
-
-    /// Search Files' list and the selected file's preview, for assistive
-    /// technology.
-    fn files_semantics(&self, page: &crate::files_page::FilesPage) -> a11y::PageSemantics {
-        let home =
-            compass_core::xdg_dirs::home_dir().map(|home| home.to_string_lossy().into_owned());
-        let items = page
-            .rows
-            .iter()
-            .map(|file| {
-                a11y::item(
-                    file.name.clone(),
-                    Some(crate::files_page::subtitle(file, home.as_deref())),
-                )
-            })
-            .collect();
-        let label = if page.heading.is_empty() {
-            "Files"
-        } else {
-            page.heading.as_str()
-        };
-        let notice = page.notice.as_deref().or(page.indicator());
-        a11y::PageSemantics::list(label, items, page.selected, page.empty_notice())
-            .with_status(notice, &page.query)
-            .with_detail(
-                page.preview
-                    .as_ref()
-                    .map(|preview| a11y::file_preview_document(preview, true)),
-            )
-    }
-
-    /// Clipboard history's body: its state, or its rows.
-    fn clipboard_body<'a>(
-        &'a self,
-        page: &'a crate::clipboard_page::ClipboardPage,
-    ) -> Element<'a, Message> {
-        let geometry = self.geometry;
-        let filter = self.clipboard_filter(page);
-        let status = page
-            .monitoring
-            .and_then(crate::clipboard_page::monitoring_notice)
-            .map(|line| self.section_heading(line.to_owned()));
-        if let Some(empty) = page.empty_notice() {
-            return column![filter].push(status).push(self.notice(empty)).into();
-        }
-        let mut list = column![].spacing(f32::from(geometry.row_spacing));
-        for (position, entry) in page.rows.iter().enumerate() {
-            let selected = position == page.selected;
-            let subtitle = self
-                .subtitles
-                .then(|| crate::clipboard_page::subtitle(entry));
-            let favicon =
-                clipboard_url(entry).and_then(|url| self.url_glyphs.get(&url.to_url())?.clone());
-            let row = self.list_row(
-                self.glyph_or_initial(
-                    self.icons
-                        .then(|| {
-                            favicon.unwrap_or_else(|| crate::icons::clipboard_glyph(entry.kind))
-                        })
-                        .as_ref(),
-                    crate::clipboard_page::subtitle(entry).as_str(),
-                    selected,
-                ),
-                entry.preview.clone(),
-                subtitle,
-                selected,
-            );
-            let row: Element<Message> = mouse_area(row)
-                .on_press(Message::ClipboardSelected(position))
-                .into();
-            let row: Element<Message> = if selected {
-                container(row).id(crate::scroll::ROOT_SELECTION).into()
-            } else {
-                row
-            };
-            list = list.push(row);
-        }
-        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
-            .id(crate::scroll::ROOT_RESULTS)
-            .height(Length::Shrink);
-        let rows: Element<Message> = match &page.detail {
-            Some(detail) => row![
-                container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
-                self.clipboard_detail_pane(detail, &page.query),
-            ]
-            .into(),
-            None => rows.into(),
-        };
-        let body = column![filter].push(status).push(rows);
-        match &page.notice {
-            Some(notice) => body.push(self.notice(notice)).into(),
-            None => body.into(),
-        }
-    }
-
     /// A line of explanation where the list would be.
     fn notice(&self, message: &str) -> Element<'_, Message> {
         let geometry = self.geometry;
@@ -3479,361 +3032,6 @@ impl LauncherApp {
                 }
             })
             .into()
-    }
-
-    /// Search Files' panel for the selected file, without the engine's
-    /// answer about it: the panel itself waits for that answer before it
-    /// opens, but a shortcut only needs to know which action it names.
-    fn files_panel_now(&self) -> Option<PanelState> {
-        let Page::Files(page) = &self.page else {
-            return None;
-        };
-        let path = &page.selected_row()?.path;
-        let assumed = crate::backend::FileActions {
-            mime: self.file_mime.clone(),
-            has_opener: true,
-            can_set_wallpaper: true,
-            can_paste: true,
-        };
-        Some(PanelState::new(file_actions::file_panel_sections(
-            path, &assumed,
-        )))
-    }
-
-    fn open_command(
-        &mut self,
-        command: &'static compass_core::commands::BuiltinCommand,
-    ) -> Task<Message> {
-        use compass_core::commands::CommandKind;
-        self.panel = None;
-        let record = match self.backend.clone() {
-            Some(backend) => {
-                let key = command.id();
-                Task::future(async move {
-                    if let Err(error) = backend.record_launch(key).await {
-                        tracing::warn!(%error, "could not record opening a command");
-                    }
-                })
-                .discard()
-            }
-            None => Task::none(),
-        };
-        match command.kind {
-            CommandKind::ClipboardHistory => Task::batch([record, self.open_clipboard_history()]),
-            CommandKind::Power(id) => {
-                let Some(power) = compass_core::power_commands::command(id) else {
-                    return record;
-                };
-                let asks = self
-                    .power_asks
-                    .get(power.id)
-                    .copied()
-                    .unwrap_or(power.confirm_by_default);
-                if asks {
-                    self.power_confirm = Some(power);
-                    return record;
-                }
-                Task::batch([record, self.run_power_command(power)])
-            }
-            CommandKind::Media(id) => Task::batch([record, self.run_media(command, id, None)]),
-            CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
-            CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
-            CommandKind::SearchTray => Task::batch([record, self.open_search_tray()]),
-            CommandKind::OpenSettings => Task::batch([record, self.open_settings(None)]),
-            CommandKind::Compass(id) => Task::batch([record, self.open_compass_command(id)]),
-            CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
-            CommandKind::RefreshExchangeRates => {
-                Task::batch([record, self.refresh_exchange_rates(command)])
-            }
-            CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
-            CommandKind::SetDefaultBrowser => Task::batch([
-                record,
-                self.open_default_picker(crate::backend::DefaultApp::Browser),
-            ]),
-            CommandKind::SetDefaultTerminal => Task::batch([
-                record,
-                self.open_default_picker(crate::backend::DefaultApp::Terminal),
-            ]),
-            CommandKind::SearchEmojis => Task::batch([record, self.open_emoji_picker()]),
-            CommandKind::SearchFiles => {
-                Task::batch([record, self.open_search_files(String::new())])
-            }
-            CommandKind::CreateShortcut => Task::batch([
-                record,
-                self.open_shortcut_form(compass_core::shortcut_form::Mode::Create, None, false),
-            ]),
-            CommandKind::ManageShortcuts => Task::batch([record, self.open_manage_shortcuts()]),
-            CommandKind::CreateSnippet => Task::batch([
-                record,
-                self.open_snippet_form(compass_core::shortcut_form::Mode::Create),
-            ]),
-            CommandKind::ManageSnippets => Task::batch([record, self.open_manage_snippets()]),
-            CommandKind::RunProgram => Task::batch([record, self.open_run_program()]),
-            CommandKind::SetTheme => Task::batch([record, self.open_set_theme()]),
-            CommandKind::CreateExtension => Task::batch([record, self.open_create_extension()]),
-            CommandKind::ExtensionStore => {
-                self.parked_store = None;
-                Task::batch([
-                    record,
-                    self.open_store_or_intro(crate::backend::Store::Vicinae),
-                ])
-            }
-            CommandKind::RaycastStore => {
-                self.parked_store = None;
-                Task::batch([
-                    record,
-                    self.open_store_or_intro(crate::backend::Store::Raycast),
-                ])
-            }
-            CommandKind::BrowseFonts => {
-                self.parked_fonts = None;
-                Task::batch([record, self.open_browse_fonts()])
-            }
-            CommandKind::SwitchWindows => {
-                self.page = Page::Windows(crate::windows_page::WindowsPage::default());
-                Task::batch([record, self.list_windows_task(), focus_search()])
-            }
-            CommandKind::SwitchWorkspaces => Task::batch([record, self.open_switch_workspaces()]),
-            CommandKind::ToggleFullscreen => Task::batch([
-                record,
-                self.run_window_toggle(crate::backend::WindowToggle::Fullscreen),
-            ]),
-            CommandKind::ToggleFloating => Task::batch([
-                record,
-                self.run_window_toggle(crate::backend::WindowToggle::Floating),
-            ]),
-            CommandKind::ToggleOverview => Task::batch([
-                record,
-                self.run_window_toggle(crate::backend::WindowToggle::Overview),
-            ]),
-        }
-    }
-
-    /// Opens Search Files with `query` typed, and the remembered category
-    /// (`restoreCategoryFilter`: anything but "All").
-    fn open_search_files(&mut self, query: String) -> Task<Message> {
-        let mut page = crate::files_page::FilesPage::default();
-        if let Some(key) = self.view.view_memory.get(crate::view_memory::FILE_CATEGORY) {
-            page.set_category(key);
-        }
-        page.set_query(query);
-        self.page = Page::Files(page);
-        Task::batch([self.files_query_task(), focus_search()])
-    }
-
-    /// Asks Search Files' query: at once, or once its debounce runs out.
-    fn files_query_task(&mut self) -> Task<Message> {
-        let Page::Files(page) = &self.page else {
-            return Task::none();
-        };
-        let generation = page.generation;
-        match crate::files_page::debounce_for(&page.query) {
-            Some(delay) => Task::perform(
-                async move {
-                    tokio::time::sleep(delay).await;
-                    generation
-                },
-                Message::FilesDebounced,
-            ),
-            None => self.files_search_task(generation),
-        }
-    }
-
-    /// Sends Search Files' query `generation`, unless the text moved on.
-    fn files_search_task(&mut self, generation: u64) -> Task<Message> {
-        let Page::Files(page) = &mut self.page else {
-            return Task::none();
-        };
-        if page.generation != generation {
-            return Task::none();
-        }
-        let Some(backend) = self.backend.clone() else {
-            page.apply(
-                generation,
-                Err(
-                    "Search Files needs the Compass engine, and this window is running \
-                     without one"
-                        .to_owned(),
-                ),
-            );
-            return Task::none();
-        };
-        let query = page.query.clone();
-        let category = page.category.clone();
-        Task::perform(
-            async move { backend.search_files(query, category).await },
-            move |result| Message::FilesLoaded { generation, result },
-        )
-    }
-
-    /// Opens the selected file with its default application, or shows it in
-    /// the file browser when `reveal`.
-    fn open_selected_file(&mut self, reveal: bool) -> Task<Message> {
-        let Page::Files(page) = &self.page else {
-            return Task::none();
-        };
-        let (Some(row), Some(backend)) = (page.selected_row(), self.backend.clone()) else {
-            return Task::none();
-        };
-        let path = row.path.clone();
-        Task::perform(
-            async move { backend.open_file(path, reveal).await },
-            Message::FileOpened,
-        )
-    }
-
-    /// Asks for clipboard history matching the view's filter.
-    fn clipboard_search_task(&mut self) -> Task<Message> {
-        let Page::Clipboard(page) = &mut self.page else {
-            return Task::none();
-        };
-        page.generation = page.generation.wrapping_add(1);
-        page.notice = None;
-        let generation = page.generation;
-        let Some(clipboard) = self.clipboard.clone() else {
-            page.status = crate::clipboard_page::Status::Failed(
-                "Clipboard history needs the Compass engine, and this window is running \
-                 without one"
-                    .to_owned(),
-            );
-            return Task::none();
-        };
-        let (query, kind) = (page.query.clone(), page.kind);
-        Task::perform(
-            async move {
-                clipboard
-                    .clipboard_history_of_kind(query, crate::clipboard_page::PAGE_SIZE, kind)
-                    .await
-            },
-            move |result| Message::ClipboardLoaded { generation, result },
-        )
-    }
-
-    /// Runs what the open question asked about, once Enter confirms it.
-    fn run_confirmed(&mut self) -> Task<Message> {
-        let Some(confirm) = self.confirm.take() else {
-            return Task::none();
-        };
-        let task = match confirm.action {
-            ConfirmAction::ClipboardRemoveAll => self.remove_all_clipboard_entries(),
-            ConfirmAction::RootEdit(id, edit) => self.edit_root_item(id, edit),
-            ConfirmAction::UninstallExtension(id) => self.uninstall_extension(id),
-            ConfirmAction::RemoveTokenSet(extension, provider) => {
-                self.remove_token_set(extension, provider)
-            }
-        };
-        Task::batch([task, focus_search()])
-    }
-
-    /// Asks the engine for the open windows.
-    fn list_windows_task(&mut self) -> Task<Message> {
-        let Page::Windows(page) = &mut self.page else {
-            return Task::none();
-        };
-        page.notice = None;
-        let Some(windows) = self.windows.clone() else {
-            page.apply(
-                Err(
-                    "Window switching needs the Compass engine, and this window is running \
-                     without one"
-                        .to_owned(),
-                ),
-                std::process::id(),
-            );
-            return Task::none();
-        };
-        Task::perform(
-            async move { windows.list_windows().await },
-            Message::WindowsLoaded,
-        )
-    }
-
-    /// Switches to the selected window.
-    fn activate_selected_window(&mut self) -> Task<Message> {
-        let Page::Windows(page) = &self.page else {
-            return Task::none();
-        };
-        let (Some(row), Some(windows)) = (page.selected_row(), self.windows.clone()) else {
-            return Task::none();
-        };
-        let id = row.id;
-        Task::perform(
-            async move { windows.activate_window(id).await },
-            Message::WindowActivated,
-        )
-    }
-
-    /// Closes the selected window, when it can be closed.
-    fn close_selected_window(&mut self) -> Task<Message> {
-        let Page::Windows(page) = &mut self.page else {
-            return Task::none();
-        };
-        let Some(row) = page.selected_row() else {
-            return Task::none();
-        };
-        if !row.can_close {
-            page.notice = Some(format!("{} cannot be closed", row.title));
-            return Task::none();
-        }
-        let Some(windows) = self.windows.clone() else {
-            return Task::none();
-        };
-        let id = row.id;
-        Task::perform(
-            async move { windows.close_window(id).await },
-            Message::ShellWindowClosed,
-        )
-    }
-
-    /// Fetches the selected entry's content, to copy it.
-    fn change_selected_clipboard_entry(&mut self, change: ClipboardChange) -> Task<Message> {
-        let Page::Clipboard(page) = &self.page else {
-            return Task::none();
-        };
-        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
-            return Task::none();
-        };
-        let (id, pinned) = (row.id.clone(), row.pinned);
-        Task::perform(
-            async move {
-                match change {
-                    ClipboardChange::TogglePin => clipboard.clipboard_set_pinned(id, !pinned).await,
-                    ClipboardChange::Remove => clipboard.clipboard_remove(id).await,
-                }
-            },
-            Message::ClipboardEntryChanged,
-        )
-    }
-
-    /// Paste where the engine can, and copy where it cannot: the paste needs
-    /// the GNOME Shell extension, and without it the entry still goes on the
-    /// clipboard for the user's own Ctrl+V.
-    fn paste_selected_clipboard_entry(&mut self) -> Task<Message> {
-        let Page::Clipboard(page) = &self.page else {
-            return Task::none();
-        };
-        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
-            return Task::none();
-        };
-        let id = row.id.clone();
-        Task::perform(
-            async move { clipboard.clipboard_paste(id).await },
-            Message::ClipboardPasted,
-        )
-    }
-
-    fn copy_selected_clipboard_entry(&mut self) -> Task<Message> {
-        let Page::Clipboard(page) = &self.page else {
-            return Task::none();
-        };
-        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
-            return Task::none();
-        };
-        let id = row.id.clone();
-        Task::perform(
-            async move { clipboard.clipboard_content(id).await },
-            Message::ClipboardContentLoaded,
-        )
     }
 
     /// What goes in a row's icon slot: resolved art, or nothing for the initial.
