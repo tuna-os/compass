@@ -1373,6 +1373,7 @@ dependencies = [
  "insta",
  "jiff",
  "mime_guess",
+ "pulldown-cmark",
  "resvg",
  "serde",
  "serde_json",
