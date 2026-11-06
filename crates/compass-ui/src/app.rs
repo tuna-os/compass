@@ -63,6 +63,7 @@ mod runtime;
 mod scripts;
 mod search;
 mod settings_a11y;
+mod settings_draw;
 mod settings_view;
 mod shortcuts;
 mod snippets;
