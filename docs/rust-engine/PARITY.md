@@ -1650,8 +1650,10 @@ Declared differences:
   results; the open panel, a dialog and a form's current field take it while they are there.
   Typing hands it back to the field, so the typed text is echoed rather than the top result read
   out at every keystroke; the result count is announced instead, politely, once it changes. While
-  the engine has not answered a search, the tree keeps what it last said, so the rows are relabelled
-  in place when the answer comes rather than removed and added at every keystroke.
+  the engine has not answered a search, and for 250 ms after it has, the tree keeps what it last
+  said, so the rows are relabelled in place rather than removed and added at every keystroke, and
+  answers that come close together are announced once, with the last count (Orca drops an
+  announcement within 0.1 s of the last).
 - **Orca follows a selection that changes on its own.** When the selection moves without a key
   from the person (clearing the query after moving through the results), Orca leaves the field and
   reads the new row. GTK's entry completion avoids that with the autocompletion state and a

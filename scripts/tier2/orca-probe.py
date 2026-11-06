@@ -60,7 +60,8 @@ KEY = {
 WINDOW_NAME = "Compass"
 SEARCH_NAME = "Search…"
 STEP_TIMEOUT_S = 15.0
-SPEECH = re.compile(r" - SPEECH OUTPUT: '(.*)'(?: \{.*)?$")
+# Orca 50 puts a space before the voice's settings, Orca 51 does not.
+SPEECH = re.compile(r" - SPEECH OUTPUT: '(.*)' ?(?:\{.*)?$")
 
 
 class GateFailed(Exception):
@@ -322,13 +323,15 @@ def run(args: argparse.Namespace, gate: Gate) -> None:
         and f,
     )
     gate.transcript.append(f"bus: focused {field_.role} {field_.name!r}")
-    gate.heard("the search field's name", lambda s: s == SEARCH_NAME)
+    # Orca 50 says the name and role as two utterances, Orca 51 as one.
+    gate.heard("the search field's name", lambda s: SEARCH_NAME in s)
     gate.quiet()
     # The window opens on its field. A list Orca reads first is a selection
     # appearing under the field, which takes Orca out of it (see
     # compass_ui::accessibility, where the tree waits for the first answer).
     said = gate.speech.since_mark()
-    if any(s.startswith("List with") for s in said[: said.index(SEARCH_NAME)]):
+    first_field = next(i for i, s in enumerate(said) if SEARCH_NAME in s)
+    if any(s.startswith("List with") for s in said[:first_field]):
         raise GateFailed(f"Orca read the results before the search field: {said}")
     gate.note_speech()
 
@@ -355,7 +358,7 @@ def run(args: argparse.Namespace, gate: Gate) -> None:
         "the field holds the query, keeps the focus, and the count matches the list", typed
     )
     gate.transcript.append(f"bus: {count}; first {items[0].name!r} selected")
-    gate.heard(f"the count ({count!r})", lambda s: s == count)
+    gate.heard(f"the count ({count!r})", lambda s: re.search(rf"\b{re.escape(count)}\b", s))
     names = [item.name for item in items]
     if args.item not in names:
         raise GateFailed(f"{args.item!r} is not among the results: {names}")

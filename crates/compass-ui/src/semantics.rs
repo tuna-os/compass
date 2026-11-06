@@ -447,7 +447,7 @@ impl Semantics {
     }
 
     /// This description, with a [`Body::Pending`] replaced by what `last`
-    /// said under the field (its body and status), or by nothing when there
+    /// said under the field (its body, status and detail), or by nothing when there
     /// was no last description. See the module documentation.
     #[must_use]
     pub fn settle(mut self, last: Option<&Semantics>) -> Self {
@@ -456,6 +456,7 @@ impl Semantics {
                 Some(last) => {
                     self.body = last.body.clone();
                     self.status = last.status.clone();
+                    self.detail = last.detail.clone();
                 }
                 None => self.body = Body::Empty,
             }
