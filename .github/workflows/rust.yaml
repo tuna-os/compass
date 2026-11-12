@@ -48,7 +48,9 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@v5.1.0
+        with:
+          persist-credentials: false
 
       # #330: Rust files over 1500 lines that are not in
       # scripts/architecture/allowlist.txt get a warning annotation. Advisory
@@ -67,10 +69,10 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        uses: taiki-e/install-action@v2.87.22
         with:
           tool: nextest
 
@@ -83,7 +85,7 @@ jobs:
           cargo clippy --version
 
       - name: Cache cargo
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@v5.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -173,7 +175,9 @@ jobs:
     name: Builds on the minimum supported Rust
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v5.1.0
+        with:
+          persist-credentials: false
 
       # `iced_layershell` (the wlroots launcher surface) builds
       # smithay-client-toolkit with xkbcommon, found through pkg-config.
@@ -190,12 +194,14 @@ jobs:
 
       # rust-toolchain.toml would otherwise override the toolchain we ask for.
       - name: Install the MSRV toolchain
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
         run: |
-          rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal --no-self-update
-          rustup run "${{ steps.msrv.outputs.version }}" rustc --version
+          rustup toolchain install "$MSRV" --profile minimal --no-self-update
+          rustup run "$MSRV" rustc --version
 
       - name: Cache cargo
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@v5.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -205,8 +211,10 @@ jobs:
           restore-keys: msrv-${{ runner.os }}-${{ steps.msrv.outputs.version }}-
 
       - name: Build the shipped binary on the MSRV
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
         run: |
-          rustup run "${{ steps.msrv.outputs.version }}" \
+          rustup run "$MSRV" \
             cargo build --release --locked -p compass
 
   # PHASE 4'S SEAM. The gate (PLAN §6) asks that compass-extension-api compile
@@ -219,10 +227,12 @@ jobs:
     name: "Phase 4 seam: compass-extension-api without compass-worker-host"
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Cache cargo
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@v5.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -237,10 +247,12 @@ jobs:
     name: The two clipboard crypto implementations interoperate
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Cache cargo
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@v5.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -293,10 +305,12 @@ jobs:
     name: The two scorers agree on the corpus
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Cache cargo
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@v5.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -352,7 +366,9 @@ jobs:
     name: The real extension runtime drives the host
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v5.1.0
+        with:
+          persist-credentials: false
 
       # `iced_layershell` (the wlroots launcher surface) builds
       # smithay-client-toolkit with xkbcommon, found through pkg-config.
@@ -360,7 +376,7 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
       - name: Cache cargo
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@v5.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -420,7 +436,9 @@ jobs:
       RUSTC_WRAPPER: sccache
 
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v5.1.0
+        with:
+          persist-credentials: false
 
       # `iced_layershell` (the wlroots launcher surface) builds
       # smithay-client-toolkit with xkbcommon, found through pkg-config.
@@ -428,10 +446,10 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Cache cargo
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@v5.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -484,7 +502,9 @@ jobs:
       RUSTC_WRAPPER: sccache
 
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v5.1.0
+        with:
+          persist-credentials: false
 
       # `iced_layershell` (the wlroots launcher surface) builds
       # smithay-client-toolkit with xkbcommon, found through pkg-config.
@@ -492,10 +512,10 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Cache cargo
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@v5.1.0
         with:
           path: |
             ~/.cargo/registry

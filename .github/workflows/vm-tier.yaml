@@ -122,8 +122,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/vm-host
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/vm-host
 
       # See packaging/vmtest/Containerfile.bluefin for why this indirection is
       # needed. Short version: corral `podman create`s the image to probe its
@@ -175,7 +177,7 @@ jobs:
 
       - name: Upload the evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: vmtest-bluefin
           path: vmtest-out/
@@ -187,7 +189,7 @@ jobs:
   flatpak:
     name: Flatpak
     if: github.event_name != 'workflow_dispatch' || inputs.jobs != 'control'
-    uses: ./.github/workflows/flatpak.yaml
+    uses: $/.github/workflows/flatpak.yaml
 
   boot-compass:
     name: Compass runs in a real GNOME session
@@ -196,16 +198,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       # Into the build context, which is what Containerfile.compass COPYs from.
       - name: Fetch the Flatpak bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@v4.3.0
         with:
           name: flatpak-bundle
           path: packaging/vmtest
 
-      - uses: ./.github/actions/vm-host
+      - uses: $/.github/actions/vm-host
 
       - name: Build the test image
         run: |
@@ -289,7 +293,7 @@ jobs:
 
       - name: Upload the evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: vmtest-compass
           path: vmtest-out/
@@ -315,15 +319,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Fetch the Flatpak bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@v4.3.0
         with:
           name: flatpak-bundle
           path: packaging/vmtest
 
-      - uses: ./.github/actions/vm-host
+      - uses: $/.github/actions/vm-host
 
       # The Containerfile's build context is packaging/vmtest, so anything it
       # COPYs has to be staged there first — the Flatpak bundle already is.
@@ -423,7 +429,7 @@ jobs:
 
       - name: Upload the evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: spike-a
           path: vmtest-out/
@@ -462,15 +468,17 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Fetch the Flatpak bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@v4.3.0
         with:
           name: flatpak-bundle
           path: packaging/vmtest
 
-      - uses: ./.github/actions/vm-host
+      - uses: $/.github/actions/vm-host
 
       # The Containerfile's build context is packaging/vmtest, so anything it
       # COPYs has to be staged there first — the Flatpak bundle already is.
@@ -538,7 +546,7 @@ jobs:
             --out perf-points/vm-rss.jsonl
 
       - name: Keep the idle RSS points
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: perf-points-vm-${{ github.event.pull_request.head.sha || github.sha }}
           path: perf-points/vm-rss.jsonl
@@ -612,7 +620,7 @@ jobs:
 
       - name: Upload the evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: launcher
           path: vmtest-out/

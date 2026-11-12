@@ -62,7 +62,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Regenerate and compare
         run: |
@@ -97,7 +99,9 @@ jobs:
     env:
       ARTIFACT_SUFFIX: ${{ matrix.arch != 'x86_64' && format('-{0}', matrix.arch) || '' }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install flatpak and flatpak-builder
         run: |
@@ -119,7 +123,7 @@ jobs:
       # See --reinstall and the commit assertion below, which are what make the
       # cache safe to keep.
       - name: Cache the runtime
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@v4.3.0
         with:
           path: ~/.local/share/flatpak
           key: flatpak-runtime-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('packaging/flatpak/org.tunaos.compass.yaml') }}
@@ -153,7 +157,7 @@ jobs:
       # The bundle is JavaScript, the same on every architecture, but npm runs
       # on the runner, and the arm64 image need not carry the Node the x86_64
       # one does. 22 is the major the manifest ships (node22).
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@v4.4.0
         with:
           node-version: 22
 
@@ -259,7 +263,7 @@ jobs:
 
       - name: Upload the Spike B report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: spike-b-flatpak${{ env.ARTIFACT_SUFFIX }}
           path: /tmp/spike-b.*
@@ -295,7 +299,7 @@ jobs:
 
       - name: Upload the bundle
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: flatpak-bundle${{ env.ARTIFACT_SUFFIX }}
           path: /tmp/org.tunaos.compass.flatpak
@@ -304,7 +308,7 @@ jobs:
 
       - name: Upload the repo
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: flatpak-repo${{ env.ARTIFACT_SUFFIX }}
           path: /tmp/repo

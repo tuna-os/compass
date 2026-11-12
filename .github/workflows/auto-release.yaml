@@ -43,7 +43,7 @@ jobs:
       contents: write
       actions: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0  # zizmor: ignore[artipacked] a later step pushes the version bump to main with these credentials
         with:
           ref: main
           fetch-depth: 0
