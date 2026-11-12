@@ -1,5 +1,6 @@
-# Keeps the SHA-pinned actions current. Every third-party `uses:` is pinned to a
-# commit with its version in a trailing comment; Dependabot moves both together.
+# Keeps the actions current. Every `uses:` names an exact version tag, and
+# .github/workflows/actions.lock pins the commit it resolved to; Dependabot
+# updates both together.
 #
 # Cargo is deliberately not here: every Cargo.lock change has to regenerate
 # packaging/flatpak/cargo-sources.json (flatpak.yaml checks it), which
@@ -13,6 +14,8 @@ updates:
       - /.github/actions/*
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]

@@ -74,7 +74,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
       - name: Validate with jsonschema
         run: |
           python3 -m pip install --quiet jsonschema
@@ -84,7 +86,7 @@ jobs:
   # calls to attach the same, smoke-tested AppImage to the GitHub release.
   appimage:
     name: AppImage
-    uses: ./.github/workflows/appimage.yaml
+    uses: $/.github/workflows/appimage.yaml
 
   arch:
     name: Arch package
@@ -107,8 +109,9 @@ jobs:
           echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
           git config --system --add safe.directory '*'
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Lint the PKGBUILD
@@ -147,7 +150,7 @@ jobs:
       - name: "The install journey through pacman"
         run: scripts/packaging/arch-journey.sh /tmp/pkg/compass-git-*.pkg.tar.zst
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: arch-package
           path: /tmp/pkg/*.pkg.tar.zst
@@ -159,8 +162,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31.11.1
         with:
           extra_nix_config: |
             accept-flake-config = true

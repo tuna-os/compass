@@ -117,7 +117,9 @@ jobs:
       options: --shm-size=2g
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       # Listed explicitly rather than pulling a desktop group: a group would
       # drag in a display manager and a browser, and the question is what the
@@ -157,7 +159,7 @@ jobs:
       # rather than an accident — so it is kept either way.
       - name: Keep the compositor's log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: compositor-log-f${{ matrix.fedora }}
           path: |
@@ -180,7 +182,7 @@ jobs:
   # failure to paint a window would be a confusing way to find that out.
   flatpak:
     name: Flatpak
-    uses: ./.github/workflows/flatpak.yaml
+    uses: $/.github/workflows/flatpak.yaml
 
   run-flatpak:
     name: "Suite 3b: the launcher on GNOME ${{ matrix.gnome }}"
@@ -232,7 +234,9 @@ jobs:
       options: --privileged --shm-size=2g
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       # orca, at-spi2-core and python3-gobject are the Orca gate's: the
       # screen reader itself, the accessibility bus and registry it reads
@@ -257,7 +261,7 @@ jobs:
             xdg-desktop-portal-gnome
 
       - name: Fetch the Flatpak bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@v4.3.0
         with:
           name: flatpak-bundle
           path: /tmp/bundle
@@ -331,7 +335,7 @@ jobs:
 
       - name: Keep the logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: flatpak-probe-logs-gnome${{ matrix.gnome }}
           path: |

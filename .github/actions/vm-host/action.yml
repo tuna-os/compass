@@ -84,7 +84,7 @@ runs:
         # "stability is not yet established".
         sudo df -h /var/lib/containers/storage | tail -1
 
-    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+    - uses: actions/setup-go@v5.6.0  # zizmor: ignore[unpinned-uses] locked in .github/workflows/actions.lock because vm-tier.yaml calls this action as $/
       with:
         go-version: '1.26'
 
@@ -92,7 +92,7 @@ runs:
       shell: bash
       env:
         CORRAL_REF: ${{ inputs.corral-ref }}
-      run: |
+      run: |  # zizmor: ignore[github-env] adds the Go bin dir this step installs corral into; no untrusted input
         go install "github.com/tuna-os/corral@${CORRAL_REF}"
         echo "$HOME/go/bin" >> "$GITHUB_PATH"
         # Fail here rather than 20 minutes later if the pin ever loses vmtest.

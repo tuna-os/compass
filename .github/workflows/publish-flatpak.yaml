@@ -17,7 +17,7 @@
 name: Publish Flatpak
 
 on:
-  workflow_run:
+  workflow_run:  # zizmor: ignore[dangerous-triggers] the publish job runs only for a green push or dispatch run of main from this repository, see its if
     workflows: [Flatpak]
     types: [completed]
   workflow_dispatch:
@@ -35,12 +35,14 @@ permissions:
 
 jobs:
   publish:
-    # Only a green build of main, and only a push or a manual run of it: a
-    # pull request's bundle, or the one the VM tier builds, is never published.
+    # Only a green build of main, and only a push or a manual run of it from
+    # this repository: a pull request's bundle, a fork's, or the one the VM
+    # tier builds, is never published.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
        contains(fromJSON('["push", "workflow_dispatch"]'), github.event.workflow_run.event))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -53,7 +55,9 @@ jobs:
       IMAGE: ghcr.io/tuna-os/compass
       ARCHS: x86_64 aarch64
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Which run
         id: run
@@ -82,7 +86,7 @@ jobs:
       # no second bundle, and publishing half of a release would leave the
       # remote's arches out of step.
       - name: Download the x86_64 bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@v4.3.0
         with:
           name: flatpak-bundle
           path: bundle/x86_64
@@ -90,7 +94,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Download the aarch64 bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@v4.3.0
         with:
           name: flatpak-bundle-aarch64
           path: bundle/aarch64
@@ -154,7 +158,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          echo "$GITHUB_TOKEN" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$GITHUB_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for arch in $ARCHS; do
             skopeo copy "oci:oci-$arch" "docker://$IMAGE:latest-$arch"
           done
@@ -165,7 +169,7 @@ jobs:
       # publish lands first. Once per architecture, as the reusable workflow
       # does: the index keeps one image per architecture under a repo name.
       - name: Update the remote's index (tuna-os/docs), x86_64
-        uses: tuna-os/.github/.github/actions/publish-flatpak-index@4078f531ac74703f203bde835ef6c25e9321b97b # main
+        uses: tuna-os/.github/.github/actions/publish-flatpak-index@main
         with:
           oci-dir: oci-x86_64
           repo-name: tuna-os/compass
@@ -173,7 +177,7 @@ jobs:
           ssh-key: ${{ secrets.FLATPAK_INDEX_DEPLOY_KEY }}
 
       - name: Update the remote's index (tuna-os/docs), aarch64
-        uses: tuna-os/.github/.github/actions/publish-flatpak-index@4078f531ac74703f203bde835ef6c25e9321b97b # main
+        uses: tuna-os/.github/.github/actions/publish-flatpak-index@main
         with:
           oci-dir: oci-aarch64
           repo-name: tuna-os/compass
