@@ -254,6 +254,8 @@ pub fn start(
             process
         }
     };
+    process.env_clear();
+    process.envs(sandbox::worker_env(std::env::vars_os()));
     process.env("TMPDIR", tmp_dir(data_dir, command));
     // `environment.vicinaeVersion` in the SDK. The runtime reads these, and
     // the `VICINAE_*` names the C++ set only when they are absent.
