@@ -335,6 +335,10 @@ pub fn start(
     let extension_id = command.extension_id.clone();
     let extension_title = command.extension_title.clone();
     let assets = command.extension_dir.join("assets");
+    let writable = vec![
+        support_dir(data_dir, command),
+        assets_dir(data_dir, command),
+    ];
     let handle = tokio::runtime::Handle::try_current().ok();
     let started = view
         .as_ref()
@@ -355,6 +359,7 @@ pub fn start(
                     files,
                     commands,
                     assets,
+                    writable,
                     launcher,
                 },
                 storage,

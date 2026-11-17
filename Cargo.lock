@@ -1445,6 +1445,7 @@ dependencies = [
  "compass-oauth-store",
  "compass-sandbox",
  "compass-sqlcipher-sys",
+ "mime_guess",
  "serde",
  "serde_json",
  "tempfile",

@@ -2671,6 +2671,24 @@ the channel that matters.
 Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
 the behaviour changes, so a future fix is loud rather than silent.
 
+### Extension calls the engine serves outside the sandbox
+
+Upstream Vicinae has no extension sandbox, so these calls give an extension nothing it did not
+already have there. In Compass the worker is confined and the engine is not, so each one is held to
+what the sandbox allows:
+
+- `Application/runInTerminal` starts nothing and answers `false`
+  (`compass_worker_host::application_service::TERMINAL_REFUSED`). A host program goes through
+  `HostCommand/run`, which takes a bare program name the overrides list names and asks first.
+- `Application/open` of a file under the extension's support or assets directory ignores `appId`
+  and opens only a type a viewer shows (image, audio, video, plain text, PDF) with the default
+  opener (`application_service::is_viewer_type`). Links and files elsewhere open as upstream.
+- `Command/launchCommand` finds only the running extension's own commands
+  (`EngineCommands::new`); another extension's command is `No such command`. Raycast asks before a
+  cross-extension launch; Compass may add that dialog later.
+- `Wallpaper/set` on KDE passes the image to Plasma as a JSON string literal of a percent-encoded
+  URI (`compass_core::wallpaper::kde_script`), never as script text.
+
 ### `compass-core::builtin_icon` — GNOME symbolic icons over Vicinae's artwork
 
 Builtin icons with a freedesktop counterpart (`cog` → `emblem-system-symbolic`, `copy-clipboard` →
