@@ -16,9 +16,11 @@ all-features = true
 unmaintained = "all"
 yanked = "warn"
 #
-# None of the ignored advisories reports a vulnerability, and none has a
-# semver-compatible release that drops the crate, so a lockfile bump cannot fix
-# them. Each goes when the crate that pulls it in moves on.
+# All but the last of the ignored advisories report an unmaintained crate, not
+# a vulnerability, and none has a semver-compatible release that drops the
+# crate, so a lockfile bump cannot fix them. Each goes when the crate that
+# pulls it in moves on. The last one reports a vulnerability that no release
+# fixes for this build; its comment says why Compass is not exposed.
 ignore = [
   # ttf-parser: used directly by compass and by Iced's text stack (fontdb,
   # cosmic-text). Goes when Iced moves to skrifa.
@@ -45,6 +47,16 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "unmaintained zvariant 5, merged into zbus 6; zbus 5 is pinned by ashpd, ksni, mundy, notify-rust, oo7 and system-tray" },
   { id = "RUSTSEC-2026-0371", reason = "unmaintained zbus_names 4, merged into zbus 6; zbus 5 is pinned by ashpd, ksni, mundy, notify-rust, oo7 and system-tray" },
   { id = "RUSTSEC-2026-0372", reason = "unmaintained zvariant_derive 5, merged into zbus 6; zbus 5 is pinned by ashpd, ksni, mundy, notify-rust, oo7 and system-tray" },
+  # libsqlite3-sys: SQLite before 3.54.0 can return uninitialised memory when
+  # it opens a database with a crafted -wal file (CVE-2026-119375). No release
+  # fixes it for bundled-sqlcipher: libsqlite3-sys 0.39 still builds SQLCipher
+  # on SQLite 3.53.4, so a rusqlite bump would silence this and fix nothing.
+  # Compass opens only databases it writes itself in its own data directory,
+  # and the Vicinae profile the person imports. An extension worker cannot
+  # write beside any of them. Goes, with a rusqlite bump, when libsqlite3-sys
+  # builds SQLCipher on SQLite 3.54 or later.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0459
+  { id = "RUSTSEC-2026-0459", reason = "SQLite -wal memory exposure in bundled SQLCipher; no fixed bundled-sqlcipher release, and Compass opens only its own databases" },
 ]
 
 [bans]
