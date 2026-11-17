@@ -15,14 +15,14 @@
 //! extension nothing it did not already have. Here the worker is confined and
 //! the engine is not, so:
 //!
-//! - `runInTerminal` runs nothing and answers `false` ([`TERMINAL_REFUSED`]).
+//! - `runInTerminal` runs nothing and answers `false` ([`TERMINAL_REFUSED`](crate::application_service::TERMINAL_REFUSED)).
 //!   The engine would start the command line on the host, unconfined, and
 //!   only `HostCommand/run` may do that, for a program the overrides list
 //!   names and after asking the person.
 //! - `open` of a file the extension could have written (under its support or
-//!   assets directory, see [`ApplicationService::with_writable`]) goes only to
+//!   assets directory, see [`ApplicationService::with_writable`](crate::application_service::ApplicationService::with_writable)) goes only to
 //!   the default opener, and only for a type a viewer shows
-//!   ([`is_viewer_type`]): an `appId` naming `java -jar %f` or `wine` would
+//!   ([`is_viewer_type`](crate::application_service::is_viewer_type)): an `appId` naming `java -jar %f` or `wine` would
 //!   otherwise run a file the extension wrote.
 
 use std::path::{Path, PathBuf};
