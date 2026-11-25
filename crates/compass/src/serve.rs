@@ -149,7 +149,8 @@ impl EngineState {
                 (config, true)
             }
             Err(err) => {
-                let fallback = Config::default();
+                // Still under the administrator's extension blocks (#401).
+                let fallback = Config::fallback();
                 tracing::warn!(error = %err, "using default configuration");
                 (fallback, false)
             }

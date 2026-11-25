@@ -326,7 +326,10 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_core::config::DEFAULT_COLOR_SCHEME.to_owned(),
                     compass_ui::theme::Theme::System,
                     compass_core::root_items::RootConfig::default(),
-                    compass_core::extension_deny::ExtensionDeny::default(),
+                    // Still under the administrator's extension blocks (#401).
+                    compass_core::extension_deny::ExtensionDeny::new(
+                        &compass_core::Config::fallback().extensions().deny_rules(),
+                    ),
                     None,
                     compass_core::Config::default().fallback_ids(),
                     power_asks(&compass_core::Config::default()),

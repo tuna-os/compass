@@ -1342,6 +1342,21 @@ impl Config {
         path: &Path,
         system: Option<&Value>,
     ) -> Result<(Config, Vec<crate::config_issues::ConfigIssue>), ConfigError> {
+        let (mut config, issues) = Self::parse_over(data, path, system)?;
+        // The admin's list is taken from the system file itself, not from the
+        // layered document: a user `extensions` that is not an object is not
+        // layered over, and would take the block with it.
+        if let Some(rules) = admin_deny_in(system) {
+            config.extensions.admin_deny = Some(rules);
+        }
+        Ok((config, issues))
+    }
+
+    fn parse_over(
+        data: &str,
+        path: &Path,
+        system: Option<&Value>,
+    ) -> Result<(Config, Vec<crate::config_issues::ConfigIssue>), ConfigError> {
         if data.trim().is_empty() {
             return match system {
                 Some(system) => Ok(crate::config_issues::parse_value(system.clone())),
@@ -1498,6 +1513,23 @@ impl Config {
                 Config::parse("", path)
             }
         }
+    }
+
+    /// What to run with when the user's file cannot be read or parsed: the
+    /// defaults, still under the administrator's extension blocks. Without
+    /// them a typo in `compass.json` would bring every blocked extension back.
+    #[must_use]
+    pub fn fallback() -> Config {
+        Self::fallback_over(system_defaults().as_ref())
+    }
+
+    /// [`Config::fallback`] over `system` rather than over the
+    /// [`system_defaults`] this machine has.
+    #[must_use]
+    pub fn fallback_over(system: Option<&Value>) -> Config {
+        let mut config = Config::default();
+        config.extensions.admin_deny = admin_deny_in(system);
+        config
     }
 
     /// This configuration with the [`system_defaults`] filled in under it.
@@ -1850,6 +1882,18 @@ pub fn system_defaults_in(dirs: &[PathBuf]) -> Option<Value> {
         }
     }
     merged
+}
+
+/// `extensions.admin_deny` as the system defaults hold it, read on its own so
+/// that it does not depend on what the user's file is. A list that is not
+/// valid is `None`, as it is when the whole document is parsed.
+fn admin_deny_in(system: Option<&Value>) -> Option<Vec<DenyRule>> {
+    let list = system?.get("extensions")?.get("admin_deny")?;
+    serde_json::from_value(list.clone())
+        .map_err(|error| {
+            tracing::warn!(%error, "ignoring extensions.admin_deny in the system configuration");
+        })
+        .ok()
 }
 
 /// Adds to `document` every key `base` has and it lacks, object by object. A key `document` sets
