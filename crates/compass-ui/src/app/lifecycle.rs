@@ -246,6 +246,9 @@ impl LauncherApp {
         // something else.
         self.confirm = None;
         self.power_confirm = None;
+        // A link's question least of all: whoever sent the link chose the
+        // command, and Enter is its "Allow Once".
+        self.link_confirm = None;
         let dismissed = self.cancel_dmenu();
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
@@ -713,6 +716,32 @@ mod tests {
     use crate::app::flags::AppFlags;
     use crate::app::test_support::{app, closes, pressed, shown};
     use crate::resident::EngineLink;
+
+    /// Every question the launcher can be waiting on is a `*confirm` field of
+    /// `LauncherApp`. One that `conceal` leaves set waits for the next summon
+    /// and takes its first Enter as a yes, so a new one fails here until
+    /// `conceal` clears it.
+    #[test]
+    fn conceal_clears_every_question_field() {
+        let fields = include_str!("../app.rs");
+        let lifecycle = include_str!("lifecycle.rs");
+        let start = lifecycle.find("fn conceal(").expect("conceal");
+        let body = &lifecycle[start..];
+        let body = &body[..body.find("\n    }\n").expect("the end of conceal")];
+        let questions: Vec<&str> = fields
+            .lines()
+            .filter_map(|line| line.trim().split_once(": Option<"))
+            .filter_map(|(name, _)| name.split_whitespace().next_back())
+            .filter(|name| name.ends_with("confirm"))
+            .collect();
+        assert!(questions.len() >= 3, "the fields were found: {questions:?}");
+        for name in questions {
+            assert!(
+                body.contains(&format!("self.{name} = None;")),
+                "conceal() leaves {name} set"
+            );
+        }
+    }
 
     #[test]
     fn pending_window_is_reused_and_escape_dismisses_after_it_opens() {
