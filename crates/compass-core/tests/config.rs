@@ -902,6 +902,59 @@ fn no_system_directory_means_no_system_defaults() {
 }
 
 #[test]
+fn an_admin_deny_list_survives_a_user_file_that_replaces_the_section() {
+    let etc = tempfile::tempdir().unwrap();
+    system_file(
+        etc.path(),
+        r#"{"extensions": {"admin_deny": [{"store": "raycast"}]}}"#,
+    );
+    let system = compass_core::config::system_defaults_in(&[etc.path().to_path_buf()]);
+    let path = Path::new("/test/compass.json");
+
+    // `extensions` set to something that is not an object is not layered over
+    // the system's section. The admin list must not go with it.
+    for user in [
+        r#"{"extensions": null}"#,
+        r#"{"extensions": []}"#,
+        r#"{"extensions": 0}"#,
+        r#"{"extensions": "none"}"#,
+    ] {
+        let (config, _issues) = Config::parse_layered(user, path, system.as_ref()).unwrap();
+        let rules = config.extensions().deny_rules();
+        assert_eq!(rules.len(), 1, "{user}: {rules:?}");
+        assert_eq!(rules[0].store.as_deref(), Some("raycast"), "{user}");
+    }
+}
+
+#[test]
+fn an_admin_deny_list_survives_a_user_file_that_cannot_be_parsed() {
+    let etc = tempfile::tempdir().unwrap();
+    system_file(
+        etc.path(),
+        r#"{
+            "launcher": {"hotkey": ""},
+            "extensions": {"admin_deny": [{"store": "raycast"}]}
+        }"#,
+    );
+    let system = compass_core::config::system_defaults_in(&[etc.path().to_path_buf()]);
+    let path = Path::new("/test/compass.json");
+
+    // One typo, and the launcher starts with the fallback instead.
+    assert!(Config::parse_layered(r#"{"launcher": {"#, path, system.as_ref()).is_err());
+    let fallback = Config::fallback_over(system.as_ref());
+    let rules = fallback.extensions().deny_rules();
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].store.as_deref(), Some("raycast"));
+    // Only the block is kept: the rest is the defaults, as before.
+    assert_eq!(
+        fallback.launcher().hotkey(),
+        Config::default().launcher().hotkey()
+    );
+
+    assert_eq!(Config::fallback_over(None), Config::default());
+}
+
+#[test]
 fn an_admin_deny_list_cannot_be_lifted_or_written_by_the_user() {
     let etc = tempfile::tempdir().unwrap();
     system_file(
