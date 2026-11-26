@@ -237,7 +237,7 @@ class ClipboardService {
     }
 
     _pressPaste(withShift) {
-        // GNOME 51 removed Clutter.get_default_backend(); the stage's context
+        // GNOME 51 removed the default-backend getter; the stage's context
         // carries the backend there. Older Shells have no get_context().
         const backend = global.stage.get_context
             ? global.stage.get_context().get_backend()
