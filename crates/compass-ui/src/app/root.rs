@@ -1038,6 +1038,38 @@ mod tests {
     }
 
     #[test]
+    fn hiding_the_launcher_drops_a_link_question_nobody_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        let task =
+            app.open_deeplink("vicinae://launch/@someone/hello/write?fallbackText=from+a+link");
+        settle(&mut app, task);
+        assert!(app.link_confirm.is_some(), "the link asks");
+
+        // Hidden by the hotkey or by losing the focus: no Escape was pressed.
+        let _ = app.conceal();
+        assert!(
+            app.link_confirm.is_none(),
+            "the question does not wait for the next summon"
+        );
+
+        // The next summon: Enter is for the search. Whatever it launches there,
+        // it is not the link's launch, which would carry the link's text.
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            !backend
+                .launched
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, query)| query.as_deref() == Some("from a link")),
+            "Enter after a hide answers no question from before it"
+        );
+    }
+
+    #[test]
     fn an_alias_and_a_space_open_an_items_arguments() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, backend) = shortcuts_app(dir.path());
